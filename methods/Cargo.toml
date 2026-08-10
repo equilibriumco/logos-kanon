@@ -1,0 +1,22 @@
+# The product guest build. `risc0-build` compiles everything under `guest/` to
+# riscv32im-risc0-zkvm-elf and emits an `_ELF` and `_ID` constant per binary,
+# which is what the host, the aggregator and the tests reference.
+#
+# Structurally the same as the `methods-*` crates under `m0/`, with one
+# difference that matters: there are three of those because they compare a
+# software, an accelerated
+# and a mixed configuration, and each needs its own `[patch.crates-io]` and its
+# own lockfile. Product code ships one configuration, so there is one methods
+# crate here and one guest workspace under it.
+[package]
+name = "kanon-methods"
+description = "RISC Zero guest build for Kanon's product code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+risc0-build.workspace = true
+
+[package.metadata.risc0]
+methods = ["guest"]

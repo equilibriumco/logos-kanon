@@ -7,8 +7,9 @@
 //! framework adds around it.
 //!
 //! The crypto is duplicated here rather than shared with the frozen cost
-//! baseline, deliberately: this probe is independent of it. M1 unifies both onto
-//! a single `verifier-core`, at which point this copy goes away.
+//! baseline, deliberately: this probe is independent of it. Product code
+//! unifies both onto a single `verifier-core`, at which point this copy goes
+//! away.
 
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use lee_core::program::{read_lee_inputs, AccountPostState, Claim, ProgramInput, ProgramOutput};

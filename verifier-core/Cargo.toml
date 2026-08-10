@@ -1,0 +1,25 @@
+# The one verification implementation. It is callable both from the push
+# aggregator and from a third-party consumer program, so a single audited
+# implementation backs both modes: that is this crate's reason to exist, and the
+# reason it depends on neither.
+#
+# `no_std`, asserted in CI by building for a bare-metal target rather
+# than by convention. It runs inside a RISC Zero guest, where `std` is
+# available but unnecessary; keeping it out means the same code can be linked
+# by a consumer program that does without it.
+[package]
+name = "verifier-core"
+description = "RedStone data-package verification: decode, ECDSA recovery, keccak256, M-of-N threshold, staleness and value bounds"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The two primitives, and the same versions the cost baseline measured -- exact
+# recovery cost is scalar-dependent and a patch release moves the figures. In a
+# guest workspace these are replaced by RISC Zero's accelerated forks through
+# `[patch.crates-io]`; the source here does not change, which is what made the
+# software / accelerated / mixed comparison a comparison rather than three
+# different programs.
+k256 = { version = "=0.13.3", default-features = false, features = ["ecdsa", "arithmetic"] }
+tiny-keccak = { version = "=2.0.2", features = ["keccak"] }

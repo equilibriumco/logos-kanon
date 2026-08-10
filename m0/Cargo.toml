@@ -1,0 +1,63 @@
+# The measurement workspace.
+#
+# Two host-side projects: `cost-baseline/` (bare RISC Zero) and `lez-probe/` (the
+# same workload inside a LEZ program). They exist to produce figures rather than to
+# be deployed, and the figures are published, in `M0-report.pdf`.
+#
+# Its own workspace, and its own `Cargo.lock`, because that is what a published
+# figure requires. A cycle count is a property of an exact toolchain, so every pin
+# below is frozen to what the report was measured on. Sharing a lockfile with the
+# product crates at the repository root would mean an ordinary product upgrade could
+# move a number in a delivered document, silently, in a green build.
+#
+# Changing anything here is therefore a re-measurement, not a bump. `m0/versions.md`
+# says what that involves.
+#
+# Guest crates are deliberately absent from `members`. Each cross-compiles to
+# riscv32im-risc0-zkvm-elf and carries its own `[patch.crates-io]` and its own
+# lockfile, which is the mechanism that distinguishes the software, accelerated and
+# mixed configurations from one another. They are built by `risc0-build` from the
+# `methods-*` build scripts, under their own resolution, and must stay that way:
+# folding them in here would collapse the three configurations into one.
+[workspace]
+resolver = "2"
+members = [
+  "cost-baseline/host",
+  "cost-baseline/methods-software",
+  "cost-baseline/methods-accelerated",
+  "cost-baseline/methods-mixed",
+  "lez-probe/host",
+  "lez-probe/methods-accelerated",
+  "lez-probe/methods-mixed",
+]
+exclude = [
+  # Compiled by the guests via a path dependency, under the guests' own
+  # resolution, so it must not be resolved here.
+  "cost-baseline/bench-lib",
+  "cost-baseline/methods-software/guest",
+  "cost-baseline/methods-accelerated/guest",
+  "cost-baseline/methods-mixed/guest",
+  "lez-probe/methods-accelerated/guest",
+  "lez-probe/methods-mixed/guest",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Exact, not a caret range. LEZ's own workspace pins 3.0.5, which is a floor rather
+# than a ceiling: `lee_core` accepts a newer patch release, so both projects resolve
+# and are pinned to 3.0.6. Stating it exactly is what keeps the two sets of figures
+# comparable and keeps the documented version equal to the built one. See
+# `versions.md`.
+risc0-zkvm = "=3.0.6"
+risc0-build = "=3.0.6"
+
+# Host-side signing and hashing, used to construct the measured inputs. Pinned for
+# the same reason as their guest-side counterparts in `cost-baseline/bench-lib`:
+# recovery cost is scalar-dependent, so the exact signature bytes these produce are
+# an input to the cycle counts, not just test scaffolding.
+k256 = { version = "=0.13.3", features = ["ecdsa", "arithmetic"] }
+tiny-keccak = { version = "=2.0.2", features = ["keccak"] }

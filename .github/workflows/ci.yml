@@ -1,0 +1,284 @@
+# The product-code gate.
+#
+# `guardrails.yml` is the other half of CI and answers one question: have the
+# measured cycle counts moved. This workflow answers everything else, and the
+# split is deliberate. A cycle guardrail failing means "re-measure and re-tag
+# deliberately"; a job here failing means "the code is wrong". Mixing them would
+# make a red tick ambiguous, and the m0 jobs are the expensive ones, so keeping
+# them apart also keeps the fast feedback fast.
+#
+#   lint          fmt and clippy over everything, host side
+#   build-test    the product crates build and their tests pass
+#                 (`m0/` is a separate workspace; guardrails.yml runs it)
+#   no-std        verifier-core and pull-lib really are no_std
+#   guest         product code cross-compiles to riscv32
+#   licenses      cargo deny, every workspace: product, m0, guests
+#   traceability  the requirement matrix resolves to real evidence
+#   sequencer     a standalone LEZ sequencer comes up and serves
+name: CI
+
+on:
+  # Push only, on every branch, and deliberately no `pull_request`.
+  #
+  # Every branch, because work here happens on branches that may have no pull
+  # request, and `workflow_dispatch` alone would not cover it: GitHub only
+  # offers manual dispatch for workflows already present on the default branch.
+  #
+  # No `pull_request`, because for a branch in this repository the push run
+  # already reports as a check on any pull request opened from it, so the second
+  # trigger would only ever duplicate the first -- two runs, two bills, and a
+  # cancelled-vs-failed race between them.
+  #
+  # The one thing this does not cover is a pull request from a fork, whose
+  # pushes do not reach this repository. If that day comes, add `pull_request`
+  # and narrow `push` to `main` in the same change: the two settings only make
+  # sense as a pair.
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Supersede a branch's own in-flight run, since only its head matters, but let
+  # runs on main finish: those are the record of what the default branch did.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    name: fmt and clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Both workspaces. `m0/` resolves separately so that its pins can be frozen
+      # to the toolchain its published figures were measured on, which means
+      # neither `--workspace` reaches it. Lint is not a figure, though, so it
+      # applies to m0's host code just as much as to the product's.
+      - name: cargo fmt
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --all --manifest-path m0/Cargo.toml -- --check
+
+      # RISC0_SKIP_BUILD is required, not a shortcut. `cargo clippy` exports a
+      # rustc wrapper that the guest build inherits, and clippy-driver has no
+      # riscv32im-risc0-zkvm-elf std, so the guest build fails with E0463.
+      # Skipping it lints the host code, which is all clippy can lint here; the
+      # guest code is compiled for real by the `guest` job below.
+      - name: cargo clippy
+        env:
+          RISC0_SKIP_BUILD: 1
+        run: |
+          cargo clippy --release --workspace --all-targets --locked -- -D warnings
+          cargo clippy --release --workspace --all-targets --locked \
+            --manifest-path m0/Cargo.toml -- -D warnings
+
+  build-test:
+    name: build and test
+    runs-on: ubuntu-24.04
+    env:
+      RISC0_SKIP_BUILD: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build
+        run: cargo build --release --workspace --locked
+
+      # `m0/` needs no exclusion here: it is a separate workspace, so
+      # `--workspace` does not reach it. Its tests assert exact cycle counts and
+      # need the real guest ELFs that RISC0_SKIP_BUILD stubs out, which is why
+      # `guardrails.yml` runs them with the guest toolchain installed instead.
+      - name: cargo test
+        run: cargo test --release --locked --workspace
+
+  no-std:
+    name: no_std
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # A bare-metal target with no `std` at all. Building for it is the
+      # assertion: `#![no_std]` in the source only says the crate does not
+      # *import* std, while a dependency that pulls std back in fails here and
+      # nowhere else. `verifier-core` has to stay linkable by a consumer program
+      # that does without std, which is the whole point of one shared verifier.
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: riscv32im-unknown-none-elf
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: build verifier-core and pull-lib for a no_std target
+        run: |
+          cargo build --release --locked \
+            --target riscv32im-unknown-none-elf \
+            -p verifier-core -p pull-lib
+
+  guest:
+    name: riscv32 guest build
+    runs-on: ubuntu-24.04
+    env:
+      # The guest workspace has its own lockfile, built by risc0-build's nested
+      # cargo invocation rather than the outer one, so the outer `--locked` does
+      # not reach it. Without this it can silently re-resolve.
+      RISC0_BUILD_LOCKED: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 3.0.5 here, 3.0.6 in `guardrails.yml`, and the difference is deliberate:
+      # the product tracks what LEZ pins, while m0 stays on the toolchain its
+      # published figures were measured on. `adr/0008` records the experiment
+      # that showed the cycle counts are identical across the two, so the
+      # figures stay comparable. rzup resolves releases through api.github.com; the token
+      # raises the shared rate limit and needs no scope beyond default read.
+      - name: Install RISC Zero toolchain
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.risc0/bin:$PATH"
+          rzup install cargo-risczero 3.0.5
+          rzup install r0vm 3.0.5
+          rzup install rust 1.97.0
+
+      # Cross-compiles `methods/guest`, which links `verifier-core`. The cost baseline proved
+      # the toolchain on measurement code; this is the same proof for the crates
+      # that ship, and it is where a dependency added to `verifier-core` that
+      # turns out not to be guest-compatible fails.
+      - name: build the product guest
+        run: cargo build --release --locked -p kanon-methods
+
+  licenses:
+    name: cargo deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.18.2
+
+      # The product workspace, then `m0/`, then every guest workspace. Each
+      # resolves separately, with its own lockfile and, for the guests, its own
+      # `[patch.crates-io]`, so a copyleft or BUSL crate could enter through any
+      # of them without appearing in the product graph at all. The config path
+      # has to be absolute, because cargo-deny resolves a relative one against
+      # the manifest's directory rather than the working directory.
+      - name: cargo deny (every workspace)
+        run: |
+          set -euo pipefail
+          config="$PWD/deny.toml"
+          cargo deny check licenses bans sources
+          for ws in \
+            m0 \
+            methods/guest \
+            m0/cost-baseline/methods-software/guest \
+            m0/cost-baseline/methods-accelerated/guest \
+            m0/cost-baseline/methods-mixed/guest \
+            m0/lez-probe/methods-accelerated/guest \
+            m0/lez-probe/methods-mixed/guest
+          do
+            echo "::group::cargo deny $ws"
+            cargo deny --manifest-path "$ws/Cargo.toml" \
+              check --config "$config" licenses bans sources
+            echo "::endgroup::"
+          done
+
+      # Advisories are a different concern from licensing and are reported
+      # rather than gating, for one specific reason: the check depends on an
+      # advisory database that is fetched fresh on every run, so an advisory
+      # filed this morning against a transitive dependency would fail the
+      # licence gate. Failing loudly on a real vulnerability is right; blocking
+      # a licence check on database drift is not.
+      - name: cargo deny advisories (informational)
+        continue-on-error: true
+        run: cargo deny check advisories
+
+  traceability:
+    name: traceability matrix
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Fails if a requirement has no row, if a row names a test, CI job or
+      # document that does not exist, or if TRACEABILITY.md no longer matches
+      # its sources. A later task requires every row to read
+      # `verified`; this is what stops that from being claimed without evidence.
+      - name: cargo test -p traceability
+        run: cargo test --locked -p traceability
+
+  sequencer:
+    name: standalone LEZ sequencer
+    runs-on: ubuntu-24.04
+    # Minutes, not hours, because nothing is compiled here. Building LEZ from
+    # source does not fit a standard runner -- a cold build ran past 90 minutes
+    # and was killed, and because a timeout cancels the job before the cache is
+    # written it could never warm up. `lez-sequencer-image.yml` absorbs that
+    # build once per revision and this pulls the result.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Fails with a message naming the publish workflow when no image exists
+      # for the revision the product resolves, which is what a pin bump looks
+      # like. Better than silently starting an hour-long build.
+      - name: Fetch the prebuilt sequencer
+        run: scripts/lez-sequencer.sh fetch
+
+      # Bedrock runs from the image LEZ's own compose file names, so this is
+      # LEZ's stack rather than an approximation of it. `lgs test-node` is not
+      # used and cannot be: see the header of the script, and adr/0012.
+      - name: Start bedrock and the sequencer
+        run: scripts/lez-sequencer.sh start
+
+      - name: Smoke the sequencer
+        run: scripts/lez-sequencer.sh smoke
+
+      # Adaptor traffic across this sequencer comes later. Until then
+      # the job asserts the harness itself, which is what makes those tasks a
+      # matter of writing tests rather than of standing up infrastructure.
+
+      - name: Sequencer log
+        if: always()
+        run: scripts/lez-sequencer.sh logs || true
+
+      - name: Stop
+        if: always()
+        run: scripts/lez-sequencer.sh stop || true
