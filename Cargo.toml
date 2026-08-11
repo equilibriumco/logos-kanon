@@ -1,0 +1,57 @@
+# Root workspace.
+#
+# The repository holds two host-side projects under `m0/`: `cost-baseline/` (bare
+# RISC Zero) and `lez-probe/` (the same workload inside a LEZ program). They live in
+# their own directory because they are M0's measurement harnesses rather than product
+# code, and M1 adds the product crates at the root. They share a risc0 pin and the
+# host-side signing crates, and are one workspace so `cargo test --workspace` runs every
+# guardrail in one command.
+#
+# Guest crates are deliberately absent from `members`. Each cross-compiles to
+# riscv32im-risc0-zkvm-elf and carries its own `[patch.crates-io]` and its own
+# lockfile, which is the mechanism that distinguishes the software, accelerated and
+# mixed configurations from one another. They are built by `risc0-build` from the
+# `methods-*` build scripts, under their own resolution, and must stay that way:
+# folding them in here would collapse the three configurations into one.
+[workspace]
+resolver = "2"
+members = [
+  "m0/cost-baseline/host",
+  "m0/cost-baseline/methods-software",
+  "m0/cost-baseline/methods-accelerated",
+  "m0/cost-baseline/methods-mixed",
+  "m0/lez-probe/host",
+  "m0/lez-probe/methods-accelerated",
+  "m0/lez-probe/methods-mixed",
+]
+exclude = [
+  # Compiled by the guests via a path dependency, under the guests' own
+  # resolution, so it must not be resolved here.
+  "m0/cost-baseline/bench-lib",
+  "m0/cost-baseline/methods-software/guest",
+  "m0/cost-baseline/methods-accelerated/guest",
+  "m0/cost-baseline/methods-mixed/guest",
+  "m0/lez-probe/methods-accelerated/guest",
+  "m0/lez-probe/methods-mixed/guest",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Exact, not a caret range. LEZ's own workspace pins 3.0.5, which is a floor rather
+# than a ceiling: `lee_core` accepts a newer patch release, so both projects resolve
+# and are pinned to 3.0.6. Stating it exactly is what keeps the two sets of figures
+# comparable and keeps the documented version equal to the built one. See
+# `m0/versions.md`.
+risc0-zkvm = "=3.0.6"
+risc0-build = "=3.0.6"
+
+# Host-side signing and hashing, used to construct the measured inputs. Pinned for
+# the same reason as their guest-side counterparts in `m0/cost-baseline/bench-lib`:
+# recovery cost is scalar-dependent, so the exact signature bytes these produce are
+# an input to the cycle counts, not just test scaffolding.
+k256 = { version = "=0.13.3", features = ["ecdsa", "arithmetic"] }
+tiny-keccak = { version = "=2.0.2", features = ["keccak"] }

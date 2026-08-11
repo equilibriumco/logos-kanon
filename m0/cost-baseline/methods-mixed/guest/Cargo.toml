@@ -1,0 +1,25 @@
+[package]
+name = "kanon-guest-mixed"
+version = "0.1.0"
+edition = "2021"
+
+# Own workspace: this crate cross-compiles to riscv32im-risc0-zkvm-elf.
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["std"] }
+bench-lib = { path = "../../bench-lib" }
+
+# Accelerated recovery, software keccak. The two accelerators behave very
+# differently: the secp256k1 one is pure cycle reduction, while the keccak one
+# routes work to a coprocessor whose fixed cost lands on proof time and proof
+# size instead of cycles. This variant takes the first and declines the second,
+# so `tiny-keccak` is deliberately absent from the patch list below.
+[patch.crates-io]
+k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.1" }
+crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.2-risczero.1" }
+sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.6-risczero.0" }
+
+[profile.release]
+lto = true
+codegen-units = 1
