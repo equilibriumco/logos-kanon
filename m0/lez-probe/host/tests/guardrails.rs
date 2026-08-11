@@ -44,6 +44,12 @@ mod expected {
     pub const MIXED_5_SIGNERS: u64 = 3_150_337;
     pub const ACCELERATED_3_SIGNERS: u64 = 1_862_527;
 
+    /// `lez_plumbing` at 1, 3 and 5 signers: the framework's own cost with the
+    /// real instruction to carry but no cryptography. Pinned separately from the
+    /// floor because the floor is measured on an empty instruction and so cannot
+    /// see the part of the framework's work that scales with the signer count.
+    pub const MIXED_PLUMBING: [(usize, u64); 3] = [(1, 78_972), (3, 158_290), (5, 237_608)];
+
     /// Proof sizes are deterministic too, and are the dimension in which the
     /// keccak coprocessor is unmistakable.
     pub const MIXED_3_SIGNERS_PROOF: usize = 564_637;
@@ -63,6 +69,25 @@ fn framework_floor_is_unchanged() {
         expected::FRAMEWORK_FLOOR,
         "LEZ framework floor moved; re-measure and update the README"
     );
+}
+
+/// The framework's per-package instruction handling, which the floor cannot see.
+///
+/// It is what separates the cryptography from the framework in the published
+/// decomposition, so it is pinned in its own right: if it moved and only the
+/// totals were pinned, the movement would be silently reattributed to recovery.
+/// The accelerated arm must agree exactly, since no cryptography is involved.
+#[test]
+fn instruction_handling_cost_is_unchanged() {
+    for (n, want) in expected::MIXED_PLUMBING {
+        assert_eq!(cycles_of(mixed().plumbing, n), want, "mixed, {n} signers");
+        assert_eq!(
+            cycles_of(accelerated().plumbing, n),
+            want,
+            "accelerated, {n} signers; this program hashes nothing, so the two \
+             configurations cannot differ here"
+        );
+    }
 }
 
 /// Pins the recommended configuration in both directions at once. A sharp rise

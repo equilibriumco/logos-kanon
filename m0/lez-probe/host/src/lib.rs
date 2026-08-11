@@ -41,6 +41,10 @@ pub type Package = (Vec<u8>, Vec<u8>, u8);
 pub struct Variant {
     pub name: &'static str,
     pub noop: &'static [u8],
+    /// `noop` carrying the same instruction as `verify`, so that the framework's
+    /// per-package instruction handling can be separated from the cryptography
+    /// rather than folded into it.
+    pub plumbing: &'static [u8],
     pub verify: &'static [u8],
 }
 
@@ -50,6 +54,7 @@ pub fn mixed() -> Variant {
     Variant {
         name: "mixed",
         noop: lez_probe_methods_mixed::LEZ_NOOP_ELF,
+        plumbing: lez_probe_methods_mixed::LEZ_PLUMBING_ELF,
         verify: lez_probe_methods_mixed::LEZ_VERIFY_ELF,
     }
 }
@@ -60,6 +65,7 @@ pub fn accelerated() -> Variant {
     Variant {
         name: "accelerated",
         noop: lez_probe_methods_accelerated::LEZ_NOOP_ELF,
+        plumbing: lez_probe_methods_accelerated::LEZ_PLUMBING_ELF,
         verify: lez_probe_methods_accelerated::LEZ_VERIFY_ELF,
     }
 }

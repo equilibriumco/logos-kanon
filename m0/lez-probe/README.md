@@ -111,19 +111,42 @@ pre-states, instruction words, under the same 32M session limit. **That order mu
 stay in step with `Program::write_inputs` upstream**; if it drifts, the guest will
 fail to deserialize rather than silently mismeasure.
 
-Two programs, differing only in whether they verify:
+Three programs, sharing the same input handling and differing in what they do with
+the instruction:
 
-- `lez_noop`: reads LEE inputs and echoes the account as its post state. Its cycle
-  count is the floor a LEZ program pays before any application logic: account
-  deserialization, instruction decode, and serialization of the proposed state
-  diff.
-- `lez_verify`: the same, plus one keccak256 and one secp256k1 recovery per data
-  package, with the checksum written into account data so it cannot be optimized
-  away. Recovery success is asserted, so a run that took the cheap error path
-  cannot be misread as a measurement.
+- `lez_noop`: reads LEE inputs on an **empty instruction** and echoes the account
+  as its post state. Its cycle count is the floor a LEZ program pays before any
+  application logic and with nothing to carry: account deserialization,
+  instruction decode, and serialization of the proposed state diff.
+- `lez_verify`: the same, on the real instruction, plus one keccak256 and one
+  secp256k1 recovery per data package, with the checksum written into account data
+  so it cannot be optimized away. Recovery success is asserted, so a run that took
+  the cheap error path cannot be misread as a measurement.
+- `lez_plumbing`: `lez_verify` with the cryptography removed and nothing else
+  changed — the same instruction type, the same instruction, the same account
+  write.
 
-Both are built in two guest configurations, with byte-identical source, differing
-only in their `[patch.crates-io]` section:
+The third program exists because part of the framework's own work **scales with
+the instruction**, and therefore with the signer count: `read_lee_inputs`
+deserializes the instruction words into the guest's `Instruction` type, and
+`ProgramOutput` echoes `instruction_data` straight back out. Neither is present in
+the floor, which is measured on an empty instruction, so `lez_verify - lez_noop`
+folds that per-package handling into what would otherwise read as the cost of
+verification. Subtracting `lez_plumbing` instead separates the two:
+
+```
+lez_verify - lez_plumbing  = the cryptography alone
+lez_plumbing - lez_noop    = the framework's per-package instruction handling
+lez_verify - lez_noop      = both together
+```
+
+The bare baseline in `m0/cost-baseline/` does not need this because its `do_work`
+harness runs the same guest on the same input twice and differences the two, so
+its own plumbing appears on both sides and cancels. A LEZ program has no such
+second run to cancel against, hence the third binary.
+
+All three are built in two guest configurations, with byte-identical source,
+differing only in their `[patch.crates-io]` section:
 
 - `methods-mixed/guest`: secp256k1 accelerated, keccak256 in software. The
   configuration the baseline recommends.
@@ -143,10 +166,26 @@ cost is actually paid.
 | **3 signers (RFP default)**    | 1,906,737 | **5.68%**               |
 | 5 signers, total               | 3,150,337 | 9.39%                   |
 
-Verification alone, with the framework floor subtracted: 625,014 at 1 signer,
-1,867,634 at 3, 3,111,234 at 5. That is **about 621,555 cycles per additional
-signer**, linear, consistent with the baseline's finding that nothing is shared
-between signers.
+Each total splits three ways, by the subtraction described under *Method*:
+
+| signers | framework floor | instruction handling | cryptography  | total     |
+| ------- | --------------- | -------------------- | ------------- | --------- |
+| 1       | 39,103          | 39,869               | 585,145       | 664,117   |
+| **3**   | 39,103          | **119,187**          | **1,748,447** | 1,906,737 |
+| 5       | 39,103          | 198,505              | 2,912,729     | 3,150,337 |
+
+Both variable parts are linear: **about 39,659 cycles per package** of framework
+instruction handling and **about 581,896 cycles per package** of cryptography,
+consistent with the baseline's finding that nothing is shared between signers. The
+marginal cost of a signer is therefore **about 621,555 cycles**, which is what the
+budget arithmetic below uses.
+
+The cryptography figure cross-checks against the bare baseline, which measured the
+same three recoveries and signature parses at 1,686,893 cycles and the same three
+software keccak256 hashes at 51,956, for 1,738,849 in total. This probe's 1,748,447
+is 0.55% above that, over a deliberately duplicated guest. Subtracting the floor
+alone would have put the same quantity at 1,867,634, 7.4% high, with the gap being
+framework work rather than crypto.
 
 ### Private mode: proving the same program
 
@@ -198,11 +237,14 @@ is 0.13 percentage points better; in proving, which is what private execution
 pays, it is 21% and 40% worse.
 
 Set against the baseline's bare-RISC-Zero figures for the same configuration
-(1,813,434 cycles, 137.67 s, 562,764 B), **the LEZ framework is close to free on
-every axis**: proving time is identical within noise, and the proof grows by 1,873
-bytes, 0.3%. Both sides are on risc0-zkvm 3.0.6, so the cycle difference of 93,303
-is not confounded by a version gap; it does span a slightly different guest, so it
-is an upper bound on the framework's share rather than a clean attribution.
+(1,813,434 cycles, 137.67 s, 562,764 B), **the LEZ framework is cheap on every
+axis**: proving time is identical within noise, and the proof grows by 1,873 bytes,
+0.3%. Both sides are on risc0-zkvm 3.0.6, so the cycle difference of 93,303 is not
+confounded by a version gap; it does span a slightly different guest, and it also
+nets the framework's cost against the baseline harness's own input handling, so it
+is not a clean attribution. The framework's own share, measured directly, is the
+floor plus the instruction handling: **158,290 cycles at 3 signers, 0.47% of the
+budget and 8.3% of the program**.
 
 The floor is worth noting on its own: any LEZ program costs at least 8.81 s and
 244 KB to prove, against 2.23 s and 209 KB for an empty risc0 guest. Verification
@@ -210,9 +252,11 @@ is still the overwhelming majority, roughly 127 s of the 136 s.
 
 ### What this settles
 
-**The framework is nearly free.** 39,103 cycles is 0.12% of the budget, so LEZ's
-account handling and state-diff serialization are not a cost factor. Verification
-is 98% of the program.
+**The framework is cheap, but not free.** Its floor is 39,103 cycles, 0.12% of the
+budget, and its per-package instruction handling adds 119,187 at 3 signers, for
+158,290 in total: 0.47% of the budget and 8.3% of the program. LEZ's account
+handling and state-diff serialization are not a cost factor at this size.
+Cryptography is 91.7% of the program.
 
 **A 3-of-N update fits comfortably in one transaction**, using 5.68% of the budget
 and leaving 94.3% free. This resolves the open risk the baseline flagged: the
@@ -225,7 +269,7 @@ the budget accommodates roughly **53 signers** in one transaction. The linear co
 the baseline documented is a real constraint on price, not on feasibility.
 
 **The software configuration remains infeasible.** At 33,347,017 cycles on bare
-RISC Zero it is 99.4% of the budget before the framework's 39,103 and before
+RISC Zero it is 99.4% of the budget before the framework's 158,290 and before
 payload decode, median, or the canonical account write. It does not fit. That is a
 harder argument for the secp256k1 accelerator than the proving-time figures were.
 
@@ -237,36 +281,47 @@ precompile would remove; the estimated part is what would remain.
 
 Decomposing the 3-of-N LEZ program in the recommended configuration:
 
-| component                       | cycles    | share   |
-| ------------------------------- | --------- | ------- |
-| LEZ framework floor             | 39,103    | 2.05%   |
-| 3 x keccak256 over 77 B, software | 51,956  | 2.72%   |
-| 3 x recovery and signature parse | 1,815,678 | **95.22%** |
-| **total**                       | 1,906,737 | 100%    |
+| component                                  | cycles    | share      |
+| ------------------------------------------ | --------- | ---------- |
+| LEZ framework floor                        | 39,103    | 2.05%      |
+| framework instruction handling, 3 packages | 119,187   | 6.25%      |
+| 3 x keccak256 over 77 B, software          | 51,956    | 2.72%      |
+| 3 x recovery and signature parse           | 1,696,491 | **88.97%** |
+| **total**                                  | 1,906,737 | 100%       |
 
-**A recovery precompile addresses 95.2% of the program.** At roughly 605,226 cycles
-per recovery, that share is measured, not modelled.
+The first two rows come from `lez_noop` and `lez_plumbing`; the keccak row is the
+baseline's directly measured cost of the same three software hashes; the recovery
+row is what is left, and it agrees with the baseline's independently measured
+1,686,893 to within 0.6%. Shares are rounded and do not sum to exactly 100%.
 
-What would remain is the framework, the hashing, and whatever guest-side
-marshalling a precompile syscall costs. Taking that residual at 1,000 to 10,000
-cycles per call, which spans the range an accelerator-style syscall plausibly
-occupies:
+**A recovery precompile addresses 89.0% of the program.** At roughly 565,497 cycles
+per recovery, that share is measured rather than modelled, up to the one
+subtraction it rests on: the keccak row, which is itself a measurement.
 
-| assumption            | program total | share of budget | reduction |
-| --------------------- | ------------- | --------------- | --------- |
-| 1,000 cycles per call | 94,059        | 0.28%           | **20.3x** |
-| 10,000 cycles per call | 121,059      | 0.36%           | 15.8x     |
+What would remain is the framework — both its floor and its per-package
+instruction handling, neither of which a crypto precompile touches — the hashing,
+and whatever guest-side marshalling a precompile syscall costs. Taking that last
+residual at 1,000 to 10,000 cycles per call, which spans the range an
+accelerator-style syscall plausibly occupies:
 
-So the sketch is a **15x to 20x reduction**, taking budget use from 5.68% to under
-0.4%. The residual is an assumption: no such precompile exists to measure, and the
-figure should be replaced with a measurement if one is built.
+| assumption             | program total | share of budget | reduction |
+| ---------------------- | ------------- | --------------- | --------- |
+| 1,000 cycles per call  | 213,246       | 0.64%           | **8.9x**  |
+| 10,000 cycles per call | 240,246       | 0.72%           | 7.9x      |
+
+So the sketch is an **8x to 9x reduction**, taking budget use from 5.68% to under
+0.8%. The residual is partly an assumption: no such precompile exists to measure,
+and the syscall figure should be replaced with a measurement if one is built. The
+framework's 158,290 cycles, on the other hand, are measured, and together with the
+hashing they cap the reduction at about **9.1x** however cheap the syscall turns
+out to be.
 
 ### Why the ratio is so different from EVM
 
 RFP-020 cites RedStone's EVM path at 50K to 100K gas end to end, where a native
 `ecrecover` is about 3,000 gas. Three recoveries are therefore roughly 9,000 gas,
 some 9% to 18% of the EVM total. In LEZ without a native primitive the same three
-recoveries are **95%** of the program.
+recoveries are **89%** of the program.
 
 That is the sketch's substantive point: the missing primitive does not make
 verification somewhat dearer, it moves recovery from a minor line item to
@@ -281,10 +336,10 @@ scope depends on the precompile existing.
 
 **Its value is economic, and conditional on the fee model.** The 32M cap carries
 `TODO: Make this variable when fees are implemented` upstream, so pricing is
-undecided. If fees end up proportional to cycles, a 15x to 20x cycle reduction is a
-15x to 20x reduction in the per-update fee, and that compounds over an operating
+undecided. If fees end up proportional to cycles, an 8x to 9x cycle reduction is an
+8x to 9x reduction in the per-update fee, and that compounds over an operating
 period: five feeds on a one-hour heartbeat is about **43,800 updates a year**,
-which is 83.5 billion cycles annually as measured against roughly 4.1 billion with
+which is 83.5 billion cycles annually as measured against roughly 9.3 billion with
 a precompile.
 
 So the recommendation is to propose the precompile on cost-of-operation grounds
@@ -362,7 +417,7 @@ steer consumers away from a mode the RFP requires.
 ### 4. Precompile follow-on: recommend it, for recovery only, on cost grounds
 
 Recommend a **secp256k1 recovery precompile**, scoped to recovery alone. It
-addresses 95.2% of the program, for a 15x to 20x reduction; keccak256 is 2.72% and
+addresses 89.0% of the program, for an 8x to 9x reduction; keccak256 is 2.72% and
 should not be paired into the request. See *In-program versus precompile* above.
 
 Recommend it on **cost of operation, not feasibility**. Nothing in the scope needs
@@ -423,12 +478,13 @@ The fast tests run in CI on both architectures, which is what makes them a
 regression gate; the proving tests are excluded there because they are neither fast
 nor hardware independent. See `.github/workflows/guardrails.yml`.
 
-Five fast assertions plus one slow ignored one, in
+Six fast assertions plus one slow ignored one, in
 `m0/lez-probe/host/tests/guardrails.rs`:
 
 | guardrail | catches |
 | --------- | ------- |
 | framework floor is unchanged | drift in LEZ's own input/output handling |
+| instruction handling is unchanged at 1, 3, 5 signers | drift in the framework's per-package cost, which the floor cannot see |
 | mixed cycles unchanged at 1, 3, 5 signers | either accelerator changing, in either direction |
 | accelerated cycles unchanged at 3 signers | drift in the comparison arm |
 | 3-of-N leaves ample budget headroom | losing secp256k1, semantically rather than exactly |
@@ -462,9 +518,10 @@ unmistakable in the dimension where it actually hurts.
   `r0vm` is on `PATH`. Cycle counts were measured under **both r0vm 3.0.5 and 3.0.6
   and came out identical**, so these figures are insensitive to the executor's patch
   version.
-- **The precompile residual is assumed, not measured.** The 95.2% a precompile
-  would address is measured; what remains after it is an estimate spanning 1,000 to
-  10,000 cycles per call, because no such precompile exists to measure.
+- **The precompile residual is only partly assumed.** The 89.0% a precompile would
+  address is measured, and so is the 8.3% of framework cost that survives it; what
+  is estimated is the guest-side syscall marshalling, spanning 1,000 to 10,000
+  cycles per call, because no such precompile exists to measure.
 - **Not the full transaction.** This measures program execution only. Payload
   decode, the median across signers, the canonical RFP-019 account write, and
   admin checks are M1 and M2 work and add to the 5.68%.

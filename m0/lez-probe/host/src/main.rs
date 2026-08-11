@@ -58,25 +58,38 @@ fn report_variant(v: &Variant, cli: &Cli) -> Result<()> {
 
     let floor = measure(v.noop, &Vec::<u8>::new(), cli.prove, cli.repeat)?;
     println!("\n-- LEZ framework floor (read inputs, echo post state) --");
-    report("framework only", &floor, None);
+    report("framework only", &floor, None, None);
 
     println!("\n-- M-of-N RedStone verification inside a LEZ program --");
+    println!(
+        "   'crypto alone' subtracts the same program without the crypto, so the \
+         framework's\n   per-package instruction handling is excluded rather than \
+         counted as recovery."
+    );
     for &n in &cli.signers {
         let packages = make_packages(n)?;
+        let plumbing = measure(v.plumbing, &packages, false, 1)?;
         let r = measure(v.verify, &packages, cli.prove, cli.repeat)?;
-        report(&format!("{n} signer(s)"), &r, Some(&floor));
+        report(&format!("{n} signer(s)"), &r, Some(&floor), Some(&plumbing));
     }
     Ok(())
 }
 
-fn report(label: &str, r: &Run, floor: Option<&Run>) {
+fn report(label: &str, r: &Run, floor: Option<&Run>, plumbing: Option<&Run>) {
     print!(
         "  {label:>14}: {:>10} cycles, {:>5.2}% of budget",
         r.cycles,
         r.budget_pct()
     );
     if let Some(f) = floor {
-        print!(", verification alone {}", r.cycles.saturating_sub(f.cycles));
+        print!(", above the floor {}", r.cycles.saturating_sub(f.cycles));
+    }
+    if let Some(p) = plumbing {
+        print!(
+            ", crypto alone {} (instruction handling {})",
+            r.cycles.saturating_sub(p.cycles),
+            floor.map_or(0, |f| p.cycles.saturating_sub(f.cycles))
+        );
     }
     println!();
     if let (Some(secs), Some(bytes)) = (r.prove_secs(), r.proof_bytes) {

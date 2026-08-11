@@ -84,13 +84,13 @@ mod expected {
     pub const VERIFY_MIXED_PROOF: usize = 562_764;
 }
 
-/// Mean cycles per hash, rounded as the README reports it.
-fn keccak_per_hash(elf: &[u8], msg_len: u32) -> u64 {
-    let d = keccak_delta(elf, KECCAK_ITERS, msg_len, Opts::execute_only()).expect("execution");
-    (d.work as f64 / f64::from(KECCAK_ITERS)).round() as u64
-}
-
-fn keccak_bookkeeping_per_iter(elf: &[u8], msg_len: u32) -> u64 {
+/// Mean work cycles per loop iteration, rounded as the README reports it.
+///
+/// Which quantity that is depends on the ELF: `keccak` measures a hash per
+/// iteration, `keccak_overhead` the same loop with the hash removed, so the same
+/// function reports cycles per hash for one and per-iteration bookkeeping for the
+/// other.
+fn keccak_per_iter(elf: &[u8], msg_len: u32) -> u64 {
     let d = keccak_delta(elf, KECCAK_ITERS, msg_len, Opts::execute_only()).expect("execution");
     (d.work as f64 / f64::from(KECCAK_ITERS)).round() as u64
 }
@@ -119,14 +119,14 @@ fn zkvm_floor_is_unchanged() {
 fn keccak_cycles_per_hash_are_unchanged() {
     for (len, want) in expected::KECCAK_SOFTWARE {
         assert_eq!(
-            keccak_per_hash(software().keccak, len),
+            keccak_per_iter(software().keccak, len),
             want,
             "software, {len} bytes"
         );
     }
     for (len, want) in expected::KECCAK_ACCELERATED {
         assert_eq!(
-            keccak_per_hash(accelerated().keccak, len),
+            keccak_per_iter(accelerated().keccak, len),
             want,
             "accelerated, {len} bytes"
         );
@@ -140,7 +140,7 @@ fn keccak_loop_bookkeeping_is_flat_and_unchanged() {
     for v in [software(), accelerated(), mixed()] {
         for (len, _) in expected::KECCAK_SOFTWARE {
             assert_eq!(
-                keccak_bookkeeping_per_iter(v.keccak_overhead, len),
+                keccak_per_iter(v.keccak_overhead, len),
                 expected::KECCAK_BOOKKEEPING,
                 "{} path, {len} bytes",
                 v.name
@@ -225,8 +225,8 @@ fn full_update_cycles_are_unchanged() {
 fn mixed_configuration_is_the_combination_it_claims() {
     for (len, _) in expected::KECCAK_SOFTWARE {
         assert_eq!(
-            keccak_per_hash(mixed().keccak, len),
-            keccak_per_hash(software().keccak, len),
+            keccak_per_iter(mixed().keccak, len),
+            keccak_per_iter(software().keccak, len),
             "mixed keccak256 should be the software implementation, at {len} bytes"
         );
     }
