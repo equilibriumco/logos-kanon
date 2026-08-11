@@ -1,13 +1,22 @@
 # Pinned versions
 
-What to install for the figures in `m0/M0-report.pdf` to reproduce, and the one version
-question still open.
+What to install for the figures in `m0/M0-report.pdf` to reproduce, and the version
+questions still open.
 
 This file is not the authority. The manifests and the six `Cargo.lock` files enforce
 every crate version, and the exact-equality cycle assertions in the two guardrail
 suites are what actually catch a wrong environment. Install the toolchain below and
-run `cargo test --release --locked --workspace`; if it passes, the environment is
-right.
+run `cargo test --release --locked --workspace` from `m0/`; if it passes, the
+environment is right.
+
+`m0/` is its own cargo workspace, separate from the product crates at the repository
+root, and that is what keeps the pins below frozen: an ordinary product upgrade
+cannot reach this lockfile, so it cannot move a published figure.
+
+**The reasoning behind these pins lives in `adr/`, not here.** This file is the
+environment, the open questions and the procedure for changing them. Each spike whose
+finding settled a pin now has an ADR, and the pointers are in *Settled* below — one
+statement of a decision, in one place, so the two cannot drift apart.
 
 ## Install this
 
@@ -29,10 +38,30 @@ Everything else is in cargo: `risc0-zkvm` and `risc0-build` at `=3.0.6`, `lee_co
 LEZ v0.2.1 (`15144ddb`), `k256` at `=0.13.3`, `tiny-keccak` at `=2.0.2`, plus the
 `[patch.crates-io]` fork tags in each guest manifest.
 
+### Why every requirement is an `=` pin
+
 Every requirement is `=` rather than a caret range. A range lets the software arm
 resolve a different patch release than the fork tags the accelerated arms use, which
 moves every recovery figure by about 0.01% and confounds the comparison, with nothing
 visible in a green build.
+
+That is the measurement-integrity half of the argument. The product side of it — and
+why the product's pins are deliberately *not* the same as these — is
+`adr/0008-exact-pins-and-tracking-the-estate.md`.
+
+## Settled: where the decisions behind these pins are recorded
+
+Five spikes ran during M0 and M1 to answer questions these pins depend on. Each is now
+an ADR, with the finding, the decision and what it cost:
+
+| question | answer | ADR |
+| --- | --- | --- |
+| Which accelerator configuration should the guest use? | mixed: accelerated secp256k1, software keccak256 | [6](../adr/0006-mixed-accelerator-configuration.md) |
+| Why does `m0/` have its own lockfile? | so a product upgrade cannot move a published figure | [7](../adr/0007-two-workspaces-and-a-lockfile-per-resolution-domain.md) |
+| Can the product sit on risc0 3.0.6 and LEZ v0.2.1, as `m0/` does? | no — it tracks the estate at 3.0.5 and v0.2.0, and the figures stay comparable, measured rather than assumed | [8](../adr/0008-exact-pins-and-tracking-the-estate.md) |
+| Does the canonical RFP-019 price account exist to write into? (M1-09) | yes, `twap_oracle_core::OraclePriceAccount`, re-exported rather than forked | [9](../adr/0009-re-export-the-canonical-price-account-and-vendor-its-idl.md) |
+| Where does a `maxAge` comparison get "now"? (M1-08) | LEZ's clock program, the every-block account, never caller-supplied | [13](../adr/0013-staleness-is-measured-against-the-lez-clock-program.md) |
+| Is there an admin-authority interface to build F6 against? (M1-07) | yes, `logos-co/spel` PR #212 — written, unmerged; built against with a shim in reserve | [14](../adr/0014-build-admin-gating-against-the-unmerged-spel-admin-authority.md) |
 
 ## Open: which LEZ version
 
@@ -45,8 +74,13 @@ Two are in play, 784 commits and three months apart.
 
 Upstream has since tagged v0.2.4, so neither is current. **No M0 figure is affected**:
 cost is a property of the guest ELF and no sequencer takes part in producing one.
-M1-05 is affected, because a test cannot transact against a sequencer until the two
-agree.
+
+The product has since moved to v0.2.0 for reasons unrelated to either — it tracks the
+LEZ that `lez-programs` is built against (ADR 8) — so there are now three revisions in
+the estate and `m0/` deliberately stays on the one its figures were measured against.
+
+**M1-05 is not affected either.** M1-04a resolved it by not using `lgs`: see below.
+What remains open is SPEL, which matters to M2.
 
 A spike established the following, and it is all reproducible from
 `logos-co/scaffold` at `9fcc3766`:
@@ -68,10 +102,91 @@ A spike established the following, and it is all reproducible from
 - Upstream scaffold #240 / PR #246 covers `setup`, `run` and `doctor`, but not
   `test-node`.
 
-**Decide the pin before M1 writes `verifier-core`.** Moving off v0.2.1 later means
-re-measuring every figure and reissuing the report, and possibly API churn rather than
-only new numbers. Two questions for Logos: which pin the estate is standardising on,
-and the timeline for #246 including whether `test-node` is in scope.
+### How M1-04a resolved this, for integration tests
+
+The blocker was never LEZ. It was `lgs`: `test-node` generates a v0.1.2-shaped
+`sequencer_config.json` and cannot start a v0.2.x sequencer, so using it forced a
+choice between the revision the figures are built against and the revision the
+toolchain pins.
+
+`scripts/lez-sequencer.sh` skips scaffold and runs the two services LEZ itself runs,
+deriving the revision from the committed product lockfiles so no mismatch can enter.
+The full decision, including why CI pulls a prebuilt image rather than building LEZ, is
+[ADR 12](../adr/0012-a-standalone-lez-sequencer-without-lgs-run-from-a-prebuilt-image.md);
+the script's own header carries the operational detail.
+
+One distinction to keep in view: the sequencer blocks on Bedrock's `/time/info` at
+startup and never opens its RPC port without it, so **Bedrock is not optional** — but
+that is a startup dependency and nothing more. It is *not* a `maxAge` time source. That
+answer is the clock program, ADR 13.
+
+**Still open, and now M2's question rather than M1's:** SPEL stays pinned to v0.1.2
+regardless of which LEZ the sequencer runs, so the aggregator program in M2-01 is where
+the version question actually bites. A v0.2.x-aligned SPEL exists (scaffold
+`3d639076` vendors v0.2.0-rc3, against the default `73fc462e`'s v0.1.2), which is the
+first thing to try. Deploying a program through `lgs` may need the same treatment as
+`test-node` did.
+
+## Open: the LGPL-3.0 dependency in LEZ's host graph
+
+M1-04's licence gate found copyleft in the dependency graph. It needs a stated
+decision rather than an unread exception.
+
+| crate | licence | how it arrives |
+| --- | --- | --- |
+| `malachite`, and its `-base`, `-float`, `-nz`, `-q` crates | LGPL-3.0-only | `lee_core` → `risc0-zkvm` → `risc0-circuit-rv32im` |
+| `downloader` | LGPL-3.0-or-later | build-time only, under `risc0-circuit-recursion` |
+| `option-ext` | MPL-2.0 | build-time only, under risc0's kernel build |
+
+The build-time two are unremarkable: they run during a build and are linked into
+nothing that ships. `malachite` is the one to decide about, and the scope is narrower
+than the table implies. It arrives only when risc0's **proving** feature is enabled,
+which is this measurement workspace's configuration: the five LGPL crates are in
+`m0/Cargo.lock` and **absent from the product lockfile**, so no shipped host binary
+links them today. That will change if a product binary ever proves locally rather than
+delegating, which is worth knowing before the relayer grows a proving path. No guest is
+affected either: the guest workspaces resolve separately and the gate is clean against
+all six of their lockfiles.
+
+No first-party code pulls it in, and LEZ itself ships `MIT or Apache-2.0` while carrying
+it, so this is an inherited position rather than a chosen one. But RFP-020 requires an
+open-source deliverable and the RFP-020 proposal committed to a gate that fails on
+copyleft, transitive dependencies included, so it is recorded as a narrow per-crate
+exception in `deny.toml` and raised here rather than waved through. The gate itself is
+[ADR 1](../adr/0001-dual-licence-enforced-by-a-machine-checked-allowlist.md).
+
+## Open: questions outstanding with Logos
+
+Four, in descending order of how much they block delivery. All four concern
+repositories outside this one, which is why they are tracked here rather than resolved
+in code.
+
+**1. Which LEZ pin the estate is standardising on**, and the timeline for scaffold
+PR #246 — including whether `test-node` is in scope. Three revisions are now live
+across `m0/`, the product and `lgs`. Detail in *Open: which LEZ version* above.
+
+**2. Is `logos-co/spel` PR #212 merging, and when.** Not "is there an admin-authority
+interface" — there is, and it is written. The PR has had no activity since 2026-05-20,
+and M2-06 through M2-10 are designed against its `#[require_admin(config)]` plus
+`AdminConfig` shape with a shim held in reserve (ADR 14). One naming trap: the RFP-001
+milestone text promises `renounce_admin` where the code implements `revoke_admin`.
+
+**3. Three Logos crates ship without licence metadata.** `twap_oracle_core`,
+`spel-framework-core` and `spel-framework-macros` declare no `license` field, so
+cargo-deny reports them as unlicensed. They are not: `lez-programs` ships a LICENSE
+file (MIT) and `spel` ships LICENSE-MIT and LICENSE-APACHE-v2, and the terms are
+permissive and compatible with the delivery licences. `deny.toml` carries three
+`[[licenses.clarify]]` entries rather than a widened allowlist, because a
+clarification names one crate and can be checked. This is the cheapest of the four
+asks: a one-line `license = "..."` in each manifest removes all three entries and
+stops every downstream consumer having to make the same judgement call privately.
+
+**4. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
+closer to a defect report than a preference: the account-type crate needs neither
+risc0 nor `uniswap_v3_math` to carry six Borsh fields. Splitting it into a standalone
+crate with relaxed pins — or at minimum loosening `=3.0.5` to `^3.0.5` — would make the
+canonical account usable by the external adaptors it was explicitly written for. What
+its current pins cost this repository is in ADR 8 and ADR 9.
 
 ## Changing any of this
 

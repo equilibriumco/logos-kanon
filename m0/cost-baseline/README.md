@@ -352,7 +352,7 @@ each recovery is an independent scalar multiplication on the curve with nothing
 shared between them, so `total = M x constant`. The flat per-recovery column and
 the linear total column are the same fact viewed two ways, not a contradiction.
 
-What makes this worth stating is the absence of the alternative: if recoveries
+What makes this significant is the absence of the alternative: if recoveries
 could share work, per-recovery cost would *fall* as the signer count rose and the
 total would grow sublinearly. It doesn't, so there is no free amortization to
 exploit. The residual variation under 0.3% is the scalar-dependent
@@ -453,7 +453,7 @@ within one configuration, `hash + recover` minus `recover only`:
 | mixed         | 51,956           | 2.87%           | -1.53 s (noise)  | **0**             |
 
 Two entries need reading carefully. Software keccak's `-1.53 s` is not a speedup
-from doing more work; it is below the noise floor, and the honest reading across
+from doing more work; it is below the noise floor, and the reading supported across
 all three machines (+0.45 s, -0.82 s, -1.92 s) is that software keccak costs
 approximately nothing to prove at this scale.
 
@@ -765,10 +765,11 @@ Losing secp256k1 raises cycles roughly 20x. Gaining keccak256 *lowers* cycles by
 about 44,000 while adding 223 KB of proof. Exact equality catches both, but only the
 proof-size assertion makes the second unmistakable in the dimension where it hurts.
 
-Both suites run in CI on x86_64 and, for pushes to `main`, on ARM64
-(`.github/workflows/guardrails.yml`). The two architectures assert the same
-constants, so the cross-machine reproducibility claim above is a standing check
-rather than a one-off observation. CI builds with `--locked` and
+Both suites run in CI on x86_64 (`.github/workflows/guardrails.yml`), which makes
+the figures a standing regression gate. The cross-*architecture* claim above is a
+one-off observation rather than a standing check: it was measured across three
+machines and two architectures during M0, and ARM64 was retired from CI afterwards
+because it is not a delivery target. CI builds with `--locked` and
 `RISC0_BUILD_LOCKED=1`, since the guest workspaces carry their own lockfiles and the
 guest ELF is what the counts measure.
 

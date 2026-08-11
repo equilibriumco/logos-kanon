@@ -1,0 +1,20 @@
+# The IDL for the aggregator program and the re-exported RFP-019 price-account
+# standard. Emitted as a standalone artefact later.
+#
+# "Re-exported, not forked" is the reason this is its own crate: the standard's
+# definition stays RFP-019's, and consumers get one artefact that carries both.
+[package]
+name = "kanon-idl"
+description = "IDL for the Kanon aggregator program and the re-exported RFP-019 price account standard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The canonical price account, imported rather than restated. The RFP-019
+# standard is re-exported, not forked, which is the difference between honouring
+# it and paraphrasing it.
+twap_oracle_core.workspace = true
+
+[dev-dependencies]
+serde_json = "1"

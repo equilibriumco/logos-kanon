@@ -3,30 +3,64 @@
 RFP-020. Built by Equilibrium for Logos. Dual licensed MIT and Apache-2.0.
 
 **Start with the M0 report**, `m0/M0-report.pdf`. It is the M0 deliverable: what a
-RedStone price update costs inside a LEZ program, how that was measured, what we
-recommend, and the decisions we need from Logos.
+RedStone price update costs inside a LEZ program, how that was measured, the
+recommendations that follow, and the decisions outstanding with Logos.
 
 The headline: a 3-of-N single-feed update costs **1,906,737 cycles**, 5.68% of LEZ's
-32M per-transaction budget, and secp256k1 recovery is 95% of it.
+32M per-transaction budget, and secp256k1 recovery and signature parsing are 88.97%
+of it.
+
+M1 is in progress. Its foundations are in place: the crate layout, CI, the licence
+gate, the traceability matrix and a standalone LEZ sequencer. The verification core
+itself is not written yet, and every crate says so in its own documentation.
+`TRACEABILITY.md` records what is done and what is not.
 
 ## Layout
 
 | | |
 |---|---|
-| `m0/` | M0's measurement harnesses, report and pinned versions. Delivered; see below |
+| `verifier-core/` | the one verification implementation. Both modes call it and it depends on neither |
+| `methods/` | the RISC Zero guest build for product code; `methods/guest/` is the guest workspace |
+| `pull-lib/` | public-mode pull: inline verification inside a consumer program |
+| `aggregator-program/` | push mode: the SPEL program that verifies and publishes |
+| `kanon-idl/` | IDL for the program, and the RFP-019 price account re-exported from the crate that defines it |
+| `kanon-sdk/` | the SDK over both modes |
+| `kanon-relayer/` | the headless relayer daemon |
+| `kanon-app/` | the Basecamp mini-app dashboard. Not a cargo crate |
+| `reference-consumers/` | the two reference consumers, one per mode |
+| `examples/` | runnable examples for the documented developer journeys |
+| `traceability/` | the RFP-020 requirement matrix and the check that keeps it true |
+| `adr/` | the architecture decision records: why the repository is shaped the way it is |
+| `scripts/` | `lez-sequencer.sh`: a standalone LEZ sequencer for integration tests |
+| `m0/` | M0's measurement harnesses, report and pinned versions. Delivered; a workspace of its own, see below |
+| `deny.toml` | the licence gate: an allowlist, enforced in CI over every workspace |
 | `shell.nix` | dev shell: host Rust toolchain and the build prerequisites |
 
-M1 adds the product crates at this level: `verifier-core`, `methods/guest`,
-`aggregator-program`, `pull-lib`, `kanon-idl`, `kanon-sdk`, `kanon-relayer`,
-`kanon-app`, `reference-consumers` and `examples`. `m0/` is separate so the
-measurement harnesses do not read as product code once those arrive.
+Which milestone fills which crate is in `TRACEABILITY.md` and in each crate's own doc
+comment.
+
+### Workspaces
+
+Two, plus the guests, and the separation is load-bearing rather than tidy.
+
+| workspace | lockfile | what it is for |
+|---|---|---|
+| the repository root | `Cargo.lock` | the product crates. Pins move here, as ordinary upgrades |
+| `m0/` | `m0/Cargo.lock` | the measurement harnesses. Pins are frozen to the toolchain the published figures were measured on |
+| each `*/guest/` | its own | cross-compiles to `riscv32im-risc0-zkvm-elf`, with its own `[patch.crates-io]` |
+
+M0's figures are a property of an exact toolchain, so one shared lockfile would mean
+an ordinary product upgrade could move a number in a delivered report, silently, in a
+green build. Two lockfiles let each side move on its own terms. The cost is that
+`cargo test --workspace` no longer runs everything: `ci.yml` covers the product and
+`guardrails.yml` covers `m0/`, which is the division those workflows already had.
 
 ### `m0/`
 
 | | |
 |---|---|
-| `M0-report.pdf` | the report. Read this first |
-| `versions.md` | what to install for the figures to reproduce, and the LEZ version question |
+| `M0-report.pdf` | the report, and the place to start |
+| `versions.md` | what to install for the figures to reproduce, and the open version questions |
 | `cost-baseline/` | the two primitives on bare RISC Zero, no LEZ dependency at all |
 | `lez-probe/` | the same workload inside a real LEZ program, via `lee_core` |
 
@@ -40,12 +74,13 @@ budget. Each README covers its own method in full.
 From this directory, inside `nix-shell` on NixOS:
 
 ```sh
+cd m0
 cargo test --release --locked --workspace              # every published figure, seconds
 cargo test --release --locked --workspace -- --ignored # the proving figures, minutes
 ```
 
 Every number in the report is asserted by exact equality in one of the two guardrail
-suites, and both run in CI on x86_64 and ARM64. A guardrail failure is a prompt to
+suites, and both run in CI on x86_64. A guardrail failure is a prompt to
 re-measure and re-tag deliberately, not necessarily a defect: cycle counts are a
 deterministic function of the guest ELF and its input, so any toolchain or dependency
 change is meant to fail there rather than pass quietly.
@@ -55,3 +90,97 @@ toolchain, managed by `rzup` outside Nix. On NixOS that needs
 `programs.nix-ld.enable = true`, because rzup ships prebuilt dynamically linked
 binaries. `m0/cost-baseline/README.md` has the full setup for both NixOS and
 non-NixOS.
+
+## CI
+
+Two workflows, split so that a red tick means one thing rather than two.
+
+`guardrails.yml` asks whether the measured cycle counts moved, on x86_64. A failure
+there is a prompt to re-measure. M0-11 established that the figures are architecture
+independent, across three machines and two architectures, and the report records it;
+ARM64 is not a delivery target, so that finding is not re-confirmed on every push.
+
+`ci.yml` is everything else, and a failure there means the code is wrong:
+
+| job | what it gates |
+|---|---|
+| `lint` | `cargo fmt` and `cargo clippy -D warnings` over the whole workspace |
+| `build-test` | the product crates build and their tests pass |
+| `no-std` | `verifier-core` and `pull-lib` build for `riscv32im-unknown-none-elf` |
+| `guest` | product code cross-compiles to a real guest ELF with the pinned rzup toolchain |
+| `licenses` | `cargo deny`, on the product workspace, `m0/`, and each of the six guest workspaces |
+| `traceability` | every requirement has a row, and every row's evidence exists |
+| `sequencer` | a standalone LEZ sequencer comes up and serves RPC, from a prebuilt image |
+
+## Licensing
+
+Dual MIT and Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`), with third-party
+components and the RedStone boundary recorded in `NOTICE`.
+
+RFP-020's open-source requirement makes this a constraint rather than a preference,
+so it is enforced rather than asserted: `deny.toml` is an allowlist and
+`cargo deny check licenses` runs in CI over the product workspace, `m0/` and every
+guest workspace, transitive dependencies included. A licence that is not on the list fails
+the build, which is the intended behaviour. BUSL-1.1 and the GPL family are
+denied, which is also what enforces the RedStone boundary, since the RedStone
+Rust SDK sits in a monorepo alongside BUSL packages.
+
+Every exception is per-crate and commented in `deny.toml`. All of them are RISC Zero
+host or build-time crates reached through LEZ's own SDK; none is reachable from a
+guest. The LGPL ones are confined to the measurement workspace's proving path and are
+absent from the product lockfile, and they remain an open question with Logos rather
+than a chosen position. See *Open: the LGPL-3.0 dependency* in `m0/versions.md`.
+
+```sh
+cargo deny check licenses bans sources
+```
+
+## Requirement traceability
+
+`TRACEABILITY.md` maps every RFP-020 requirement to the tasks that implement it and
+the evidence that verifies it. It is generated, and the generator is not the point:
+
+```sh
+cargo test -p traceability                                  # the gate
+cargo run -p traceability --bin render-traceability         # regenerate the document
+```
+
+The check fails if a requirement has no row, if a row names a test function, CI job or
+document that does not exist, or if the rendered file has drifted from its sources. A
+row cannot claim `verified` on the strength of a document alone. That is what makes
+Supportability 3 (at least one test per hard requirement) a fact about the repository
+rather than a claim in a table.
+
+## Integration tests against a LEZ sequencer
+
+RFP-020 Supportability 2 asks for end-to-end tests against a LEZ sequencer in
+standalone mode, in CI. `scripts/lez-sequencer.sh` is that sequencer:
+
+```sh
+scripts/lez-sequencer.sh pin      # the LEZ revision the product resolves
+scripts/lez-sequencer.sh build    # clone it and build sequencer_service (minutes, cached)
+scripts/lez-sequencer.sh fetch    # or pull a prebuilt one, which is what CI does
+scripts/lez-sequencer.sh start    # bedrock in docker, then the sequencer; prints the RPC URL
+scripts/lez-sequencer.sh smoke    # assert it serves RPC and is producing blocks
+scripts/lez-sequencer.sh stop
+```
+
+Needs a docker daemon with the compose plugin, plus git and curl; `nix-shell` covers
+everything but docker itself.
+
+CI does not build LEZ. A cold build ran past 90 minutes on a standard runner, and
+because a timeout cancels the job before `actions/cache` saves, the cache could never
+warm up: every run was cold and every run was killed. So the sequencer is treated the
+way Bedrock already is, as an image to pull. `lez-sequencer-image.yml` builds it once
+per LEZ revision and publishes
+`ghcr.io/equilibriumco/kanon-lez-sequencer:<rev>`; `fetch` unpacks that into the layout
+`build` would have produced. **Run that workflow after a pin bump** — CI fails naming
+it rather than starting an hour-long build.
+
+The revision is read from the product lockfiles, so the sequencer is always built from
+the same LEZ commit the product's `lee_core` resolves to. `m0/` is skipped on purpose:
+it pins the LEZ its published figures were measured against, which is no longer the one
+the product tracks. That is deliberate, and it is why this does not use
+the `lgs` toolchain: `lgs` pins its own LEZ version, and at the revision this
+repository is built against its `test-node` will not start one. The script's header
+and `m0/versions.md` have the details.

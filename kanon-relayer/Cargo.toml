@@ -1,0 +1,16 @@
+# The headless relayer daemon. Not implemented yet.
+#
+# A binary, not a library, because the requirement is specific: a Logos module
+# accompanied by a Logos Core headless CLI/daemon, runnable as a standalone
+# long-running process with no user-facing app. Equilibrium operates this one
+# under the SLA, so its logging, wallet monitoring and shutdown behaviour are
+# deliverables rather than conveniences.
+[package]
+name = "kanon-relayer"
+description = "Headless relayer: fetches signed RedStone packages from the DDL gateways and submits them to the adaptor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kanon-sdk.workspace = true

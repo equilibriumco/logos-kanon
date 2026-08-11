@@ -6,9 +6,9 @@ adds around that verification, and how the total sits against LEZ's
 per-transaction budget.
 
 It is deliberately **independent of `m0/cost-baseline/`** in what it measures. The two
-share the root workspace, the risc0 pin and the host-side signing crates, so that
-`cargo build --workspace` covers the repository and so that the two sets of figures
-are directly comparable. What is not shared is the measured code:
+share the `m0/` workspace, the risc0 pin and the host-side signing crates, so that
+`cargo build --workspace` from `m0/` covers both harnesses and so that the two sets of
+figures are directly comparable. What is not shared is the measured code:
 the crypto is duplicated in `methods/guest/src/bin/lez_verify.rs` rather than
 imported, so each project's guest ELF stands alone. M1 resolves that duplication by
 promoting a single `verifier-core` that both consume.
@@ -246,9 +246,24 @@ is not a clean attribution. The framework's own share, measured directly, is the
 floor plus the instruction handling: **158,290 cycles at 3 signers, 0.47% of the
 budget and 8.3% of the program**.
 
+**The byte comparison above carries the same caveat as the cycle one, and more of
+it.** The two harnesses do not measure a proof the same way: `cost-baseline` records
+`bincode::serialize(&receipt)` while this probe records
+`borsh::to_vec(&receipt.inner)` — a different encoder over a different object, since
+`Receipt` carries the journal and `receipt.inner` does not. The 1,873-byte delta is
+therefore partly an encoding artefact and its sign is not reliable; the directly
+measured 158,290 cycles is the trustworthy statement about what the framework costs.
+Within either harness the byte figures are sound, because each table uses one encoder
+throughout, which is what the mixed-versus-accelerated comparison rests on. Aligning
+the two call sites is a one-line change, but it moves published constants
+(`FLOOR_PROOF`, `VERIFY_*_PROOF`, `MIXED_3_SIGNERS_PROOF`) and means re-running the
+ignored proving tests and re-issuing the report tables, so it is recorded here rather
+than done in passing.
+
 The floor is worth noting on its own: any LEZ program costs at least 8.81 s and
-244 KB to prove, against 2.23 s and 209 KB for an empty risc0 guest. Verification
-is still the overwhelming majority, roughly 127 s of the 136 s.
+244 KB to prove, against 2.23 s and 209 KB for an empty risc0 guest — a cross-harness
+byte pair, so subject to the caveat above. Verification is still the overwhelming
+majority, roughly 127 s of the 136 s.
 
 ### What this settles
 
@@ -430,11 +445,12 @@ execution per cycle.
 - **Done: the configuration is now machine-checked, in CI.** See *Guardrails* below.
   The companion suite in `m0/cost-baseline/host/tests/guardrails.rs` pins the
   bare-RISC-Zero figures the same way, and `.github/workflows/guardrails.yml` runs
-  both on x86_64 and, for pushes to `main`, on ARM64.
+  on x86_64. ARM64 was an M0 exercise and is no longer a standing check.
 - **Done: every version requirement is an exact pin.** A caret range would let the
   software arm drift to a different patch release than the fork tags the other arms
   use, which is worth about 0.01% on the recovery figures and confounds the
-  comparison. Recorded in `m0/versions.md`, which is also where M0-01's pin list lives.
+  comparison. Recorded in *Why every requirement is an `=` pin* in `m0/versions.md`,
+  which is also where M0-01's pin list lives.
 - **Deferred to the toolchain task in M1: the standalone sequencer and `lgs`.** `lgs`
   is the standalone sequencer path, not an alternative to it, and it would not distort
   a measurement. It is simply not on the path from a guest ELF to a cycle count, so no
@@ -453,8 +469,14 @@ execution per cycle.
   deep API break) but `test-node` **will not start** it, because scaffold generates a
   v0.1.2-shaped
   `sequencer_config.json` and v0.2.1 wants a numeric `genesis_id`. SPEL also stays
-  pinned to v0.1.2 regardless. Options and evidence are in *The two LEZ versions* in
+  pinned to v0.1.2 regardless. Options and evidence are in *Open: which LEZ version* in
   `m0/versions.md`. This is a decision for M0-13.
+
+  **Since resolved for M1-05, by not using `lgs`.** M1-04a runs a Bedrock node and
+  `sequencer_service` built from the revision `Cargo.lock` resolves, which is what LEZ's
+  own integration tests do; `scripts/lez-sequencer.sh` is the harness and CI asserts it.
+  What is still open is SPEL's pin, which lands on M2 rather than here. See *How M1-04a
+  resolved this, for integration tests* in `m0/versions.md`.
 
 ## Guardrails
 
@@ -474,7 +496,7 @@ cargo test --release -p lez-probe               # fast, under a second
 cargo test --release -p lez-probe -- --ignored  # proving, minutes
 ```
 
-The fast tests run in CI on both architectures, which is what makes them a
+The fast tests run in CI on x86_64, which is what makes them a
 regression gate; the proving tests are excluded there because they are neither fast
 nor hardware independent. See `.github/workflows/guardrails.yml`.
 

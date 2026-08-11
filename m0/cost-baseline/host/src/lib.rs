@@ -302,6 +302,10 @@ pub fn execute_with<T: serde::Serialize>(elf: &[u8], input: &T, opts: Opts) -> R
         let started = Instant::now();
         let info = default_prover().prove(build_env()?, elf)?;
         run.prove_samples.push(started.elapsed().as_secs_f64());
+        // bincode over the whole `Receipt`, journal included. `lez-probe` measures
+        // borsh over `receipt.inner` instead, so the two harnesses' byte figures are
+        // NOT comparable with each other -- only within one harness, where every row
+        // uses this encoder. Changing either side moves a published constant.
         run.proof_bytes = Some(bincode::serialize(&info.receipt)?.len());
         let flavour = match &info.receipt.inner {
             risc0_zkvm::InnerReceipt::Composite(_) => "composite",

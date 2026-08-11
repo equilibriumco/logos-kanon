@@ -1,0 +1,14 @@
+# Public-mode pull verification. Not implemented yet.
+#
+# The RFP requires that a consumer using only pull can integrate without
+# registering a feed against the aggregator, so this crate must never depend on
+# `aggregator-program`. CI asserts that rather than trusting review.
+[package]
+name = "pull-lib"
+description = "Inline RedStone payload verification for public-mode LEZ consumer programs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+verifier-core.workspace = true
