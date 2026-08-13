@@ -186,7 +186,13 @@ pub fn verify_feed<B: VerifierBackend>(
             if point.feed_id != config.feed_id() {
                 continue;
             }
-            let value = Value::from_be_slice(point.value).ok_or(VerifyError::ValueOutOfRange)?;
+            // Unrepresentable values are skipped like zero values, not fatal.
+            // Erroring here would let one configured signer deny the feed,
+            // which is the thing M-of-N exists to prevent. RedStone sanitises
+            // instead of rejecting, so this also keeps us aligned with it.
+            let Some(value) = Value::from_be_slice(point.value) else {
+                continue;
+            };
             if value.is_zero() {
                 continue;
             }
@@ -451,5 +457,286 @@ mod tests {
         let verified = verify_feed(&payload, &config, &InProgramBackend::new()).expect("verifies");
 
         assert_eq!(verified.value, Value::from_be_slice(&[50]).expect("fits"));
+    }
+
+    #[test]
+    fn an_unknown_signer_is_skipped_and_the_payload_still_verifies() {
+        // Three authorised signers plus a stranger. RedStone publishes payloads
+        // carrying more signers than any one consumer configures, so this is the
+        // healthy case rather than an attack.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let stranger = signing_key(0x99);
+
+        let mut builder = PayloadBuilder::default();
+        for key in &keys {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], 1);
+        }
+        let bytes = builder
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0x27, 0x0F])], 1)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+        let verified = verify_feed(&payload, &config, &InProgramBackend::new()).expect("verifies");
+
+        assert_eq!(verified.signers, 3, "the stranger is not counted");
+        assert_eq!(
+            verified.value,
+            Value::from_be_slice(&[60]).expect("fits"),
+            "and cannot move the median"
+        );
+    }
+
+    #[test]
+    fn one_signer_cannot_reach_the_threshold_alone_by_repeating_the_feed() {
+        // The anti-inflation rule. Without it a single signer occupies as many
+        // slots as it sends packages.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 20])], 2)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 30])], 3)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::ReoccurringSigner)
+        );
+    }
+
+    #[test]
+    fn a_zero_value_does_not_count_toward_the_threshold() {
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], 1)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::ThresholdNotMet {
+                met: 2,
+                required: 3
+            }),
+            "two non-zero reports out of three"
+        );
+    }
+
+    #[test]
+    fn a_payload_with_no_packages_for_the_requested_feed_is_a_threshold_failure() {
+        // Not a decode error: the payload is well formed, it just says nothing
+        // about the feed we asked about.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys {
+            builder = builder.signed_package(key, &[(b"ETH", &[0, 0, 0, 5])], 1);
+        }
+        let bytes = builder.build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::ThresholdNotMet {
+                met: 0,
+                required: 3
+            })
+        );
+    }
+
+    #[test]
+    fn unauthorised_is_reported_when_the_skipped_signers_would_have_made_quorum() {
+        // met = 2, one distinct unknown, threshold 3. Authorising that signer
+        // would have reached quorum, so the signer set is what failed. Reporting
+        // "2 of 3" here would send an operator to look for missing data.
+        let configured = keys(3);
+        let set = signer_set(&configured);
+        let stranger = signing_key(0x99);
+
+        let bytes = PayloadBuilder::default()
+            .signed_package(&configured[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
+            .signed_package(&configured[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 30])], 1)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::UnauthorisedSigner)
+        );
+    }
+
+    #[test]
+    fn a_threshold_that_was_unreachable_anyway_is_not_blamed_on_the_signer_set() {
+        // met = 0, one distinct unknown, threshold 3. Even authorising the
+        // stranger leaves one of three, so the honest answer is that too few
+        // signers signed. The naive "nothing matched, so blame the set" rule gets
+        // this wrong.
+        let configured = keys(3);
+        let set = signer_set(&configured);
+        let stranger = signing_key(0x99);
+
+        let bytes = PayloadBuilder::default()
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 30])], 1)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::ThresholdNotMet {
+                met: 0,
+                required: 3
+            })
+        );
+    }
+
+    #[test]
+    fn repeated_packages_from_one_unknown_signer_count_as_one() {
+        // met = 1, three packages from the *same* stranger, threshold 3.
+        // Counting packages would make this look reachable and report
+        // UnauthorisedSigner; counting distinct signers gets it right.
+        let configured = keys(3);
+        let set = signer_set(&configured);
+        let stranger = signing_key(0x99);
+
+        let bytes = PayloadBuilder::default()
+            .signed_package(&configured[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 30])], 1)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 31])], 2)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 32])], 3)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::ThresholdNotMet {
+                met: 1,
+                required: 3
+            })
+        );
+    }
+
+    #[test]
+    fn a_malformed_payload_is_reported_as_malformed_not_as_a_threshold_failure() {
+        // The distinction decode.rs exists to preserve, carried through the
+        // threshold: "not well formed" and "not authorised" stay separate.
+        let keys = keys(1);
+        let set = signer_set(&keys);
+        let valid = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
+            .build();
+        let mut bytes = std::vec![0xDEu8; 16];
+        bytes.extend_from_slice(&valid);
+
+        let payload = Payload::decode(&bytes).expect("framing decodes");
+        let config = FeedConfig::try_new(b"BTC", &set, 1).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::Malformed(
+                crate::decode::DecodeError::TrailingBytes(16)
+            ))
+        );
+    }
+
+    #[test]
+    fn an_unrepresentable_value_costs_only_that_signer_not_the_whole_feed() {
+        // The reason this is a skip and not an error: erroring would let a single
+        // configured signer deny the feed to everyone, which is exactly what an
+        // M-of-N threshold exists to prevent. Three good signers plus one sending
+        // an unrepresentable width must still produce a price.
+        let keys = keys(4);
+        let set = signer_set(&keys);
+        let wide = [0x01u8; 33];
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &wide)], 1)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+        let verified = verify_feed(&payload, &config, &InProgramBackend::new()).expect("verifies");
+
+        assert_eq!(verified.signers, 3, "the oversized signer is not counted");
+        assert_eq!(verified.value, Value::from_be_slice(&[20]).expect("fits"));
+    }
+
+    #[test]
+    fn an_unrepresentable_value_can_still_leave_the_threshold_unmet() {
+        // Skipping is not silence: with too few good signers left, the caller
+        // still gets a rejection, just one that names the threshold rather than
+        // blaming the payload's shape.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let wide = [0x01u8; 33];
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &wide)], 1)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::ThresholdNotMet {
+                met: 1,
+                required: 3
+            })
+        );
+    }
+
+    #[test]
+    fn the_threshold_boundary_accepts_at_m_and_rejects_at_m_minus_one() {
+        let keys = keys(5);
+        let set = signer_set(&keys);
+
+        for reporting in 1..=5usize {
+            let mut builder = PayloadBuilder::default();
+            for key in keys.iter().take(reporting) {
+                builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 10])], 1);
+            }
+            let bytes = builder.build();
+            let payload = Payload::decode(&bytes).expect("well formed");
+            let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+            let outcome = verify_feed(&payload, &config, &InProgramBackend::new());
+
+            if reporting >= 3 {
+                assert_eq!(
+                    outcome.map(|v| v.signers),
+                    Ok(u8::try_from(reporting).expect("at most five")),
+                    "{reporting} signers must meet a threshold of 3"
+                );
+            } else {
+                assert_eq!(
+                    outcome,
+                    Err(VerifyError::ThresholdNotMet {
+                        met: u8::try_from(reporting).expect("at most five"),
+                        required: 3
+                    }),
+                    "{reporting} signers must not meet a threshold of 3"
+                );
+            }
+        }
     }
 }
