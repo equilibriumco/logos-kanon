@@ -27,6 +27,7 @@
 pub mod backend;
 pub mod decode;
 pub mod error;
+pub mod value;
 
 pub use backend::{BackendError, Signature, SignerAddress, VerifierBackend};
 pub use decode::{DataPackage, DataPoint, DecodeError, Payload};
