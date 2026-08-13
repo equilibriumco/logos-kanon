@@ -19,6 +19,11 @@ pub enum VerifyError {
     /// The payload is not well formed. Carries the decoder's reason.
     Malformed(DecodeError),
     /// A signature was malformed, malleable, or yielded no key.
+    /// Nothing constructs this today: an unrecoverable signature is skipped
+    /// rather than rejected (ADR 15), so one malformed package — needing no
+    /// key and no valid signature — cannot deny the feed to everyone else it
+    /// serves. A future single-package API, where the caller names one
+    /// package and expects it to verify, is where this becomes reportable.
     InvalidSignature(BackendError),
     /// No configured signer signed, and the packages that were skipped as
     /// unauthorised would have been enough to reach the threshold.

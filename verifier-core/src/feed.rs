@@ -13,10 +13,16 @@ use crate::{
 
 /// The most signers one feed may configure.
 ///
-/// A real limit rather than a guard: it sizes the two fixed buffers `verify_feed`
-/// walks with, which is how the threshold runs without an allocator. RedStone
-/// caps at 255 and live feeds run ten to twenty, so this leaves headroom.
-/// Raising it costs stack and nothing else.
+/// A real limit rather than a guard: it sizes three fixed stack buffers
+/// `verify_feed` walks with — `reported` (`[Option<Value>; 32]`, 1,056 bytes),
+/// `unknown` (`[SignerAddress; 32]`, 640 bytes) and `collected` (`[Value; 32]`,
+/// 1,024 bytes), about 2.7 KB in one frame — which is how the threshold runs
+/// without an allocator. `collected` exists only because `median` takes
+/// `&mut [Value]` while `reported` holds `Option<Value>`; sorting `reported` in
+/// place would remove it and save a kilobyte of guest stack, and is deliberately
+/// left for later rather than folded in here. RedStone caps at 255 and live
+/// feeds run ten to twenty, so this leaves headroom. Raising it costs stack and
+/// nothing else.
 pub const MAX_SIGNERS: usize = 32;
 
 /// A feed, its authorised signers, and how many of them must agree.
@@ -145,9 +151,10 @@ pub struct VerifiedFeed {
 ///
 /// # Errors
 ///
-/// [`VerifyError`] for a malformed payload, an unusable signature, one signer
-/// supplying the feed twice, a value too wide to represent, or a threshold that
-/// was not reached.
+/// [`VerifyError`] for a malformed payload, one signer supplying the feed
+/// twice, or a threshold that was not reached. An unrecoverable signature and
+/// an unrepresentable value are skipped rather than reported; see
+/// [`VerifyError::InvalidSignature`] and [`VerifyError::ValueOutOfRange`].
 pub fn verify_feed<B: VerifierBackend>(
     payload: &Payload<'_>,
     config: &FeedConfig<'_>,
@@ -164,12 +171,26 @@ pub fn verify_feed<B: VerifierBackend>(
 
     let walked = payload.for_each_package(|package| {
         let digest = backend.keccak256(package.signable());
-        let signer = backend
-            .recover_signer(&digest, &package.signature)
-            .map_err(VerifyError::InvalidSignature)?;
+        // An unrecoverable signature (bad recovery id, r/s outside the curve
+        // order, a malleable high-s) is skipped, not fatal: it needs no key and
+        // no valid signature to produce, which makes propagating it the
+        // cheapest denial-of-service primitive in this design. RedStone skips
+        // it the same way (`Some(address) => address, _ => continue`).
+        let Ok(signer) = backend.recover_signer(&digest, &package.signature) else {
+            return Ok(());
+        };
 
         let Some(index) = config.signers().iter().position(|s| *s == signer) else {
-            if unknown_count < MAX_SIGNERS
+            // Recorded only if the package actually carries a usable data
+            // point for the requested feed: an unknown signer that reported
+            // nothing for this feed could not have moved the threshold even
+            // if it had been authorised.
+            let contributes = package.data_points().any(|point| {
+                point.feed_id == config.feed_id()
+                    && Value::from_be_slice(point.value).is_some_and(|value| !value.is_zero())
+            });
+            if contributes
+                && unknown_count < MAX_SIGNERS
                 && !unknown
                     .get(..unknown_count)
                     .is_some_and(|seen| seen.contains(&signer))
@@ -182,6 +203,13 @@ pub fn verify_feed<B: VerifierBackend>(
             return Ok(());
         };
 
+        // Skipping rather than erroring on a missing slot is deliberate:
+        // skipping is this crate's right default. Unreachable in practice —
+        // `index` came from `config.signers()`, whose length `try_new` capped
+        // at MAX_SIGNERS — but a missing slot is not this signer's fault.
+        let Some(slot) = reported.get_mut(index) else {
+            return Ok(());
+        };
         for point in package.data_points() {
             if point.feed_id != config.feed_id() {
                 continue;
@@ -196,13 +224,10 @@ pub fn verify_feed<B: VerifierBackend>(
             if value.is_zero() {
                 continue;
             }
-            match reported.get_mut(index) {
-                Some(slot) if slot.is_some() => return Err(VerifyError::ReoccurringSigner),
-                Some(slot) => *slot = Some(value),
-                // Unreachable: `index` came from `config.signers()`, whose length
-                // `try_new` capped at MAX_SIGNERS.
-                None => return Err(VerifyError::ReoccurringSigner),
+            if slot.is_some() {
+                return Err(VerifyError::ReoccurringSigner);
             }
+            *slot = Some(value);
         }
         Ok(())
     });
@@ -319,6 +344,15 @@ mod tests {
     }
 
     #[test]
+    fn exactly_max_signers_signers_is_accepted() {
+        // Only MAX_SIGNERS + 1 is tested elsewhere, so an off-by-one in
+        // `signers.len() > MAX_SIGNERS` would pass every existing test.
+        let many: [SignerAddress; MAX_SIGNERS] =
+            core::array::from_fn(|i| signer(u8::try_from(i + 1).unwrap_or(u8::MAX)));
+        assert!(FeedConfig::try_new(b"BTC", &many, 3).is_ok());
+    }
+
+    #[test]
     fn a_repeated_signer_is_rejected() {
         // Two slots for one address would let it reach any threshold alone.
         assert_eq!(
@@ -331,6 +365,16 @@ mod tests {
     fn the_zero_address_is_not_a_signer() {
         assert_eq!(
             FeedConfig::try_new(b"BTC", &[signer(1), signer(0)], 1).unwrap_err(),
+            ConfigError::ZeroSignerAddress
+        );
+    }
+
+    #[test]
+    fn a_zero_address_paired_with_a_duplicate_reports_zero_signer_address() {
+        // Pins which check wins when both apply: the zero-address check runs
+        // before the duplicate check, not after.
+        assert_eq!(
+            FeedConfig::try_new(b"BTC", &[signer(1), signer(0), signer(1)], 1).unwrap_err(),
             ConfigError::ZeroSignerAddress
         );
     }
@@ -738,5 +782,82 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn an_outsiders_garbage_signature_cannot_deny_the_feed() {
+        // Change 1's regression test, and the most important of the five: no
+        // key and no valid signature are needed to mount this, so if recovery
+        // failure ever propagates again this is the cheapest denial-of-service
+        // vector in the design.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], 1);
+        }
+        let bytes = builder
+            .opaque_package(&[(b"BTC", &[0, 0, 0, 100])], 1, 0xFF)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+        let verified = verify_feed(&payload, &config, &InProgramBackend::new()).expect("verifies");
+
+        assert_eq!(
+            verified.signers, 3,
+            "the garbage package is skipped, not fatal"
+        );
+    }
+
+    #[test]
+    fn strangers_reporting_only_another_feed_do_not_report_unauthorised_signer() {
+        // Change 2's regression test. Recording these as unknown before
+        // checking they carried a usable BTC point would give met = 0,
+        // unknown = 3, and 0 + 3 >= 3 report UnauthorisedSigner — even though
+        // authorising all three would still have produced nothing.
+        let stranger_keys = [signing_key(0x99), signing_key(0x98), signing_key(0x97)];
+        let configured = keys(3);
+        let set = signer_set(&configured);
+
+        let mut builder = PayloadBuilder::default();
+        for key in &stranger_keys {
+            builder = builder.signed_package(key, &[(b"ETH", &[0, 0, 0, 7])], 1);
+        }
+        let bytes = builder.build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::ThresholdNotMet {
+                met: 0,
+                required: 3
+            })
+        );
+    }
+
+    #[test]
+    fn a_single_package_carrying_the_requested_feed_twice_is_reoccurring_signer() {
+        // The cheaper attack: one signature instead of three, reaching the
+        // same rule from the inner point loop rather than across packages.
+        let keys = keys(1);
+        let set = signer_set(&keys);
+        let bytes = PayloadBuilder::default()
+            .signed_package(
+                &keys[0],
+                &[(b"BTC", &[0, 0, 0, 10]), (b"BTC", &[0, 0, 0, 20])],
+                1,
+            )
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 1).expect("valid config");
+
+        assert_eq!(
+            verify_feed(&payload, &config, &InProgramBackend::new()),
+            Err(VerifyError::ReoccurringSigner)
+        );
     }
 }
