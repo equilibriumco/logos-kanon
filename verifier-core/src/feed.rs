@@ -4,7 +4,12 @@
 //! in pull mode the signer set come from the consumer and never from the data,
 //! and nothing here reads a signer, a threshold or a feed id out of a payload.
 
-use crate::{backend::SignerAddress, decode::FEED_ID_BYTES, error::ConfigError};
+use crate::{
+    backend::{SignerAddress, VerifierBackend},
+    decode::{Payload, FEED_ID_BYTES},
+    error::{ConfigError, VerifyError},
+    value::{median, Value},
+};
 
 /// The most signers one feed may configure.
 ///
@@ -116,8 +121,138 @@ impl<'a> FeedConfig<'a> {
     }
 }
 
+/// A price that met its feed's threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedFeed {
+    /// The median across the signers that reported.
+    pub value: Value,
+    /// How many distinct authorised signers reported. Always at least the
+    /// threshold.
+    pub signers: u8,
+}
+
+/// Verifies one feed out of a payload.
+///
+/// Walks the payload once, recovering one signer per package, and counts the
+/// distinct authorised signers that reported a non-zero value for
+/// `config.feed_id()`. Returns the median across them once the threshold is met.
+///
+/// Unknown signers and unrequested feeds are **skipped, not fatal**. That is
+/// RedStone's own rule, and it is what lets one published payload serve consumers
+/// whose signer sets and feed interests differ. Failing the payload on any
+/// unknown signer would hand a denial-of-service primitive to anyone able to
+/// append a package.
+///
+/// # Errors
+///
+/// [`VerifyError`] for a malformed payload, an unusable signature, one signer
+/// supplying the feed twice, a value too wide to represent, or a threshold that
+/// was not reached.
+pub fn verify_feed<B: VerifierBackend>(
+    payload: &Payload<'_>,
+    config: &FeedConfig<'_>,
+    backend: &B,
+) -> Result<VerifiedFeed, VerifyError> {
+    // One slot per configured signer: the slot is both the collection point and
+    // the duplicate check, exactly as RedStone's (feed, signer) matrix cell is.
+    let mut reported: [Option<Value>; MAX_SIGNERS] = [None; MAX_SIGNERS];
+    // Distinct unknown signers. Counting packages instead would let three
+    // packages from one unknown address read as three missing signers.
+    let mut unknown: [SignerAddress; MAX_SIGNERS] =
+        [SignerAddress([0; SignerAddress::LEN]); MAX_SIGNERS];
+    let mut unknown_count = 0usize;
+
+    let walked = payload.for_each_package(|package| {
+        let digest = backend.keccak256(package.signable());
+        let signer = backend
+            .recover_signer(&digest, &package.signature)
+            .map_err(VerifyError::InvalidSignature)?;
+
+        let Some(index) = config.signers().iter().position(|s| *s == signer) else {
+            if unknown_count < MAX_SIGNERS
+                && !unknown
+                    .get(..unknown_count)
+                    .is_some_and(|seen| seen.contains(&signer))
+            {
+                if let Some(slot) = unknown.get_mut(unknown_count) {
+                    *slot = signer;
+                    unknown_count += 1;
+                }
+            }
+            return Ok(());
+        };
+
+        for point in package.data_points() {
+            if point.feed_id != config.feed_id() {
+                continue;
+            }
+            let value = Value::from_be_slice(point.value).ok_or(VerifyError::ValueOutOfRange)?;
+            if value.is_zero() {
+                continue;
+            }
+            match reported.get_mut(index) {
+                Some(slot) if slot.is_some() => return Err(VerifyError::ReoccurringSigner),
+                Some(slot) => *slot = Some(value),
+                // Unreachable: `index` came from `config.signers()`, whose length
+                // `try_new` capped at MAX_SIGNERS.
+                None => return Err(VerifyError::ReoccurringSigner),
+            }
+        }
+        Ok(())
+    });
+
+    match walked {
+        Err(err) => return Err(VerifyError::Malformed(err)),
+        Ok(Err(err)) => return Err(err),
+        Ok(Ok(())) => {}
+    }
+
+    let mut collected = [Value::default(); MAX_SIGNERS];
+    let mut met = 0usize;
+    for value in reported.iter().flatten() {
+        if let Some(slot) = collected.get_mut(met) {
+            *slot = *value;
+            met += 1;
+        }
+    }
+
+    let met_count = u8::try_from(met).unwrap_or(u8::MAX);
+    if met_count < config.threshold() {
+        // Were the skipped packages enough to have reached the threshold? If so
+        // the configured signer set is what failed, not the data.
+        let reachable = met.saturating_add(unknown_count) >= usize::from(config.threshold());
+        return Err(if reachable {
+            VerifyError::UnauthorisedSigner
+        } else {
+            VerifyError::ThresholdNotMet {
+                met: met_count,
+                required: config.threshold(),
+            }
+        });
+    }
+
+    let value = match collected.get_mut(..met).and_then(median) {
+        Some(value) => value,
+        // Unreachable: met >= threshold >= 1. Reported rather than panicked,
+        // because a panic in a guest aborts the transaction.
+        None => {
+            return Err(VerifyError::ThresholdNotMet {
+                met: met_count,
+                required: config.threshold(),
+            })
+        }
+    };
+
+    Ok(VerifiedFeed {
+        value,
+        signers: met_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
 
     fn signer(byte: u8) -> SignerAddress {
@@ -221,5 +356,100 @@ mod tests {
     #[test]
     fn a_threshold_equal_to_the_signer_count_is_allowed() {
         assert!(FeedConfig::try_new(b"BTC", &[signer(1), signer(2)], 2).is_ok());
+    }
+
+    use crate::{
+        backend::InProgramBackend,
+        decode::Payload,
+        test_support::{address_of, signing_key, PayloadBuilder},
+    };
+
+    /// `n` distinct keys, and the signer set they form.
+    fn keys(n: u8) -> std::vec::Vec<k256::ecdsa::SigningKey> {
+        (1..=n).map(signing_key).collect()
+    }
+
+    fn signer_set(keys: &[k256::ecdsa::SigningKey]) -> std::vec::Vec<SignerAddress> {
+        keys.iter().map(address_of).collect()
+    }
+
+    #[test]
+    fn three_of_three_signers_reporting_the_same_price_verifies() {
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], 1_770_000_000_000);
+        }
+        let bytes = builder.build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+        let verified = verify_feed(&payload, &config, &InProgramBackend::new()).expect("verifies");
+
+        assert_eq!(verified.signers, 3);
+        assert_eq!(verified.value, Value::from_be_slice(&[100]).expect("fits"));
+    }
+
+    #[test]
+    fn three_of_five_is_enough_and_the_median_is_over_the_signers_that_reported() {
+        // Five configured, three sign, with different prices. The median is over
+        // the three that reported, not over the configured set.
+        let keys = keys(5);
+        let set = signer_set(&keys);
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1_770_000_000_000)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 30])], 1_770_000_000_000)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 20])], 1_770_000_000_000)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+        let verified = verify_feed(&payload, &config, &InProgramBackend::new()).expect("verifies");
+
+        assert_eq!(verified.signers, 3);
+        assert_eq!(verified.value, Value::from_be_slice(&[20]).expect("fits"));
+    }
+
+    #[test]
+    fn an_even_number_of_reporting_signers_averages_the_middle_two() {
+        let keys = keys(4);
+        let set = signer_set(&keys);
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 30])], 1)
+            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 40])], 1)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+        let verified = verify_feed(&payload, &config, &InProgramBackend::new()).expect("verifies");
+
+        assert_eq!(verified.signers, 4);
+        assert_eq!(verified.value, Value::from_be_slice(&[25]).expect("fits"));
+    }
+
+    #[test]
+    fn a_package_carrying_other_feeds_contributes_only_the_one_requested() {
+        // A RedStone payload is multi-feed even though an update is single-feed,
+        // so unrequested feeds arrive on every real call.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys {
+            builder = builder.signed_package(
+                key,
+                &[(b"ETH", &[0, 0, 0, 7]), (b"BTC", &[0, 0, 0, 50])],
+                1,
+            );
+        }
+        let bytes = builder.build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = FeedConfig::try_new(b"BTC", &set, 3).expect("valid config");
+        let verified = verify_feed(&payload, &config, &InProgramBackend::new()).expect("verifies");
+
+        assert_eq!(verified.value, Value::from_be_slice(&[50]).expect("fits"));
     }
 }
