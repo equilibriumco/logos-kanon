@@ -1,11 +1,11 @@
 //! Every way verification can fail, as one enum.
 //!
-//! U6 asks for clear, actionable errors for every failure mode and names seven.
-//! Two more are here. `ScalingOutOfRange` comes from the proposal and the M1
-//! milestone, which both separate a value out of scale from a value that is zero
-//! or negative. `ReoccurringSigner` is named by neither and is required by the
-//! counting rule: the payload is well formed and its signer is authorised, so
-//! neither `Malformed` nor `UnauthorisedSigner` describes it.
+//! Every failure mode gets its own variant, because a caller that cannot tell
+//! them apart cannot act on any of them. A value out of scale is separate from a
+//! value that is zero or negative, since they point at different faults upstream.
+//! `ReoccurringSigner` is separate again: the payload is well formed and its
+//! signer is authorised, so neither `Malformed` nor `UnauthorisedSigner`
+//! describes it.
 //!
 //! [`DecodeError`] and [`BackendError`] are wrapped rather than flattened.
 //! `decode` exists to keep "not well formed" and "not authorised" apart, and
@@ -40,18 +40,17 @@ pub enum VerifyError {
     /// Rejected rather than counted once, because a signer that can occupy two
     /// slots reaches any threshold alone.
     ReoccurringSigner,
-    /// The package is older than the feed's `maxAge`. Returned by M1-15.
+    /// The package is older than the feed's `maxAge`.
     StalePackage,
-    /// The package does not carry the asset the caller asked for. M1-16.
+    /// The package does not carry the asset the caller asked for.
     AssetMismatch,
     /// The value is zero, negative, or wider than a price can represent.
+    ///
     /// Nothing constructs this today: an unrepresentable value is skipped
     /// rather than rejected (ADR 15), so one configured signer cannot deny a
-    /// feed by sending one. M1-17 adds value-sanity bounds and gives this a
-    /// producer.
+    /// feed by sending one. Value-sanity bounds will give it a producer.
     ValueOutOfRange,
     /// The value's scale or exponent is outside the feed's configured bounds.
-    /// M1-17.
     ScalingOutOfRange,
     /// The caller's feed configuration is itself invalid.
     InvalidConfig(ConfigError),
@@ -131,8 +130,8 @@ mod tests {
 
     #[test]
     fn the_threshold_failure_carries_what_was_reached_and_what_was_needed() {
-        // U6 asks for actionable errors. "not enough signers" without the counts
-        // is not actionable.
+        // "not enough signers" without the counts gives an operator nothing to
+        // act on: one short and three short call for different responses.
         let err = VerifyError::ThresholdNotMet {
             met: 2,
             required: 3,

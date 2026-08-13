@@ -1,8 +1,8 @@
 //! One feed's configuration, and the M-of-N rule over it.
 //!
-//! The configuration is the *caller's*, never the payload's. SEC2 requires that
-//! in pull mode the signer set come from the consumer and never from the data,
-//! and nothing here reads a signer, a threshold or a feed id out of a payload.
+//! The configuration is the *caller's*, never the payload's. In pull mode the
+//! signer set comes from the consumer and never from the data, so nothing here
+//! reads a signer, a threshold or a feed id out of a payload.
 
 use crate::{
     backend::{SignerAddress, VerifierBackend},
