@@ -1186,4 +1186,73 @@ mod tests {
             Err(VerifyError::ScalingOutOfRange)
         );
     }
+
+    #[test]
+    fn a_threshold_of_one_is_met_by_one_signer() {
+        // The lower boundary. Nothing about the walk should special-case it, but
+        // an off-by-one in the comparison would show up here first.
+        let keys = keys(1);
+        let set = signer_set(&keys);
+        let bytes = agreed(&keys, &[0, 0, 0, 42]);
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = feed_config(&set, 1);
+        let verified = verify(&payload, &config).expect("verifies");
+
+        assert_eq!(verified.signers, 1);
+        assert_eq!(verified.value, Value::from_be_slice(&[42]).expect("fits"));
+    }
+
+    #[test]
+    fn a_threshold_equal_to_the_signer_count_needs_every_one_of_them() {
+        // The upper boundary: unanimity, where one silent signer is the whole
+        // difference between a price and a refusal.
+        let keys = keys(5);
+        let set = signer_set(&keys);
+
+        // Named, because `Payload<'a>` borrows the bytes: an inline call is a
+        // temporary that does not outlive the payload built from it.
+        let complete = agreed(&keys, &[0, 0, 0, 77]);
+        let all = Payload::decode(&complete).expect("well formed");
+        let config = feed_config(&set, 5);
+        assert_eq!(verify(&all, &config).expect("verifies").signers, 5);
+
+        let short = agreed(&keys[..4], &[0, 0, 0, 77]);
+        let short = Payload::decode(&short).expect("well formed");
+        assert_eq!(
+            verify(&short, &config),
+            Err(VerifyError::ThresholdNotMet {
+                met: 4,
+                required: 5
+            })
+        );
+    }
+
+    #[test]
+    fn more_unknown_signers_than_the_buffer_holds_neither_panics_nor_overruns() {
+        // The buffer is sized for the configured signers, and the unknown ones
+        // are whoever else happens to be in a payload — a number no consumer
+        // controls. A panic here would abort the transaction rather than refuse
+        // the price.
+        let keys = keys(40);
+        let set = signer_set(&keys[..3]);
+
+        let mut builder = PayloadBuilder::default();
+        for key in &keys[3..] {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 50])], 1);
+        }
+        let bytes = builder.build();
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = feed_config(&set, 3);
+
+        assert!(
+            keys.len() - 3 > MAX_SIGNERS,
+            "the test is only meaningful if the buffer actually fills"
+        );
+        assert_eq!(
+            verify(&payload, &config),
+            Err(VerifyError::UnauthorisedSigner),
+            "thirty-seven strangers and none of the three configured signers"
+        );
+    }
 }
