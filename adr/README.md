@@ -29,6 +29,8 @@ a record of a decision that was later reversed is more useful than no record of 
 | [13](0013-staleness-is-measured-against-the-lez-clock-program.md) | Staleness measured against the LEZ clock program's every-block account | accepted |
 | [14](0014-build-admin-gating-against-the-unmerged-spel-admin-authority.md) | Admin gating built against the unmerged SPEL admin-authority, shim in reserve | accepted, contingency live |
 | [15](0015-redstone-parity-verification-semantics.md) | Verification semantics follow RedStone's Rust SDK, with two divergences | accepted |
+| [16](0016-the-asset-pair-is-a-registration-claim.md) | The asset pair is a registration claim, checked against the caller's expectation | accepted |
+| [17](0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md) | Value sanity is two-level, and prices convert to the account's Q64.64 scale | accepted |
 
 ## How they fit together
 
@@ -43,6 +45,13 @@ states what the guest environment demands of anything either of them touches. AD
 ADR 13 are the two places where an external format and an external clock enter that
 path, and both are decided the same way — take the untrusted thing, bound it, and refuse
 to let a caller choose it.
+
+Three describe what the verifier decides once a payload is in front of it, and they read
+in order: ADR 15 settles who counts and what a skip costs, ADR 16 settles what the feed is
+about, and ADR 17 settles what the agreed number means. The last two both turn on the same
+observation — that the canonical price account says less than it appears to, carrying
+neither the asset semantics of a feed id nor the exponent of a price — so both decisions
+are about supplying, and documenting, what the format leaves out.
 
 The remaining four exist to keep claims verifiable: the licence gate (1), the guardrails
 (10), the traceability checker (11), and a sequencer that cannot drift from the code it
@@ -59,6 +68,13 @@ questions outstanding with Logos*:
 - **Is LEZ's transitive LGPL-3.0 dependency an accepted position for the estate**
   (ADR 1) — and, separately, three Logos crates ship without a `license` field, which a
   one-line manifest change would fix for every downstream consumer (ADR 9).
+
+One is new with M1 and belongs with them:
+
+- **Do RFP-019 consumers read `price` as Q64.64?** The account has no exponent field and
+  its constructor documents the fixed-point convention, which is what Kanon writes
+  (ADR 17). A consumer assuming a base-10 integer would be out by roughly `1.8 x 10^19`
+  with nothing on chain to signal it. Worth confirming rather than discovering.
 
 Two are settled locally, with a measurement in M2: which clock account an oracle should
 read (ADR 13), and the CI ceilings that stop the accelerator configuration regressing
