@@ -97,6 +97,32 @@ impl Value {
     }
 }
 
+/// The median of `values`, as RedStone defines it.
+///
+/// An even count averages the two middle values rather than taking the lower of
+/// them, which would bias every even-signer feed downwards.
+///
+/// Sorts `values` in place: the caller owns the buffer, and `verifier-core` has
+/// no allocator to copy it into. `core`'s `sort_unstable` needs none either.
+///
+/// `None` only for an empty slice.
+#[must_use]
+pub fn median(values: &mut [Value]) -> Option<Value> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+
+    let middle = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        let lower = values.get(middle - 1)?;
+        let upper = values.get(middle)?;
+        Some(lower.midpoint(upper))
+    } else {
+        values.get(middle).copied()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +207,48 @@ mod tests {
             Value::from_be_slice(&[0x01, 0x80]).expect("fits"),
             "384"
         );
+    }
+
+    fn v(n: u8) -> Value {
+        Value::from_be_slice(&[n]).expect("one byte fits")
+    }
+
+    #[test]
+    fn the_median_of_an_empty_set_is_nothing() {
+        assert_eq!(median(&mut []), None);
+    }
+
+    #[test]
+    fn an_odd_count_takes_the_middle_value() {
+        assert_eq!(median(&mut [v(9)]), Some(v(9)));
+        assert_eq!(median(&mut [v(1), v(5), v(9)]), Some(v(5)));
+        assert_eq!(median(&mut [v(1), v(2), v(3), v(4), v(5)]), Some(v(3)));
+    }
+
+    #[test]
+    fn an_even_count_averages_the_two_middle_values() {
+        // RedStone's definition. Not "the lower of the two", which is the easy
+        // mistake and silently biases every even-signer feed downwards.
+        assert_eq!(median(&mut [v(2), v(4)]), Some(v(3)));
+        assert_eq!(median(&mut [v(1), v(2), v(4), v(9)]), Some(v(3)));
+    }
+
+    #[test]
+    fn the_input_order_does_not_matter() {
+        // Packages are walked last-first and nothing downstream may depend on
+        // payload order, so the median must not either.
+        let ascending = median(&mut [v(1), v(3), v(7), v(9)]);
+        let descending = median(&mut [v(9), v(7), v(3), v(1)]);
+        let shuffled = median(&mut [v(7), v(1), v(9), v(3)]);
+
+        assert_eq!(ascending, descending);
+        assert_eq!(ascending, shuffled);
+        assert_eq!(ascending, Some(v(5)), "midpoint of 3 and 7");
+    }
+
+    #[test]
+    fn duplicate_values_do_not_disturb_the_median() {
+        assert_eq!(median(&mut [v(4), v(4), v(4)]), Some(v(4)));
+        assert_eq!(median(&mut [v(4), v(4), v(4), v(4)]), Some(v(4)));
     }
 }
