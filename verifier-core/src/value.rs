@@ -8,6 +8,43 @@
 //!
 //! The median follows RedStone's own definition, including the overflow-safe
 //! average on even counts.
+//!
+//! RedStone and LEZ disagree about how a fractional price is written. RedStone
+//! scales by a power of ten; the LEZ price account is `Q64.64`, so the real
+//! price is the stored integer over `2^64`. Nothing on chain carries the
+//! exponent to reconcile them, so [`Value::to_q64_64`] converts and the
+//! convention is documented rather than negotiated.
+
+/// The largest decimal exponent a feed may declare.
+///
+/// `10^19 < 2^64 < 10^20`. Stopping here keeps `10^decimals` inside a `u64`,
+/// which is what lets the conversion divide by a single-limb divisor instead of
+/// implementing full 256-bit division.
+pub const MAX_DECIMALS: u8 = 19;
+
+/// `10^i` for every exponent a feed may declare.
+const POW10: [u64; MAX_DECIMALS as usize + 1] = [
+    1,
+    10,
+    100,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000,
+    10_000_000,
+    100_000_000,
+    1_000_000_000,
+    10_000_000_000,
+    100_000_000_000,
+    1_000_000_000_000,
+    10_000_000_000_000,
+    100_000_000_000_000,
+    1_000_000_000_000_000,
+    10_000_000_000_000_000,
+    100_000_000_000_000_000,
+    1_000_000_000_000_000_000,
+    10_000_000_000_000_000_000,
+];
 
 /// A price: 32 bytes, big-endian, left-padded from whatever width the wire used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -78,6 +115,76 @@ impl Value {
             carry = sum >> 8;
         }
         Self(out)
+    }
+
+    /// Whether the top bit is set, which is what a negative price looks like.
+    ///
+    /// The wire field is unsigned, so nothing distinguishes a genuinely enormous
+    /// price from a small negative one read as `int256`. No real feed reports a
+    /// value this large, so treating the whole upper half as unusable costs
+    /// nothing and is the only reading under which "negative price" means
+    /// anything here.
+    #[must_use]
+    pub fn is_negative(&self) -> bool {
+        self.0[0] & 0x80 != 0
+    }
+
+    /// `self << 64`, or `None` when that does not fit.
+    fn shifted_left_64(&self) -> Option<Self> {
+        const LIMB: usize = 8;
+        if self.0.iter().take(LIMB).any(|&byte| byte != 0) {
+            return None;
+        }
+        let mut out = [0u8; Self::LEN];
+        out.get_mut(..Self::LEN - LIMB)?
+            .copy_from_slice(self.0.get(LIMB..)?);
+        Some(Self(out))
+    }
+
+    /// `self / divisor`, truncating, for a single-limb divisor.
+    ///
+    /// Schoolbook long division, one output byte per step. The running remainder
+    /// stays below `divisor`, so `remainder << 8 | byte` needs a `u128` to hold
+    /// it and the quotient digit it yields is always below 256.
+    fn divided_by(&self, divisor: u64) -> Self {
+        let mut out = [0u8; Self::LEN];
+        let mut remainder = 0u128;
+        for (slot, &byte) in out.iter_mut().zip(self.0.iter()) {
+            let accumulated = (remainder << 8) | u128::from(byte);
+            *slot = (accumulated / u128::from(divisor)).to_le_bytes()[0];
+            remainder = accumulated % u128::from(divisor);
+        }
+        Self(out)
+    }
+
+    /// The low 16 bytes as a `u128`, or `None` when the value is wider.
+    fn to_u128(self) -> Option<u128> {
+        const WIDTH: usize = 16;
+        if self.0.iter().take(Self::LEN - WIDTH).any(|&byte| byte != 0) {
+            return None;
+        }
+        let low: [u8; WIDTH] = self.0.get(Self::LEN - WIDTH..)?.try_into().ok()?;
+        Some(u128::from_be_bytes(low))
+    }
+
+    /// This value, read as `10^-decimals` units, converted to LEZ `Q64.64`.
+    ///
+    /// `(self << 64) / 10^decimals`, truncating toward zero, so the relative
+    /// error is below `2^-64`.
+    ///
+    /// Returns `None` when the result needs more than a `u128`, and for a
+    /// `decimals` above [`MAX_DECIMALS`], which a checked feed configuration has
+    /// already excluded. The shift and the narrowing fail together in practice:
+    /// a result within `u128` implies an input below `2^128`, well under the
+    /// `2^192` the shift needs.
+    ///
+    /// Never returns `Some(0)` for a non-zero value. Zero is the price account's
+    /// "no valid price" sentinel, and `2^64` exceeding `10^MAX_DECIMALS` is what
+    /// puts the smallest non-zero input at `1` rather than at the sentinel.
+    #[must_use]
+    pub fn to_q64_64(&self, decimals: u8) -> Option<u128> {
+        let divisor = *POW10.get(usize::from(decimals))?;
+        self.shifted_left_64()?.divided_by(divisor).to_u128()
     }
 
     /// The midpoint of two values, without overflowing.
@@ -211,6 +318,81 @@ mod tests {
 
     fn v(n: u8) -> Value {
         Value::from_be_slice(&[n]).expect("one byte fits")
+    }
+
+    fn from_u128(n: u128) -> Value {
+        Value::from_be_slice(&n.to_be_bytes()).expect("16 bytes fit")
+    }
+
+    #[test]
+    fn one_whole_unit_converts_to_the_q64_64_representation_of_one() {
+        // The definition, from the account's own constructor: 1.0 is 1 << 64.
+        let one = from_u128(100_000_000);
+        assert_eq!(one.to_q64_64(8), Some(1u128 << 64));
+    }
+
+    #[test]
+    fn a_realistic_price_survives_the_conversion() {
+        // $3000.12345678 as RedStone writes it at eight decimals.
+        let price = from_u128(300_012_345_678);
+        assert_eq!(price.to_q64_64(8), Some(55_342_509_596_753_479_111_897));
+    }
+
+    #[test]
+    fn a_zero_exponent_is_a_plain_left_shift() {
+        assert_eq!(v(5).to_q64_64(0), Some(5u128 << 64));
+    }
+
+    #[test]
+    fn the_conversion_truncates_toward_zero() {
+        // 1/10 in Q64.64 is not representable, and rounding up would let a price
+        // land above what the signers actually agreed on.
+        assert_eq!(v(1).to_q64_64(1), Some(1_844_674_407_370_955_161));
+    }
+
+    #[test]
+    fn no_non_zero_price_can_reach_the_sentinel() {
+        // Zero means "no valid price" to every consumer of the account, so the
+        // smallest input at the largest exponent is the case that matters:
+        // 2^64 > 10^19 is what keeps it at one rather than at zero.
+        assert_eq!(v(1).to_q64_64(MAX_DECIMALS), Some(1));
+        for decimals in 0..=MAX_DECIMALS {
+            assert_ne!(v(1).to_q64_64(decimals), Some(0), "at 10^-{decimals}");
+        }
+    }
+
+    #[test]
+    fn a_price_too_large_for_the_account_is_rejected_rather_than_wrapped() {
+        // The boundary: 2^64 - 1 is the largest whole number of units a Q64.64
+        // u128 can hold, and one more does not fit.
+        assert!(from_u128(u128::from(u64::MAX)).to_q64_64(0).is_some());
+        assert_eq!(from_u128(1u128 << 64).to_q64_64(0), None);
+    }
+
+    #[test]
+    fn a_value_too_wide_to_shift_is_rejected_rather_than_truncated() {
+        let mut wide = [0u8; 32];
+        wide[7] = 1; // 2^192, the first value the shift cannot hold
+        assert_eq!(Value(wide).to_q64_64(0), None);
+    }
+
+    #[test]
+    fn an_exponent_beyond_the_supported_range_yields_nothing() {
+        // A checked configuration excludes this, so the guard is what keeps the
+        // table lookup from being the one panicking index in the crate.
+        assert_eq!(v(1).to_q64_64(MAX_DECIMALS + 1), None);
+        assert_eq!(v(1).to_q64_64(u8::MAX), None);
+    }
+
+    #[test]
+    fn the_top_bit_marks_a_value_no_price_should_reach() {
+        assert!(!v(1).is_negative());
+        assert!(!from_u128(u128::MAX).is_negative());
+
+        let mut top = [0u8; 32];
+        top[0] = 0x80;
+        assert!(Value(top).is_negative(), "-1 as int256 is 2^255");
+        assert!(Value([0xFF; 32]).is_negative());
     }
 
     #[test]
