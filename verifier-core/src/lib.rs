@@ -30,6 +30,9 @@ pub mod error;
 pub mod feed;
 pub mod value;
 
+#[cfg(test)]
+mod test_support;
+
 pub use backend::{BackendError, Signature, SignerAddress, VerifierBackend};
 pub use decode::{DataPackage, DataPoint, DecodeError, Payload};
 
