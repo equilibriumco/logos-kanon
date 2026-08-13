@@ -50,25 +50,32 @@ considered and rejected on payloads that refute them:
   `repeated_packages_from_one_unknown_signer_count_as_one` shows that three packages
   from one stranger must not read as three missing authorisations.
 
-## The three divergences
+## Two current divergences, and one corrected
 
-- **Below-threshold and zero values are errors here.** The SDK can return a value that
-  simply reflects fewer inputs; Kanon writes one canonical on-chain price, and U6 wants
-  both a value and a reason when one cannot be produced, so both cases are typed
-  `VerifyError` variants instead of a degraded result.
+- **Below-threshold is an error here; a zero value is not, yet.** The SDK can return a
+  degraded result that simply reflects fewer inputs. Kanon writes one canonical
+  on-chain price, and U6 wants both a value and a reason when one cannot be produced, so
+  `ThresholdNotMet` is a typed `VerifyError` variant rather than a degraded number — that
+  is the live divergence. A zero value, today, is **skipped**, exactly as RedStone skips
+  it: `a_zero_value_does_not_count_toward_the_threshold` asserts `ThresholdNotMet { met:
+  2, required: 3 }`, not a zero-specific rejection. Making zero its own error is
+  value-sanity work M1-17 delivers; it is not something the code does now, and this ADR
+  should not be read as claiming it does.
 - **`alloc` is not available.** The SDK's `Matrix<Option<Value>>` and its use of
   `alloc::vec::Vec` assume an allocator, which ADR 4 forbids in guest-reachable code.
-  This is the fact that retrospectively justifies ADR 5's first-party decoder — ADR 5
-  itself argues from wire-format control and audit surface, not from the allocator, so
-  this is additional grounds ADR 5 does not cite.
-- **A revision of this decision that treated an oversized value as an error was wrong,
-  and is corrected here.** An earlier pass at this rule made a value over 32 significant
-  bytes `ValueOutOfRange` rather than skipped. That let one configured signer deny the
-  entire feed by sending a single oversized value — precisely the failure mode an M-of-N
-  threshold exists to survive, and precisely backwards from what SEC1 and F3 are for.
-  RedStone's own SDK sanitises an oversized value rather than rejecting the package that
-  carries it, so erroring here was also a divergence from parity that nothing justified.
-  It is now skipped, exactly like a zero value:
+  ADR 5 names zero allocation among the guest constraints a decoder must guarantee, but
+  it argues from wire-format control and audit surface, and never records that the SDK
+  *in fact* requires one. That concrete fact — not merely the constraint it would
+  violate — is what settles the choice not to depend on it, and this is where the fact
+  is written down.
+- **A former divergence, now corrected.** An earlier revision of this decision made a
+  value over 32 significant bytes `ValueOutOfRange` rather than skipped. That let one
+  configured signer deny the entire feed by sending a single oversized value —
+  precisely the failure mode an M-of-N threshold exists to survive, and precisely
+  backwards from what SEC1 and F3 are for. RedStone's own SDK sanitises an oversized
+  value rather than rejecting the package that carries it, so erroring was itself an
+  unjustified divergence from parity. It is now skipped, exactly like a zero value —
+  matching RedStone rather than diverging from it:
   `an_unrepresentable_value_costs_only_that_signer_not_the_whole_feed` shows three good
   signers plus one oversized still producing a price, and
   `an_unrepresentable_value_can_still_leave_the_threshold_unmet` shows the skip is not

@@ -39,8 +39,11 @@ pub enum VerifyError {
     StalePackage,
     /// The package does not carry the asset the caller asked for. M1-16.
     AssetMismatch,
-    /// The value is zero, negative, or wider than a price can represent. M1-17
-    /// extends this; `verify_feed` returns it only for an unrepresentable width.
+    /// The value is zero, negative, or wider than a price can represent.
+    /// Nothing constructs this today: an unrepresentable value is skipped
+    /// rather than rejected (ADR 15), so one configured signer cannot deny a
+    /// feed by sending one. M1-17 adds value-sanity bounds and gives this a
+    /// producer.
     ValueOutOfRange,
     /// The value's scale or exponent is outside the feed's configured bounds.
     /// M1-17.
