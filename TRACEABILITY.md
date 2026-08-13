@@ -25,7 +25,7 @@ Not tracked here: the Servicing obligations from the proposal's *Servicing
 and SLA* section. They are contractual rather than code and have no test to
 name; monthly operating reports are their evidence.
 
-Right now: **0 verified, 8 partial, 28 planned**, of 36 requirements.
+Right now: **0 verified, 11 partial, 25 planned**, of 36 requirements.
 
 ## Functionality
 
@@ -33,7 +33,7 @@ Right now: **0 verified, 8 partial, 28 planned**, of 36 requirements.
 | --- | --- | --- | --- | --- |
 | **F1** | partial | `M1‑10`, `M1‑11`, `M2‑01`, `M2‑02` | `verifier‑core`, `aggregator‑program`, `methods/guest` | `the_trait_is_object_safe`, `a_signature_round_trips_to_the_signing_key_address`, `keccak256_matches_the_known_digest_of_the_empty_input` |
 | **F2** | planned | `M1‑01`, `M1‑10`, `M1‑19`, `M3‑01` | `verifier‑core`, `pull‑lib` | — |
-| **F3** | planned | `M1‑13`, `M1‑23` | `verifier‑core` | — |
+| **F3** | partial | `M1‑13`, `M1‑23` | `verifier‑core` | `three_of_three_signers_reporting_the_same_price_verifies`, `the_threshold_boundary_accepts_at_m_and_rejects_at_m_minus_one`, `one_signer_cannot_reach_the_threshold_alone_by_repeating_the_feed` |
 | **F4** | partial | `M1‑08`, `M1‑12`, `M1‑14`, `M1‑15`, `M1‑16`, `M1‑17`, `M1‑21` | `verifier‑core` | `the_signed_span_covers_the_points_and_the_three_trailing_fields`, `truncation_at_every_length_is_rejected_rather_than_panicking`, `trailing_bytes_before_the_packages_are_rejected` |
 | **F5** | planned | `M1‑09`, `M1‑20`, `M1‑26`, `M2‑02` | `aggregator‑program` | — |
 | **F6** | planned | `M1‑07`, `M2‑06`, `M2‑07`, `M2‑08`, `M2‑09`, `M2‑10` | `aggregator‑program` | — |
@@ -51,7 +51,7 @@ Structural: `verifier-core` depends on neither mode, and both modes depend on it
 
 **F3** — M-of-N signer threshold per feed, configurable at registration, default 3-of-N; reject any package that does not meet it
 
-M1-23 covers the boundaries, which is where an off-by-one in a threshold check lives.
+M1-13 has landed: `verify_feed` enforces M-of-N over distinct authorised signers and rejects a signer occupying two slots. M1-23 covers the boundaries, which is where an off-by-one in a threshold check lives.
 
 **F4** — Decode the RedStone data-package format and reject stale (`maxAge`), zero, negative or otherwise invalid values, and asset identifiers that do not match the registered feed
 
@@ -86,7 +86,7 @@ Equilibrium operates this under the SLA, so its logging, wallet monitoring and s
 | **U3** | planned | `M4‑13`, `M4‑14`, `M4‑15`, `M4‑16` | — | — |
 | **U4** | planned | `M2‑01`, `M4‑12` | `kanon‑idl` | — |
 | **U5** | planned | `M4‑17` | — | — |
-| **U6** | planned | `M1‑18`, `M1‑22`, `M3‑04` | `verifier‑core`, `pull‑lib` | — |
+| **U6** | partial | `M1‑18`, `M1‑22`, `M3‑04` | `verifier‑core`, `pull‑lib` | `a_decode_failure_and_a_signature_failure_stay_distinguishable`, `the_threshold_failure_carries_what_was_reached_and_what_was_needed` |
 | **U7** | planned | `M3‑05`, `M3‑06`, `M3‑07` | `reference‑consumers/aggregator‑read`, `reference‑consumers/pull` | — |
 
 **U1** — SDK for building Logos modules in both modes, exposing helpers ergonomic enough that switching modes leaves payload handling unchanged
@@ -111,7 +111,7 @@ A change to SPEL, exercised from a fresh scaffold program so the hook is shown t
 
 **U6** — Clear, actionable errors for every failure mode: stale package, threshold not met, unauthorised signer, asset mismatch, malformed package, invalid signature, zero or negative price
 
-One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity.
+One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all nine `VerifyError` variants now; M1-15 through M1-17 populate the four -- `StalePackage`, `AssetMismatch`, `ValueOutOfRange`, `ScalingOutOfRange` -- that nothing constructs yet.
 
 **U7** — Two reference consumer programs, one per mode, each showing asset-pair verification, staleness handling, typed-error handling and refuse-on-unavailable
 
@@ -200,13 +200,13 @@ A deliverable in its own right, and a prerequisite for U2 rather than a by-produ
 
 | Requirement | Status | Tasks | Implemented in | Verified by |
 | --- | --- | --- | --- | --- |
-| **SEC1** | planned | `M1‑13`, `M1‑22`, `M2‑13`, `M3‑03` | `verifier‑core` | — |
+| **SEC1** | partial | `M1‑13`, `M1‑22`, `M2‑13`, `M3‑03` | `verifier‑core` | `an_unknown_signer_is_skipped_and_the_payload_still_verifies`, `unauthorised_is_reported_when_the_skipped_signers_would_have_made_quorum` |
 | **SEC2** | planned | `M1‑07`, `M2‑08`, `M2‑14`, `M3‑03` | `aggregator‑program`, `pull‑lib` | — |
 | **SEC3** | planned | `M2‑17` | — | — |
 
 **SEC1** — Reject any package whose signer is not in the authorised signer set for the requested feed, in both modes
 
-Both modes, one implementation: the membership check lives in `verifier-core`, so push and pull cannot diverge on who is authorised.
+Both modes, one implementation: the membership check lives in `verifier-core`, so push and pull cannot diverge on who is authorised. The rule is count-and-ignore per ADR 15, not strict rejection: an unknown signer is skipped rather than failing the payload, and only named `UnauthorisedSigner` once the skipped signers would themselves have reached quorum -- a reader expecting strict rejection would otherwise read this row as unmet.
 
 **SEC2** — In push mode the stored signer set is updatable only by the admin authority, and the update path is tested; in pull mode the set comes from the consumer and never from the payload
 

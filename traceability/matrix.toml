@@ -48,11 +48,15 @@ note = "Structural: `verifier-core` depends on neither mode, and both modes depe
 
 [[row]]
 id = "F3"
-status = "planned"
+status = "partial"
 tasks = ["M1-13", "M1-23"]
 implemented_in = ["verifier-core"]
-verified_by = []
-note = "M1-23 covers the boundaries, which is where an off-by-one in a threshold check lives."
+verified_by = [
+  "test:three_of_three_signers_reporting_the_same_price_verifies",
+  "test:the_threshold_boundary_accepts_at_m_and_rejects_at_m_minus_one",
+  "test:one_signer_cannot_reach_the_threshold_alone_by_repeating_the_feed",
+]
+note = "M1-13 has landed: `verify_feed` enforces M-of-N over distinct authorised signers and rejects a signer occupying two slots. M1-23 covers the boundaries, which is where an off-by-one in a threshold check lives."
 
 [[row]]
 id = "F4"
@@ -150,11 +154,14 @@ note = "A change to SPEL, exercised from a fresh scaffold program so the hook is
 
 [[row]]
 id = "U6"
-status = "planned"
+status = "partial"
 tasks = ["M1-18", "M1-22", "M3-04"]
 implemented_in = ["verifier-core", "pull-lib"]
-verified_by = []
-note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity."
+verified_by = [
+  "test:a_decode_failure_and_a_signature_failure_stay_distinguishable",
+  "test:the_threshold_failure_carries_what_was_reached_and_what_was_needed",
+]
+note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all nine `VerifyError` variants now; M1-15 through M1-17 populate the four -- `StalePackage`, `AssetMismatch`, `ValueOutOfRange`, `ScalingOutOfRange` -- that nothing constructs yet."
 
 [[row]]
 id = "U7"
@@ -299,11 +306,14 @@ note = "A deliverable in its own right, and a prerequisite for U2 rather than a 
 
 [[row]]
 id = "SEC1"
-status = "planned"
+status = "partial"
 tasks = ["M1-13", "M1-22", "M2-13", "M3-03"]
 implemented_in = ["verifier-core"]
-verified_by = []
-note = "Both modes, one implementation: the membership check lives in `verifier-core`, so push and pull cannot diverge on who is authorised."
+verified_by = [
+  "test:an_unknown_signer_is_skipped_and_the_payload_still_verifies",
+  "test:unauthorised_is_reported_when_the_skipped_signers_would_have_made_quorum",
+]
+note = "Both modes, one implementation: the membership check lives in `verifier-core`, so push and pull cannot diverge on who is authorised. The rule is count-and-ignore per ADR 15, not strict rejection: an unknown signer is skipped rather than failing the payload, and only named `UnauthorisedSigner` once the skipped signers would themselves have reached quorum -- a reader expecting strict rejection would otherwise read this row as unmet."
 
 [[row]]
 id = "SEC2"

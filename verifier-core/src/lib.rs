@@ -9,12 +9,10 @@
 //! The wire-format decoder ([`decode`]) and the primitive backend
 //! ([`backend`]) are in place. The rest of the verification path is not:
 //!
-//! - M-of-N threshold enforcement
 //! - a `TimeSource` over the LEZ clock account
 //! - `maxAge` staleness and replay rejection
 //! - asset-identity checks
 //! - value sanity and scaling bounds
-//! - a typed error enum for every failure mode
 //!
 //! `TRACEABILITY.md` maps each of these to the requirement it satisfies, the
 //! task that delivers it and the tests that verify it.
@@ -35,6 +33,9 @@ mod test_support;
 
 pub use backend::{BackendError, Signature, SignerAddress, VerifierBackend};
 pub use decode::{DataPackage, DataPoint, DecodeError, Payload};
+pub use error::{ConfigError, VerifyError};
+pub use feed::{verify_feed, FeedConfig, VerifiedFeed, MAX_SIGNERS};
+pub use value::{median, Value};
 
 /// This crate's version, for callers that record which verifier produced a
 /// result.

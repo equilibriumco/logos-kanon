@@ -37,8 +37,8 @@ is what keeps it implementable by a precompile that knows nothing about data pac
 
 **It is object safe, and there is a test that says so** (`the_trait_is_object_safe`).
 Object safety is what would let a caller hold a backend it did not choose at compile
-time — a runtime precompile switch. It is cheap to keep and expensive to regain once a
-generic method has been added.
+time. The test earns its place by catching a generic method appearing later; it does
+not, on its own, argue against the alternative below.
 
 **`recover_signer` takes a digest, not a message.** The caller needs the hash
 separately anyway, and hashing twice would be measurable against a budget where
@@ -63,6 +63,12 @@ distinct encodings — which defeats any replay defence keyed on signature bytes
 
 ## Consequences
 
+- A **precompile** swap is one new implementor and one type parameter, which is what F1
+  asks for and what the proposal promised. A **scheme** swap is not: it needs a method
+  signature change. The proposal's §2 claim of "no change to the aggregator, the pull
+  library, the SDK surface, or the tests" holds for the first case and not the second,
+  and that narrowing should be stated to Logos at the M1 gate review rather than left
+  implicit.
 - A precompile arriving in LEZ is a one-file change plus a type parameter, and the
   cost of being ready for it is one trait.
 - The same source compiles against RISC Zero's accelerated forks without any change
@@ -82,3 +88,24 @@ distinct encodings — which defeats any replay defence keyed on signature bytes
   about RedStone, which is what stops a generic precompile implementing it.
 - **Hashing inside `recover_signer`.** Rejected on cost — the caller needs the digest
   anyway, and recovery already dominates the program at 88.97%.
+- **The generic trait in the accepted proposal.** RFP-020's proposal (`logos-co/rfp#117`,
+  §2) specifies `type Signature; type Signer; type Error;` and states that the
+  associated types are what admit "a Schnorr/BIP-340 impl (the FROST-friendly scheme for
+  the private-pull follow-on)". Rejected, but **not** for object safety: associated types
+  preserve it, and the proposal's trait compiles as
+  `&dyn VerifierBackend<Signature = …, Signer = …, Error = …>`.
+
+  It was rejected on arity. `recover(digest, sig) -> Signer` has no parameter for a
+  claimed signer, and a scheme without key recovery needs one — the proposal concedes as
+  much in the same comment ("Schnorr has no key recovery, so that backend implements
+  `recover` as verification against the claimed signer"). So the associated types did not
+  buy what they were described as buying. Two further costs: RedStone fixes the signature
+  at 65 bytes on the wire, so an associated `Signature` would propagate generics through
+  `decode` and both modes to model one concrete case; and an associated `Error` prevents a
+  caller matching the specific variants U6 requires.
+
+  The seam a recovery-less scheme would actually need is a candidate-set method —
+  `attribute(digest, sig, &[SignerAddress]) -> Option<usize>` — addable as a provided
+  method without touching existing implementors. Not added: its only consumer would be a
+  backend that does not exist, and `verify_feed` does its own membership lookup in three
+  lines.
