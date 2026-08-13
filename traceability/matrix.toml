@@ -161,7 +161,7 @@ verified_by = [
   "test:a_decode_failure_and_a_signature_failure_stay_distinguishable",
   "test:the_threshold_failure_carries_what_was_reached_and_what_was_needed",
 ]
-note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all nine `VerifyError` variants now; M1-15 through M1-17 populate the four -- `StalePackage`, `AssetMismatch`, `ValueOutOfRange`, `ScalingOutOfRange` -- that nothing constructs yet."
+note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all ten `VerifyError` variants now -- nine payload failure modes plus `InvalidConfig` for a bad configuration. Five of the nine have no producer today: `StalePackage`, `AssetMismatch`, `ValueOutOfRange` and `ScalingOutOfRange` await M1-15 through M1-17, and `InvalidSignature` has none by design -- an unrecoverable signature is skipped, not rejected (ADR 15), so a future single-package API is where it becomes reportable."
 
 [[row]]
 id = "U7"

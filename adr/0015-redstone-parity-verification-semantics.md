@@ -1,4 +1,4 @@
-# 15. Verification semantics follow RedStone's Rust SDK, with three divergences
+# 15. Verification semantics follow RedStone's Rust SDK, with two divergences
 
 - **Status**: accepted
 - **Milestone**: M1 (`M1-13`, `M1-18`)
@@ -50,7 +50,7 @@ considered and rejected on payloads that refute them:
   `repeated_packages_from_one_unknown_signer_count_as_one` shows that three packages
   from one stranger must not read as three missing authorisations.
 
-## Two current divergences, and one corrected
+## Two current divergences, and two corrected
 
 - **Below-threshold is an error here; a zero value is not, yet.** The SDK can return a
   degraded result that simply reflects fewer inputs. Kanon writes one canonical
@@ -81,20 +81,41 @@ considered and rejected on payloads that refute them:
   `an_unrepresentable_value_can_still_leave_the_threshold_unmet` shows the skip is not
   silent — too few good signers left still rejects, naming the threshold rather than the
   payload's shape.
+- **A second former divergence, now corrected: an unrecoverable signature.** An earlier
+  revision propagated a failed signature recovery out of the package walk with `?`,
+  failing the entire payload. That is a denial-of-service primitive, and the cheapest one
+  in the design: a stranger can append one package carrying sixty-five bytes of garbage —
+  no key and no valid signature needed — and deny the feed to every consumer that payload
+  serves, where every other skip case needs at least a valid signature to reach. RedStone
+  skips it (`Some(address) => address, _ => continue`), so it is skipped here too, and the
+  package is *not* recorded as an unknown signer: recovery failure leaves no address to
+  deduplicate against, and recording it would let one attacker inflate the unknown tally
+  by repeating the same garbage. `VerifyError::InvalidSignature` stays declared with no
+  producer; a future single-package API, where the caller names one package and expects
+  it to verify, is where it becomes reportable.
+  `an_outsiders_garbage_signature_cannot_deny_the_feed` pins it: three authorised signers
+  plus one package signed with sixty-five bytes of `0xFF` still produce a price.
 
 ## Consequences
 
-- `MAX_SIGNERS = 32` is a real limit, not a guard rail: it sizes the two fixed-size stack
-  buffers `verify_feed` walks (reported values and distinct unknown signers), which is
-  how the threshold runs with no allocator. RedStone caps a signer set at 255 and live
-  feeds run ten to twenty, so 32 leaves headroom, and raising it costs stack and nothing
-  else.
+- `MAX_SIGNERS = 32` is a real limit, not a guard rail: it sizes three fixed-size stack
+  buffers `verify_feed` walks -- `reported` (`[Option<Value>; 32]`, 1,056 bytes),
+  `unknown` (`[SignerAddress; 32]`, 640 bytes) and `collected` (`[Value; 32]`,
+  1,024 bytes) -- about 2.7 KB in one frame, which is how the threshold runs with no
+  allocator. `collected` exists only because `median` takes `&mut [Value]` while
+  `reported` holds `Option<Value>`; sorting `reported` in place would remove it and save
+  a kilobyte of guest stack, and is deliberately left for later rather than folded into
+  this decision. RedStone caps a signer set at 255 and live feeds run ten to twenty, so
+  32 leaves headroom, and raising it costs stack and nothing else.
 - A value over 32 significant bytes is skipped, like a zero value, for the reason above:
   so that one configured signer cannot deny a feed by sending a single malformed report.
 - `StalePackage`, `AssetMismatch`, `ValueOutOfRange` and `ScalingOutOfRange` are declared
   in `VerifyError` now and returned by nothing until M1-15 through M1-17 land. `feed.rs`
   never constructs them; documenting that gap here is what keeps `TRACEABILITY.md`
   honest about what M1-13 and M1-18 actually deliver.
+- `InvalidSignature` is declared and, unlike the four above, has no producer by design
+  rather than by sequencing: an unrecoverable signature is skipped, not reported, for as
+  long as verification runs over a multi-consumer payload rather than one named package.
 
 ## Carried forward
 

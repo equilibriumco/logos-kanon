@@ -111,7 +111,7 @@ A change to SPEL, exercised from a fresh scaffold program so the hook is shown t
 
 **U6** — Clear, actionable errors for every failure mode: stale package, threshold not met, unauthorised signer, asset mismatch, malformed package, invalid signature, zero or negative price
 
-One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all nine `VerifyError` variants now; M1-15 through M1-17 populate the four -- `StalePackage`, `AssetMismatch`, `ValueOutOfRange`, `ScalingOutOfRange` -- that nothing constructs yet.
+One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all ten `VerifyError` variants now -- nine payload failure modes plus `InvalidConfig` for a bad configuration. Five of the nine have no producer today: `StalePackage`, `AssetMismatch`, `ValueOutOfRange` and `ScalingOutOfRange` await M1-15 through M1-17, and `InvalidSignature` has none by design -- an unrecoverable signature is skipped, not rejected (ADR 15), so a future single-package API is where it becomes reportable.
 
 **U7** — Two reference consumer programs, one per mode, each showing asset-pair verification, staleness handling, typed-error handling and refuse-on-unavailable
 

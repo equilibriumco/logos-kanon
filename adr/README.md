@@ -28,7 +28,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [12](0012-a-standalone-lez-sequencer-without-lgs-run-from-a-prebuilt-image.md) | A standalone LEZ sequencer without `lgs`, run in CI from a prebuilt image | accepted |
 | [13](0013-staleness-is-measured-against-the-lez-clock-program.md) | Staleness measured against the LEZ clock program's every-block account | accepted |
 | [14](0014-build-admin-gating-against-the-unmerged-spel-admin-authority.md) | Admin gating built against the unmerged SPEL admin-authority, shim in reserve | accepted, contingency live |
-| [15](0015-redstone-parity-verification-semantics.md) | Verification semantics follow RedStone's Rust SDK, with three divergences | accepted |
+| [15](0015-redstone-parity-verification-semantics.md) | Verification semantics follow RedStone's Rust SDK, with two divergences | accepted |
 
 ## How they fit together
 
