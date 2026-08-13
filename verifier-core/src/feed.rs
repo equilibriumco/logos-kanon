@@ -248,10 +248,11 @@ pub fn verify_feed<B: VerifierBackend>(
     let mut unknown: [SignerAddress; MAX_SIGNERS] =
         [SignerAddress([0; SignerAddress::LEN]); MAX_SIGNERS];
     let mut unknown_count = 0usize;
-    // Configured signers that supplied this feed and whose every value for it
-    // was unusable. Kept apart from the untouched slots so "your signers sent
-    // nothing usable" and "your signers did not sign" stay different answers.
-    let mut spoiled = [false; MAX_SIGNERS];
+    // Configured signers that supplied this feed at all, usable value or not.
+    // Whether that cost anything is decided against `reported` after the walk,
+    // because a signer can send one package this reads and another it does not,
+    // in either order.
+    let mut supplied_feed = [false; MAX_SIGNERS];
 
     let walked = payload.for_each_package(|package| {
         let digest = backend.keccak256(package.signable());
@@ -314,8 +315,8 @@ pub fn verify_feed<B: VerifierBackend>(
             *slot = Some(value);
         }
 
-        if supplied && slot.is_none() {
-            if let Some(flag) = spoiled.get_mut(index) {
+        if supplied {
+            if let Some(flag) = supplied_feed.get_mut(index) {
                 *flag = true;
             }
         }
@@ -344,7 +345,14 @@ pub fn verify_feed<B: VerifierBackend>(
         // the cause worth naming. Spoiled values come before unknown signers
         // because a configured signer that did report is the nearer fault.
         let required = usize::from(config.threshold());
-        let spoiled_count = spoiled.iter().filter(|flagged| **flagged).count();
+        // A signer that filled its slot is already in `met`; counting it again
+        // here would let its own unusable second package close the gap its
+        // silent neighbour left.
+        let spoiled_count = supplied_feed
+            .iter()
+            .zip(reported.iter())
+            .filter(|(supplied, slot)| **supplied && slot.is_none())
+            .count();
 
         if met.saturating_add(spoiled_count) >= required {
             return Err(VerifyError::ValueOutOfRange);
@@ -1185,6 +1193,37 @@ mod tests {
             verify(&payload, &config),
             Err(VerifyError::ScalingOutOfRange)
         );
+    }
+
+    #[test]
+    fn a_signer_that_reported_is_not_also_counted_among_the_spoiled() {
+        // One signer sending a good package and a useless one must not close
+        // the gap its silent neighbour left. Both orderings, because packages
+        // are walked last-first and the answer must not depend on which of the
+        // two the walk reaches first.
+        let keys = keys(2);
+        let set = signer_set(&keys);
+        let good = (b"BTC".as_slice(), [0, 0, 0, 10].as_slice());
+        let useless = (b"BTC".as_slice(), [0, 0, 0, 0].as_slice());
+
+        for (first, second) in [(good, useless), (useless, good)] {
+            let bytes = PayloadBuilder::default()
+                .signed_package(&keys[0], &[first], 1)
+                .signed_package(&keys[0], &[second], 2)
+                .build();
+
+            let payload = Payload::decode(&bytes).expect("well formed");
+            let config = feed_config(&set, 2);
+
+            assert_eq!(
+                verify(&payload, &config),
+                Err(VerifyError::ThresholdNotMet {
+                    met: 1,
+                    required: 2
+                }),
+                "one of two signers signed, whichever package came first"
+            );
+        }
     }
 
     #[test]

@@ -362,6 +362,33 @@ mod tests {
     }
 
     #[test]
+    fn the_long_division_agrees_with_native_arithmetic_wherever_both_fit() {
+        // Below 2^64 the shift and the divide both fit a u128, so the hand-rolled
+        // 256-bit path has an independent answer to be wrong against — which is
+        // the only check here that does not restate the implementation.
+        for value in [
+            1u64,
+            2,
+            7,
+            99,
+            100_000_000,
+            300_012_345_678,
+            u64::from(u32::MAX),
+            u64::MAX / 3,
+            u64::MAX,
+        ] {
+            for decimals in 0..=MAX_DECIMALS {
+                let native = (u128::from(value) << 64) / u128::from(POW10[usize::from(decimals)]);
+                assert_eq!(
+                    from_u128(u128::from(value)).to_q64_64(decimals),
+                    Some(native),
+                    "{value} at 10^-{decimals}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_price_too_large_for_the_account_is_rejected_rather_than_wrapped() {
         // The boundary: 2^64 - 1 is the largest whole number of units a Q64.64
         // u128 can hold, and one more does not fit.
