@@ -25,7 +25,7 @@ Not tracked here: the Servicing obligations from the proposal's *Servicing
 and SLA* section. They are contractual rather than code and have no test to
 name; monthly operating reports are their evidence.
 
-Right now: **1 verified, 11 partial, 24 planned**, of 36 requirements.
+Right now: **1 verified, 12 partial, 23 planned**, of 36 requirements.
 
 ## Functionality
 
@@ -34,7 +34,7 @@ Right now: **1 verified, 11 partial, 24 planned**, of 36 requirements.
 | **F1** | partial | `M1‑10`, `M1‑11`, `M2‑01`, `M2‑02` | `verifier‑core`, `aggregator‑program`, `methods/guest` | `the_trait_is_object_safe`, `a_signature_round_trips_to_the_signing_key_address`, `keccak256_matches_the_known_digest_of_the_empty_input` |
 | **F2** | planned | `M1‑01`, `M1‑10`, `M1‑19`, `M3‑01` | `verifier‑core`, `pull‑lib` | — |
 | **F3** | verified | `M1‑13`, `M1‑23` | `verifier‑core` | `three_of_three_signers_reporting_the_same_price_verifies`, `the_threshold_boundary_accepts_at_m_and_rejects_at_m_minus_one`, `one_signer_cannot_reach_the_threshold_alone_by_repeating_the_feed`, `a_threshold_of_one_is_met_by_one_signer`, `a_threshold_equal_to_the_signer_count_needs_every_one_of_them`, `more_unknown_signers_than_the_buffer_holds_neither_panics_nor_overruns` |
-| **F4** | partial | `M1‑08`, `M1‑12`, `M1‑14`, `M1‑15`, `M1‑16`, `M1‑17`, `M1‑21` | `verifier‑core` | `the_signed_span_covers_the_points_and_the_three_trailing_fields`, `truncation_at_every_length_is_rejected_rather_than_panicking`, `trailing_bytes_before_the_packages_are_rejected`, `a_feed_registered_against_another_pair_is_refused`, `a_pair_matching_only_on_the_base_is_still_a_mismatch`, `a_negative_value_costs_only_the_signer_that_sent_it`, `signers_that_all_reported_something_unusable_are_named_as_the_fault` |
+| **F4** | partial | `M1‑08`, `M1‑12`, `M1‑14`, `M1‑15`, `M1‑16`, `M1‑17`, `M1‑21` | `verifier‑core`, `kanon‑clock` | `the_signed_span_covers_the_points_and_the_three_trailing_fields`, `truncation_at_every_length_is_rejected_rather_than_panicking`, `trailing_bytes_before_the_packages_are_rejected`, `a_feed_registered_against_another_pair_is_refused`, `a_pair_matching_only_on_the_base_is_still_a_mismatch`, `a_negative_value_costs_only_the_signer_that_sent_it`, `signers_that_all_reported_something_unusable_are_named_as_the_fault`, `the_staleness_boundary_admits_a_package_exactly_max_age_old`, `a_package_dated_beyond_clock_skew_is_a_different_failure_from_a_stale_one`, `a_replayed_payload_is_refused_however_well_signed_it_is`, `any_other_account_is_refused_before_its_contents_are_read` |
 | **F5** | partial | `M1‑09`, `M1‑16`, `M1‑17`, `M1‑20`, `M1‑26`, `M2‑02` | `aggregator‑program`, `verifier‑core` | `the_verified_price_carries_both_scales`, `an_agreed_price_too_large_for_the_account_is_reported_not_wrapped` |
 | **F6** | planned | `M1‑07`, `M2‑06`, `M2‑07`, `M2‑08`, `M2‑09`, `M2‑10` | `aggregator‑program` | — |
 | **F7** | planned | `M2‑00`, `M2‑11`, `M2‑12` | `aggregator‑program` | — |
@@ -55,7 +55,7 @@ Structural: `verifier-core` depends on neither mode, and both modes depend on it
 
 **F4** — Decode the RedStone data-package format and reject stale (`maxAge`), zero, negative or otherwise invalid values, and asset identifiers that do not match the registered feed
 
-Four rejection classes in one requirement. The malformed-wire-format one has landed: M1-12 decodes zero-copy, bounds-checks every length, and is tested against truncation at every offset, since a panic in a guest aborts the transaction rather than rejecting the package. Conformance against published vectors is M1-21. Asset identity has landed (M1-16), and it is a comparison between the caller's expectation and the registration rather than a property of the payload, because a RedStone package names a feed and nothing else -- ADR 16 records what that check does and does not establish. Value sanity has landed too (M1-17): zero, negative and unrepresentable values are skipped per signer so that one signer cannot deny a feed, and are reported once enough of them would have met the threshold. Still to come: staleness (M1-15). Staleness needs a clock before it needs a rule: M1-08 is answered, and the answer is LEZ's clock program rather than the Bedrock time service. M1-14 wraps the every-block clock account and M1-15 rejects any other, because a caller-supplied clock makes a stale price look current.
+Four rejection classes in one requirement. The malformed-wire-format one has landed: M1-12 decodes zero-copy, bounds-checks every length, and is tested against truncation at every offset, since a panic in a guest aborts the transaction rather than rejecting the package. Conformance against published vectors is M1-21. Asset identity has landed (M1-16), and it is a comparison between the caller's expectation and the registration rather than a property of the payload, because a RedStone package names a feed and nothing else -- ADR 16 records what that check does and does not establish. Value sanity has landed too (M1-17): zero, negative and unrepresentable values are skipped per signer so that one signer cannot deny a feed, and are reported once enough of them would have met the threshold. Staleness has landed as well (M1-14, M1-15): the clock is LEZ's every-block account read through `kanon-clock`, and any other account is refused, because a caller-supplied clock makes a stale price look current. The window is two-sided, following RedStone, so a package dated beyond clock skew is its own failure rather than a stale one -- ADR 18 records why that distinction is worth a variant U6 does not name. All four rejection classes are now implemented; M1-21 conforms the decoder against published vectors.
 
 **F5** — Publish the verified price into a canonical RFP-019 price account, populating base and quote asset, price, timestamp, source identifier and a zero confidence interval
 
@@ -86,7 +86,7 @@ Equilibrium operates this under the SLA, so its logging, wallet monitoring and s
 | **U3** | planned | `M4‑13`, `M4‑14`, `M4‑15`, `M4‑16` | — | — |
 | **U4** | planned | `M2‑01`, `M4‑12` | `kanon‑idl` | — |
 | **U5** | planned | `M4‑17` | — | — |
-| **U6** | partial | `M1‑16`, `M1‑17`, `M1‑18`, `M1‑22`, `M3‑04` | `verifier‑core`, `pull‑lib` | `a_decode_failure_and_a_signature_failure_stay_distinguishable`, `the_threshold_failure_carries_what_was_reached_and_what_was_needed`, `a_feed_registered_against_another_pair_is_refused`, `signers_that_all_reported_something_unusable_are_named_as_the_fault`, `a_bad_value_that_could_not_have_met_the_threshold_anyway_is_not_blamed`, `a_configured_signers_bad_value_is_named_before_a_strangers_absence`, `an_exponent_the_conversion_cannot_divide_by_is_a_configuration_error` |
+| **U6** | partial | `M1‑15`, `M1‑16`, `M1‑17`, `M1‑18`, `M1‑22`, `M3‑04` | `verifier‑core`, `pull‑lib` | `a_decode_failure_and_a_signature_failure_stay_distinguishable`, `the_threshold_failure_carries_what_was_reached_and_what_was_needed`, `a_feed_registered_against_another_pair_is_refused`, `signers_that_all_reported_something_unusable_are_named_as_the_fault`, `a_bad_value_that_could_not_have_met_the_threshold_anyway_is_not_blamed`, `a_configured_signers_bad_value_is_named_before_a_strangers_absence`, `an_exponent_the_conversion_cannot_divide_by_is_a_configuration_error`, `a_missing_clock_is_not_a_stale_package`, `a_stale_package_and_a_future_one_stay_distinguishable`, `a_clock_that_cannot_be_read_refuses_rather_than_guesses` |
 | **U7** | planned | `M3‑05`, `M3‑06`, `M3‑07` | `reference‑consumers/aggregator‑read`, `reference‑consumers/pull` | — |
 
 **U1** — SDK for building Logos modules in both modes, exposing helpers ergonomic enough that switching modes leaves payload handling unchanged
@@ -111,7 +111,7 @@ A change to SPEL, exercised from a fresh scaffold program so the hook is shown t
 
 **U6** — Clear, actionable errors for every failure mode: stale package, threshold not met, unauthorised signer, asset mismatch, malformed package, invalid signature, zero or negative price
 
-One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all ten `VerifyError` variants now -- nine payload failure modes plus `InvalidConfig` for a bad configuration. `AssetMismatch` (M1-16), `ValueOutOfRange` and `ScalingOutOfRange` (M1-17) now have producers, which leaves two of the nine without one. `StalePackage` awaits M1-15. `InvalidSignature` has none by design -- an unrecoverable signature is skipped, not rejected (ADR 15), so a future single-package API is where it becomes reportable.
+One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all ten `VerifyError` variants now -- nine payload failure modes plus `InvalidConfig` for a bad configuration. `AssetMismatch` (M1-16), `ValueOutOfRange` and `ScalingOutOfRange` (M1-17) and `StalePackage` (M1-15) now have producers. M1-15 adds two variants U6 does not name -- `FuturePackage`, because a future-dated package points at a clock rather than at a relayer, and `NoClock`, because verifying without one accepts a package of any age. `InvalidSignature` is the only variant with no producer, and has none by design -- an unrecoverable signature is skipped, not rejected (ADR 15), so a future single-package API is where it becomes reportable.
 
 **U7** — Two reference consumer programs, one per mode, each showing asset-pair verification, staleness handling, typed-error handling and refuse-on-unavailable
 
@@ -202,7 +202,7 @@ A deliverable in its own right, and a prerequisite for U2 rather than a by-produ
 | --- | --- | --- | --- | --- |
 | **SEC1** | partial | `M1‑13`, `M1‑22`, `M2‑13`, `M3‑03` | `verifier‑core` | `an_unknown_signer_is_skipped_and_the_payload_still_verifies`, `unauthorised_is_reported_when_the_skipped_signers_would_have_made_quorum` |
 | **SEC2** | planned | `M1‑07`, `M2‑08`, `M2‑14`, `M3‑03` | `aggregator‑program`, `pull‑lib` | — |
-| **SEC3** | planned | `M2‑17` | — | — |
+| **SEC3** | partial | `M1‑14`, `M1‑15`, `M2‑17` | `kanon‑clock`, `verifier‑core` | `any_other_account_is_refused_before_its_contents_are_read`, `a_replayed_payload_is_refused_however_well_signed_it_is`, `a_clock_that_cannot_be_read_refuses_rather_than_guesses` |
 
 **SEC1** — Reject any package whose signer is not in the authorised signer set for the requested feed, in both modes
 
@@ -214,7 +214,7 @@ Two distinct obligations. Push: only the admin authority may update the stored s
 
 **SEC3** — Minimum recommended `maxAge` documented for both modes, with a manipulation analysis covering signer compromise, replay of stale packages and signer-set update delays
 
-A document, and the one place pull's weaker position has to be stated plainly: a pull consumer keeps its own signer set fresh, because it bypasses the centrally administered one.
+M2-17 is the document: the production `maxAge` minimum and the manipulation analysis. The mechanism it will describe exists now. Replay is refused because the clock is the pinned every-block account and no caller may substitute another, and a clock that cannot be read refuses rather than guesses, since verifying without one accepts a package of any age. RedStone's own fifteen minutes is the reference point the `maxAge` recommendation starts from. This is also the one place pull's weaker position has to be stated plainly: a pull consumer keeps its own signer set fresh, because it bypasses the centrally administered one.
 
 ## Open source
 

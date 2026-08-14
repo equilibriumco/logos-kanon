@@ -88,21 +88,42 @@ The same divergence ADR 15 recorded for an unrecoverable signature and for an ov
 value, made for the same reason and named here rather than left to be inferred from a
 pattern.
 
-The aggregate rule extends M1-17's ladder rather than adding a second one:
+The aggregate rule extends M1-17's ladder rather than adding a second one, but the shape
+changed while implementing it. Asking each cause in isolation —
+
+```
+met + stale >= threshold   -> StalePackage
+met + future >= threshold  -> FuturePackage
+met + spoiled >= threshold -> ValueOutOfRange
+```
+
+— answers `ThresholdNotMet { met: 0 }` when two signers reported and *different* things
+were wrong with each: one package too old, one value zero, threshold two. Both signers are
+in the payload, fixing either would have met the threshold, and no single cause reaches it
+alone. That is the same misdirection the ladder was built to remove, arriving through a
+mix of causes rather than one.
+
+So the question is asked once, over signers rather than over reasons:
 
 ```
 met >= threshold                     -> a price
-met + stale >= threshold             -> StalePackage
-met + future >= threshold            -> FuturePackage
-met + spoiled >= threshold           -> ValueOutOfRange
+met + present >= threshold           -> the largest cause among stale, future, spoiled
 met + distinct_unknowns >= threshold -> UnauthorisedSigner
 otherwise                            -> ThresholdNotMet
 ```
 
-Age comes first because it is the only cause that resolves on its own. A fresher payload
-fixes it; a bad value or a wrong signer set needs somebody to change something. Sending an
-operator to reconfigure a feed that will be fine in thirty seconds is the wrong answer even
-when it is also a true one.
+where `present` counts configured signers whose slot stayed empty for any of the three
+reasons, each counted once — a signer arriving stale in one package and useless in another
+must not close two gaps by itself.
+
+The largest cause is named because it is the one whose fixing moves the count furthest.
+Ties go to age, then to skew, then to values: that is the order in which a cause resolves
+without anybody acting, and a fresher payload fixes staleness where a bad value needs
+someone to change something. Sending an operator to reconfigure a feed that will be fine
+in thirty seconds is the wrong answer even when it is also a true one.
+
+Single-cause payloads answer exactly as the sequential form did, which is what the
+existing tests continue to assert.
 
 ### The timestamp is checked after recovery, not before
 

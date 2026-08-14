@@ -436,20 +436,42 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
                 .count()
         };
 
-        // Which skip, undone, would have reached the threshold? The first that
-        // would is the cause worth naming. Age comes before the rest because it
-        // is the only cause that resolves on its own: a fresher payload fixes
-        // it, where a bad value or a wrong signer set needs someone to act, and
-        // sending an operator to reconfigure a feed that will be fine in thirty
-        // seconds is the wrong answer even when it is a true one.
-        if met.saturating_add(blocked(&stale)) >= required {
-            return Err(VerifyError::StalePackage);
-        }
-        if met.saturating_add(blocked(&future)) >= required {
-            return Err(VerifyError::FuturePackage);
-        }
-        if met.saturating_add(blocked(&supplied_feed)) >= required {
-            return Err(VerifyError::ValueOutOfRange);
+        // Were the configured signers there at all? A signer whose slot stayed
+        // empty for any of these reasons still signed, and answering "the
+        // threshold was not met" would send an operator looking for signers that
+        // are already in the payload. Counted over signers rather than over
+        // reasons, because one signer can arrive stale in one package and
+        // useless in another and must not close two gaps by itself.
+        let present = stale
+            .iter()
+            .zip(future.iter())
+            .zip(supplied_feed.iter())
+            .zip(reported.iter())
+            .filter(|(((s, f), v), slot)| (**s || **f || **v) && slot.is_none())
+            .count();
+
+        if met.saturating_add(present) >= required {
+            // Which reason to name, when the signers are present but several
+            // things are wrong. The largest cause, because it is the one whose
+            // fixing moves the count furthest; ties go to age, then to skew,
+            // then to values, which is the order in which a cause resolves
+            // without anybody acting. A fresher payload fixes staleness, where
+            // a bad value needs someone to change something, and sending an
+            // operator to reconfigure a feed that will be fine in thirty
+            // seconds is the wrong answer even when it is also a true one.
+            let stale_count = blocked(&stale);
+            let future_count = blocked(&future);
+            let spoiled_count = blocked(&supplied_feed);
+
+            return Err(
+                if stale_count >= future_count && stale_count >= spoiled_count {
+                    VerifyError::StalePackage
+                } else if future_count >= spoiled_count {
+                    VerifyError::FuturePackage
+                } else {
+                    VerifyError::ValueOutOfRange
+                },
+            );
         }
         if met.saturating_add(unknown_count) >= required {
             return Err(VerifyError::UnauthorisedSigner);
@@ -1676,6 +1698,113 @@ mod tests {
         assert_eq!(
             FeedConfig::try_new(b"BTC", pair(), DECIMALS, 0, &signers, 1).unwrap_err(),
             ConfigError::MaxAgeZero
+        );
+    }
+
+    #[test]
+    fn signers_blocked_for_different_reasons_still_count_as_present() {
+        // Two configured signers reported: one package too old, one carrying a
+        // zero. Neither cause reaches a threshold of two on its own, and
+        // checking them one at a time would answer "met: 0" -- sending an
+        // operator to look for signers that are both already in the payload.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = PayloadBuilder::default()
+            .signed_package(
+                &keys[0],
+                &[(b"BTC", &[0, 0, 0, 10])],
+                NOW_MS - 60 * ONE_MINUTE,
+            )
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 0])], NOW_MS)
+            .build();
+        let payload = Payload::decode(&bytes).expect("well formed");
+
+        let config = timed_config(&set, 2, ONE_MINUTE);
+        assert_eq!(
+            verify_at(&payload, &config, NOW_MS),
+            Err(VerifyError::StalePackage),
+            "both signers are present; age is named because it resolves on its own"
+        );
+
+        // At a threshold of three the two of them could not have been enough
+        // even if nothing were wrong with either, so the count is the honest
+        // answer after all.
+        let strict = timed_config(&set, 3, ONE_MINUTE);
+        assert_eq!(
+            verify_at(&payload, &strict, NOW_MS),
+            Err(VerifyError::ThresholdNotMet {
+                met: 0,
+                required: 3
+            })
+        );
+    }
+
+    #[test]
+    fn the_largest_cause_is_named_when_several_block_the_threshold() {
+        // Three signers report zeros and one is stale, against a threshold of
+        // four. Age wins ties but does not win outright: naming staleness here
+        // would have an operator refetch a payload whose real problem is that
+        // three of its signers sent nothing usable.
+        let keys = keys(4);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys[..3] {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 0])], NOW_MS);
+        }
+        let bytes = builder
+            .signed_package(
+                &keys[3],
+                &[(b"BTC", &[0, 0, 0, 10])],
+                NOW_MS - 60 * ONE_MINUTE,
+            )
+            .build();
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 4, ONE_MINUTE);
+
+        assert_eq!(
+            verify_at(&payload, &config, NOW_MS),
+            Err(VerifyError::ValueOutOfRange)
+        );
+    }
+
+    #[test]
+    fn a_clock_below_the_max_age_does_not_underflow_into_rejecting_everything() {
+        // A fresh devnet has a clock smaller than any sensible maxAge, and
+        // `now - max_age` would wrap to nearly u64::MAX -- rejecting every
+        // package ever signed. Saturating, so it does not.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = agreed_at(&keys, 5);
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        assert_eq!(verify_at(&payload, &config, 10).expect("fresh").signers, 3);
+    }
+
+    #[test]
+    fn a_clock_near_the_top_of_its_range_neither_overflows_nor_panics() {
+        // The mirror of the underflow case. `now + MAX_AHEAD` would wrap to a
+        // small number and let every future-dated package through, so it
+        // saturates.
+        //
+        // The wire timestamp is six bytes, so no package can be dated past
+        // 2^48 - 1 ms and the wrap is unreachable from a payload — every
+        // encodable timestamp is ancient against a clock this size. The
+        // assertion is therefore that it answers rather than panics, and
+        // answers the true thing.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = agreed_at(&keys, (1u64 << 48) - 1);
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        assert_eq!(
+            verify_at(&payload, &config, u64::MAX),
+            Err(VerifyError::StalePackage)
+        );
+        assert_eq!(
+            verify_at(&payload, &config, u64::MAX - 1),
+            Err(VerifyError::StalePackage)
         );
     }
 }
