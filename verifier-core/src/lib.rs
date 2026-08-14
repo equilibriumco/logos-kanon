@@ -9,8 +9,8 @@
 //! The wire-format decoder ([`decode`]) and the primitive backend
 //! ([`backend`]) are in place. The rest of the verification path is not:
 //!
-//! - a `TimeSource` over the LEZ clock account
-//! - `maxAge` staleness and replay rejection
+//! - `maxAge` staleness and replay rejection, over the [`time::TimeSource`]
+//!   this crate declares and `kanon-clock` implements
 //!
 //! `TRACEABILITY.md` maps each of these to the requirement it satisfies, the
 //! task that delivers it and the tests that verify it.
@@ -24,6 +24,7 @@ pub mod backend;
 pub mod decode;
 pub mod error;
 pub mod feed;
+pub mod time;
 pub mod value;
 
 #[cfg(test)]

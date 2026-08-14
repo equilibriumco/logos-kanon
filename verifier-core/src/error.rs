@@ -11,7 +11,7 @@
 //! `decode` exists to keep "not well formed" and "not authorised" apart, and
 //! collapsing them here would undo that.
 
-use crate::{backend::BackendError, decode::DecodeError};
+use crate::{backend::BackendError, decode::DecodeError, time::TimeError};
 
 /// Why a payload did not yield a verified price.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,8 +40,20 @@ pub enum VerifyError {
     /// Rejected rather than counted once, because a signer that can occupy two
     /// slots reaches any threshold alone.
     ReoccurringSigner,
-    /// The package is older than the feed's `maxAge`.
+    /// Enough authorised signers reported for this feed that the threshold
+    /// would have been met, but their packages were older than the feed's
+    /// `maxAge`.
+    ///
+    /// The one failure in this enum that resolves on its own: a fresher payload
+    /// fixes it, where every other cause needs someone to change something.
     StalePackage,
+    /// As [`Self::StalePackage`], but the packages were dated further ahead
+    /// than clock skew allows.
+    ///
+    /// Separate because the two send an operator to different machines. Stale
+    /// means the relayer is behind or a payload was replayed; future-dated
+    /// means a signer's clock is wrong, or this node's is.
+    FuturePackage,
     /// The feed is registered against a different asset pair than the caller
     /// expects.
     ///
@@ -63,6 +75,12 @@ pub enum VerifyError {
     ScalingOutOfRange,
     /// The caller's feed configuration is itself invalid.
     InvalidConfig(ConfigError),
+    /// No trustworthy clock was available, so staleness could not be decided.
+    ///
+    /// Reported rather than skipped past. Verifying without a clock would mean
+    /// accepting a package of any age, which is the replay this check exists to
+    /// stop.
+    NoClock(TimeError),
 }
 
 impl From<DecodeError> for VerifyError {
@@ -74,6 +92,12 @@ impl From<DecodeError> for VerifyError {
 impl From<BackendError> for VerifyError {
     fn from(err: BackendError) -> Self {
         Self::InvalidSignature(err)
+    }
+}
+
+impl From<TimeError> for VerifyError {
+    fn from(err: TimeError) -> Self {
+        Self::NoClock(err)
     }
 }
 
@@ -108,12 +132,14 @@ pub enum ConfigError {
     ZeroFeedId,
     /// A decimal exponent the price conversion cannot divide by.
     DecimalsOutOfRange { decimals: u8, max: u8 },
+    /// A `maxAge` of zero, which no package can ever be young enough to satisfy.
+    MaxAgeZero,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{backend::BackendError, decode::DecodeError};
+    use crate::{backend::BackendError, decode::DecodeError, time::TimeError};
 
     #[test]
     fn a_decode_failure_and_a_signature_failure_stay_distinguishable() {
@@ -129,6 +155,27 @@ mod tests {
             VerifyError::InvalidSignature(BackendError::InvalidSignature)
         );
         assert_ne!(malformed, unusable);
+    }
+
+    #[test]
+    fn a_missing_clock_is_not_a_stale_package() {
+        // The distinction that matters operationally: one says the data is old,
+        // the other says we could not find out. Answering the second with the
+        // first would have an operator chasing a relayer over a wiring mistake.
+        let no_clock: VerifyError = TimeError::WrongAccount.into();
+        assert_eq!(no_clock, VerifyError::NoClock(TimeError::WrongAccount));
+        assert_ne!(no_clock, VerifyError::StalePackage);
+        assert_ne!(
+            VerifyError::NoClock(TimeError::Missing),
+            VerifyError::NoClock(TimeError::WrongAccount)
+        );
+    }
+
+    #[test]
+    fn a_stale_package_and_a_future_one_stay_distinguishable() {
+        // They send an operator to different machines: the relayer for one, a
+        // signer's or this node's clock for the other.
+        assert_ne!(VerifyError::StalePackage, VerifyError::FuturePackage);
     }
 
     #[test]
