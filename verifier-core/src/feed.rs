@@ -8,8 +8,17 @@ use crate::{
     backend::{SignerAddress, VerifierBackend},
     decode::{Payload, FEED_ID_BYTES},
     error::{ConfigError, VerifyError},
+    time::TimeSource,
     value::{median, Value, MAX_DECIMALS},
 };
+
+/// How far ahead of the chain's clock a package may be dated.
+///
+/// Allowance for skew between a RedStone signer's clock and the sequencer's,
+/// not a policy knob: no feed operator knows that skew better than this crate
+/// does. RedStone's own `MAX_TIMESTAMP_AHEAD_MS`, so a package RedStone would
+/// accept is never one Kanon rejects.
+pub const MAX_AHEAD_MS: u64 = 3 * 60 * 1000;
 
 /// The two assets a price relates: how much quote one unit of base is worth.
 ///
@@ -52,6 +61,7 @@ pub struct FeedConfig<'a> {
     feed_id: [u8; FEED_ID_BYTES],
     assets: AssetPair,
     decimals: u8,
+    max_age_ms: u64,
     signers: &'a [SignerAddress],
     threshold: u8,
 }
@@ -79,9 +89,13 @@ impl<'a> FeedConfig<'a> {
         feed_id: &[u8],
         assets: AssetPair,
         decimals: u8,
+        max_age_ms: u64,
         signers: &'a [SignerAddress],
         threshold: u8,
     ) -> Result<Self, ConfigError> {
+        if max_age_ms == 0 {
+            return Err(ConfigError::MaxAgeZero);
+        }
         if decimals > MAX_DECIMALS {
             return Err(ConfigError::DecimalsOutOfRange {
                 decimals,
@@ -144,6 +158,7 @@ impl<'a> FeedConfig<'a> {
             feed_id: padded,
             assets,
             decimals,
+            max_age_ms,
             signers,
             threshold,
         })
@@ -159,6 +174,12 @@ impl<'a> FeedConfig<'a> {
     #[must_use]
     pub const fn decimals(&self) -> u8 {
         self.decimals
+    }
+
+    /// How old a package may be, in milliseconds.
+    #[must_use]
+    pub const fn max_age_ms(&self) -> u64 {
+        self.max_age_ms
     }
 
     /// The feed id, right-padded to the wire width.
@@ -195,6 +216,28 @@ pub struct VerifiedFeed {
     pub signers: u8,
 }
 
+/// Where a package's timestamp sits relative to the chain's clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Freshness {
+    Current,
+    Stale,
+    Future,
+}
+
+/// Places `timestamp_ms` in the window `[now - max_age, now + MAX_AHEAD]`.
+///
+/// Saturating on both sides: a chain clock below either bound is possible on a
+/// fresh devnet, and a panic in a guest aborts the transaction.
+fn freshness(timestamp_ms: u64, now_ms: u64, max_age_ms: u64) -> Freshness {
+    if timestamp_ms < now_ms.saturating_sub(max_age_ms) {
+        Freshness::Stale
+    } else if timestamp_ms > now_ms.saturating_add(MAX_AHEAD_MS) {
+        Freshness::Future
+    } else {
+        Freshness::Current
+    }
+}
+
 /// Whether a value for the requested feed is one a price can be built from.
 ///
 /// A zero is RedStone's own "no report" placeholder, and the top bit set is the
@@ -228,17 +271,22 @@ fn usable(value: &Value) -> bool {
 /// reached, values that were unusable, or a price the account's scale cannot
 /// hold. An unrecoverable signature is skipped rather than reported; see
 /// [`VerifyError::InvalidSignature`].
-pub fn verify_feed<B: VerifierBackend>(
+pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     payload: &Payload<'_>,
     config: &FeedConfig<'_>,
     expected: &AssetPair,
     backend: &B,
+    clock: &T,
 ) -> Result<VerifiedFeed, VerifyError> {
     // Before the walk: a mismatch is a 64-byte comparison, where reaching the
     // same answer afterwards would have cost one signature recovery per signer.
     if config.assets() != expected {
         return Err(VerifyError::AssetMismatch);
     }
+
+    // Read once, before the walk: a clock that moved mid-payload would let two
+    // packages of the same age fall on opposite sides of the same window.
+    let now_ms = clock.now_ms()?;
 
     // One slot per configured signer: the slot is both the collection point and
     // the duplicate check, exactly as RedStone's (feed, signer) matrix cell is.
@@ -253,6 +301,10 @@ pub fn verify_feed<B: VerifierBackend>(
     // because a signer can send one package this reads and another it does not,
     // in either order.
     let mut supplied_feed = [false; MAX_SIGNERS];
+    // Why a slot stayed empty, when the reason was the package's age. Resolved
+    // against `reported` after the walk, like `supplied_feed`.
+    let mut stale = [false; MAX_SIGNERS];
+    let mut future = [false; MAX_SIGNERS];
 
     let walked = payload.for_each_package(|package| {
         let digest = backend.keccak256(package.signable());
@@ -270,10 +322,15 @@ pub fn verify_feed<B: VerifierBackend>(
             // point for the requested feed: an unknown signer that reported
             // nothing for this feed could not have moved the threshold even
             // if it had been authorised.
-            let contributes = package.data_points().any(|point| {
-                point.feed_id == config.feed_id()
-                    && Value::from_be_slice(point.value).is_some_and(|value| usable(&value))
-            });
+            // Also requires the package to be in the window: authorising a
+            // stranger whose package is stale would not have produced a price
+            // either, so it is not a signer set the caller should be told to fix.
+            let contributes = freshness(package.timestamp_ms, now_ms, config.max_age_ms())
+                == Freshness::Current
+                && package.data_points().any(|point| {
+                    point.feed_id == config.feed_id()
+                        && Value::from_be_slice(point.value).is_some_and(|value| usable(&value))
+                });
             if contributes
                 && unknown_count < MAX_SIGNERS
                 && !unknown
@@ -295,6 +352,29 @@ pub fn verify_feed<B: VerifierBackend>(
         let Some(slot) = reported.get_mut(index) else {
             return Ok(());
         };
+        // After recovery, so the package is known to be a configured signer's.
+        // Checking it first would be cheaper -- two comparisons against 565,497
+        // cycles -- but recovery would then be skipped for a package outside the
+        // window, and an outsider could append three unsigned stale packages to
+        // turn a threshold failure into a staleness one. A fresh payload has
+        // nothing to skip, so the saving only ever arrived in the two cases
+        // where naming the right cause matters most.
+        match freshness(package.timestamp_ms, now_ms, config.max_age_ms()) {
+            Freshness::Stale => {
+                if let Some(flag) = stale.get_mut(index) {
+                    *flag = true;
+                }
+                return Ok(());
+            }
+            Freshness::Future => {
+                if let Some(flag) = future.get_mut(index) {
+                    *flag = true;
+                }
+                return Ok(());
+            }
+            Freshness::Current => {}
+        }
+
         let mut supplied = false;
         for point in package.data_points() {
             if point.feed_id != config.feed_id() {
@@ -345,17 +425,53 @@ pub fn verify_feed<B: VerifierBackend>(
         // the cause worth naming. Spoiled values come before unknown signers
         // because a configured signer that did report is the nearer fault.
         let required = usize::from(config.threshold());
-        // A signer that filled its slot is already in `met`; counting it again
-        // here would let its own unusable second package close the gap its
-        // silent neighbour left.
-        let spoiled_count = supplied_feed
+        // Each tally counts only signers whose slot stayed empty. A signer that
+        // filled its slot is already in `met`, and counting it again would let
+        // its own second package close the gap a silent neighbour left.
+        let blocked = |flags: &[bool; MAX_SIGNERS]| {
+            flags
+                .iter()
+                .zip(reported.iter())
+                .filter(|(flagged, slot)| **flagged && slot.is_none())
+                .count()
+        };
+
+        // Were the configured signers there at all? A signer whose slot stayed
+        // empty for any of these reasons still signed, and answering "the
+        // threshold was not met" would send an operator looking for signers that
+        // are already in the payload. Counted over signers rather than over
+        // reasons, because one signer can arrive stale in one package and
+        // useless in another and must not close two gaps by itself.
+        let present = stale
             .iter()
+            .zip(future.iter())
+            .zip(supplied_feed.iter())
             .zip(reported.iter())
-            .filter(|(supplied, slot)| **supplied && slot.is_none())
+            .filter(|(((s, f), v), slot)| (**s || **f || **v) && slot.is_none())
             .count();
 
-        if met.saturating_add(spoiled_count) >= required {
-            return Err(VerifyError::ValueOutOfRange);
+        if met.saturating_add(present) >= required {
+            // Which reason to name, when the signers are present but several
+            // things are wrong. The largest cause, because it is the one whose
+            // fixing moves the count furthest; ties go to age, then to skew,
+            // then to values, which is the order in which a cause resolves
+            // without anybody acting. A fresher payload fixes staleness, where
+            // a bad value needs someone to change something, and sending an
+            // operator to reconfigure a feed that will be fine in thirty
+            // seconds is the wrong answer even when it is also a true one.
+            let stale_count = blocked(&stale);
+            let future_count = blocked(&future);
+            let spoiled_count = blocked(&supplied_feed);
+
+            return Err(
+                if stale_count >= future_count && stale_count >= spoiled_count {
+                    VerifyError::StalePackage
+                } else if future_count >= spoiled_count {
+                    VerifyError::FuturePackage
+                } else {
+                    VerifyError::ValueOutOfRange
+                },
+            );
         }
         if met.saturating_add(unknown_count) >= required {
             return Err(VerifyError::UnauthorisedSigner);
@@ -408,11 +524,33 @@ mod tests {
     }
 
     fn feed_config(signers: &[SignerAddress], threshold: u8) -> FeedConfig<'_> {
-        FeedConfig::try_new(b"BTC", pair(), DECIMALS, signers, threshold).expect("valid config")
+        FeedConfig::try_new(b"BTC", pair(), DECIMALS, NO_MAX_AGE, signers, threshold)
+            .expect("valid config")
     }
 
+    /// A clock the test chooses, standing in for the pinned LEZ account.
+    struct FixedClock(Result<u64, TimeError>);
+
+    impl TimeSource for FixedClock {
+        fn now_ms(&self) -> Result<u64, TimeError> {
+            self.0
+        }
+    }
+
+    const NOW_MS: u64 = 1_770_000_000_000;
+
+    /// No staleness bound, so every test that is not about timestamps keeps
+    /// using whatever timestamp reads clearly. Staleness has its own tests.
+    const NO_MAX_AGE: u64 = u64::MAX;
+
     fn verify(payload: &Payload<'_>, config: &FeedConfig<'_>) -> Result<VerifiedFeed, VerifyError> {
-        verify_feed(payload, config, &pair(), &InProgramBackend::new())
+        verify_feed(
+            payload,
+            config,
+            &pair(),
+            &InProgramBackend::new(),
+            &FixedClock(Ok(NOW_MS)),
+        )
     }
 
     #[test]
@@ -421,7 +559,8 @@ mod tests {
         // inline `&[signer(1)]` is a temporary that doesn't outlive `config`,
         // which is used again below.
         let signers = [signer(1)];
-        let config = FeedConfig::try_new(b"BTC", pair(), DECIMALS, &signers, 1).expect("valid");
+        let config =
+            FeedConfig::try_new(b"BTC", pair(), DECIMALS, NO_MAX_AGE, &signers, 1).expect("valid");
         let mut expected = [0u8; FEED_ID_BYTES];
         expected[..3].copy_from_slice(b"BTC");
         assert_eq!(config.feed_id(), &expected);
@@ -430,7 +569,7 @@ mod tests {
     #[test]
     fn an_empty_signer_list_makes_every_threshold_unreachable() {
         assert_eq!(
-            FeedConfig::try_new(b"BTC", pair(), DECIMALS, &[], 1).unwrap_err(),
+            FeedConfig::try_new(b"BTC", pair(), DECIMALS, NO_MAX_AGE, &[], 1).unwrap_err(),
             ConfigError::NoSigners
         );
     }
@@ -439,7 +578,7 @@ mod tests {
     fn a_zero_threshold_is_rejected() {
         // A threshold of zero is satisfied by a payload nobody signed.
         assert_eq!(
-            FeedConfig::try_new(b"BTC", pair(), DECIMALS, &[signer(1)], 0).unwrap_err(),
+            FeedConfig::try_new(b"BTC", pair(), DECIMALS, NO_MAX_AGE, &[signer(1)], 0).unwrap_err(),
             ConfigError::ThresholdZero
         );
     }
@@ -447,7 +586,15 @@ mod tests {
     #[test]
     fn a_threshold_no_signer_set_can_reach_is_rejected_at_configuration_time() {
         assert_eq!(
-            FeedConfig::try_new(b"BTC", pair(), DECIMALS, &[signer(1), signer(2)], 3).unwrap_err(),
+            FeedConfig::try_new(
+                b"BTC",
+                pair(),
+                DECIMALS,
+                NO_MAX_AGE,
+                &[signer(1), signer(2)],
+                3
+            )
+            .unwrap_err(),
             ConfigError::ThresholdExceedsSigners {
                 threshold: 3,
                 signers: 2
@@ -460,7 +607,7 @@ mod tests {
         let many: [SignerAddress; MAX_SIGNERS + 1] =
             core::array::from_fn(|i| signer(u8::try_from(i).unwrap_or(u8::MAX)));
         assert_eq!(
-            FeedConfig::try_new(b"BTC", pair(), DECIMALS, &many, 3).unwrap_err(),
+            FeedConfig::try_new(b"BTC", pair(), DECIMALS, NO_MAX_AGE, &many, 3).unwrap_err(),
             ConfigError::TooManySigners {
                 signers: MAX_SIGNERS + 1,
                 max: MAX_SIGNERS
@@ -474,7 +621,7 @@ mod tests {
         // `signers.len() > MAX_SIGNERS` would pass every existing test.
         let many: [SignerAddress; MAX_SIGNERS] =
             core::array::from_fn(|i| signer(u8::try_from(i + 1).unwrap_or(u8::MAX)));
-        assert!(FeedConfig::try_new(b"BTC", pair(), DECIMALS, &many, 3).is_ok());
+        assert!(FeedConfig::try_new(b"BTC", pair(), DECIMALS, NO_MAX_AGE, &many, 3).is_ok());
     }
 
     #[test]
@@ -485,6 +632,7 @@ mod tests {
                 b"BTC",
                 pair(),
                 DECIMALS,
+                NO_MAX_AGE,
                 &[signer(1), signer(2), signer(1)],
                 2
             )
@@ -496,7 +644,15 @@ mod tests {
     #[test]
     fn the_zero_address_is_not_a_signer() {
         assert_eq!(
-            FeedConfig::try_new(b"BTC", pair(), DECIMALS, &[signer(1), signer(0)], 1).unwrap_err(),
+            FeedConfig::try_new(
+                b"BTC",
+                pair(),
+                DECIMALS,
+                NO_MAX_AGE,
+                &[signer(1), signer(0)],
+                1
+            )
+            .unwrap_err(),
             ConfigError::ZeroSignerAddress
         );
     }
@@ -510,6 +666,7 @@ mod tests {
                 b"BTC",
                 pair(),
                 DECIMALS,
+                NO_MAX_AGE,
                 &[signer(1), signer(0), signer(1)],
                 1
             )
@@ -522,7 +679,7 @@ mod tests {
     fn a_feed_id_wider_than_the_wire_field_is_rejected() {
         let long = [b'X'; FEED_ID_BYTES + 1];
         assert_eq!(
-            FeedConfig::try_new(&long, pair(), DECIMALS, &[signer(1)], 1).unwrap_err(),
+            FeedConfig::try_new(&long, pair(), DECIMALS, NO_MAX_AGE, &[signer(1)], 1).unwrap_err(),
             ConfigError::FeedIdTooLong {
                 len: FEED_ID_BYTES + 1
             }
@@ -533,31 +690,41 @@ mod tests {
     fn an_empty_or_zero_feed_id_is_rejected() {
         // It would match the padding of any feed id in any payload.
         assert_eq!(
-            FeedConfig::try_new(b"", pair(), DECIMALS, &[signer(1)], 1).unwrap_err(),
+            FeedConfig::try_new(b"", pair(), DECIMALS, NO_MAX_AGE, &[signer(1)], 1).unwrap_err(),
             ConfigError::ZeroFeedId
         );
         assert_eq!(
-            FeedConfig::try_new(&[0u8; 4], pair(), DECIMALS, &[signer(1)], 1).unwrap_err(),
+            FeedConfig::try_new(&[0u8; 4], pair(), DECIMALS, NO_MAX_AGE, &[signer(1)], 1)
+                .unwrap_err(),
             ConfigError::ZeroFeedId
         );
     }
 
     #[test]
     fn a_threshold_equal_to_the_signer_count_is_allowed() {
-        assert!(FeedConfig::try_new(b"BTC", pair(), DECIMALS, &[signer(1), signer(2)], 2).is_ok());
+        assert!(FeedConfig::try_new(
+            b"BTC",
+            pair(),
+            DECIMALS,
+            NO_MAX_AGE,
+            &[signer(1), signer(2)],
+            2
+        )
+        .is_ok());
     }
 
     #[test]
     fn an_exponent_the_conversion_cannot_divide_by_is_a_configuration_error() {
         let signers = [signer(1)];
         assert_eq!(
-            FeedConfig::try_new(b"BTC", pair(), MAX_DECIMALS + 1, &signers, 1).unwrap_err(),
+            FeedConfig::try_new(b"BTC", pair(), MAX_DECIMALS + 1, NO_MAX_AGE, &signers, 1)
+                .unwrap_err(),
             ConfigError::DecimalsOutOfRange {
                 decimals: MAX_DECIMALS + 1,
                 max: MAX_DECIMALS,
             }
         );
-        assert!(FeedConfig::try_new(b"BTC", pair(), MAX_DECIMALS, &signers, 1).is_ok());
+        assert!(FeedConfig::try_new(b"BTC", pair(), MAX_DECIMALS, NO_MAX_AGE, &signers, 1).is_ok());
     }
 
     #[test]
@@ -570,19 +737,27 @@ mod tests {
             b"BTC",
             AssetPair::new([0; AssetPair::ID_LEN], [0; AssetPair::ID_LEN]),
             DECIMALS,
+            NO_MAX_AGE,
             &signers,
             1
         )
         .is_ok());
-        assert!(
-            FeedConfig::try_new(b"BTC", AssetPair::new(same, same), DECIMALS, &signers, 1).is_ok()
-        );
+        assert!(FeedConfig::try_new(
+            b"BTC",
+            AssetPair::new(same, same),
+            DECIMALS,
+            NO_MAX_AGE,
+            &signers,
+            1
+        )
+        .is_ok());
     }
 
     use crate::{
         backend::InProgramBackend,
         decode::Payload,
         test_support::{address_of, signing_key, PayloadBuilder},
+        time::TimeError,
     };
 
     /// `n` distinct keys, and the signer set they form.
@@ -1049,7 +1224,13 @@ mod tests {
 
         let elsewhere = AssetPair::new([0x11; AssetPair::ID_LEN], [0x05; AssetPair::ID_LEN]);
         assert_eq!(
-            verify_feed(&payload, &config, &elsewhere, &InProgramBackend::new()),
+            verify_feed(
+                &payload,
+                &config,
+                &elsewhere,
+                &InProgramBackend::new(),
+                &FixedClock(Ok(NOW_MS))
+            ),
             Err(VerifyError::AssetMismatch),
             "the same payload, asked about the wrong asset"
         );
@@ -1072,7 +1253,13 @@ mod tests {
 
         let other_quote = AssetPair::new(pair().base, [0x99; AssetPair::ID_LEN]);
         assert_eq!(
-            verify_feed(&payload, &config, &other_quote, &InProgramBackend::new()),
+            verify_feed(
+                &payload,
+                &config,
+                &other_quote,
+                &InProgramBackend::new(),
+                &FixedClock(Ok(NOW_MS))
+            ),
             Err(VerifyError::AssetMismatch)
         );
     }
@@ -1292,6 +1479,332 @@ mod tests {
             verify(&payload, &config),
             Err(VerifyError::UnauthorisedSigner),
             "thirty-seven strangers and none of the three configured signers"
+        );
+    }
+
+    /// A payload three configured signers agree on, dated `at`.
+    fn agreed_at(keys: &[k256::ecdsa::SigningKey], at: u64) -> std::vec::Vec<u8> {
+        let mut builder = PayloadBuilder::default();
+        for key in keys {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], at);
+        }
+        builder.build()
+    }
+
+    fn timed_config(signers: &[SignerAddress], threshold: u8, max_age_ms: u64) -> FeedConfig<'_> {
+        FeedConfig::try_new(b"BTC", pair(), DECIMALS, max_age_ms, signers, threshold)
+            .expect("valid config")
+    }
+
+    fn verify_at(
+        payload: &Payload<'_>,
+        config: &FeedConfig<'_>,
+        now_ms: u64,
+    ) -> Result<VerifiedFeed, VerifyError> {
+        verify_feed(
+            payload,
+            config,
+            &pair(),
+            &InProgramBackend::new(),
+            &FixedClock(Ok(now_ms)),
+        )
+    }
+
+    const ONE_MINUTE: u64 = 60 * 1000;
+
+    #[test]
+    fn a_package_inside_the_window_verifies_and_one_past_it_does_not() {
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = agreed_at(&keys, NOW_MS - ONE_MINUTE);
+        let payload = Payload::decode(&bytes).expect("well formed");
+
+        let generous = timed_config(&set, 3, 5 * ONE_MINUTE);
+        assert_eq!(
+            verify_at(&payload, &generous, NOW_MS)
+                .expect("fresh enough")
+                .signers,
+            3
+        );
+
+        let strict = timed_config(&set, 3, 30 * 1000);
+        assert_eq!(
+            verify_at(&payload, &strict, NOW_MS),
+            Err(VerifyError::StalePackage),
+            "a minute old against a thirty-second maxAge"
+        );
+    }
+
+    #[test]
+    fn the_staleness_boundary_admits_a_package_exactly_max_age_old() {
+        // The window is inclusive at the far edge, matching RedStone's
+        // `is_same_or_after`. An exclusive bound here would reject a package
+        // RedStone accepts, for one millisecond of difference.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        let exactly = agreed_at(&keys, NOW_MS - ONE_MINUTE);
+        let exactly = Payload::decode(&exactly).expect("well formed");
+        assert!(
+            verify_at(&exactly, &config, NOW_MS).is_ok(),
+            "exactly maxAge old"
+        );
+
+        let older = agreed_at(&keys, NOW_MS - ONE_MINUTE - 1);
+        let older = Payload::decode(&older).expect("well formed");
+        assert_eq!(
+            verify_at(&older, &config, NOW_MS),
+            Err(VerifyError::StalePackage),
+            "one millisecond older"
+        );
+    }
+
+    #[test]
+    fn a_package_dated_beyond_clock_skew_is_a_different_failure_from_a_stale_one() {
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        let allowed = agreed_at(&keys, NOW_MS + MAX_AHEAD_MS);
+        let allowed = Payload::decode(&allowed).expect("well formed");
+        assert!(
+            verify_at(&allowed, &config, NOW_MS).is_ok(),
+            "skew up to the tolerance is not an error"
+        );
+
+        let beyond = agreed_at(&keys, NOW_MS + MAX_AHEAD_MS + 1);
+        let beyond = Payload::decode(&beyond).expect("well formed");
+        assert_eq!(
+            verify_at(&beyond, &config, NOW_MS),
+            Err(VerifyError::FuturePackage),
+            "not StalePackage: the relayer is not the machine to look at"
+        );
+    }
+
+    #[test]
+    fn a_replayed_payload_is_refused_however_well_signed_it_is() {
+        // Every signature still verifies and every signer is authorised. Age is
+        // the only thing wrong with it, which is the whole point of the check.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = agreed_at(&keys, NOW_MS);
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, 5 * ONE_MINUTE);
+
+        assert!(
+            verify_at(&payload, &config, NOW_MS).is_ok(),
+            "valid when fresh"
+        );
+        assert_eq!(
+            verify_at(&payload, &config, NOW_MS + 60 * ONE_MINUTE),
+            Err(VerifyError::StalePackage),
+            "the same bytes an hour later"
+        );
+    }
+
+    #[test]
+    fn one_stale_package_costs_only_its_own_signer() {
+        // The rule that has held for every other bad package: a threshold
+        // exists to survive one signer, so one stale report must not deny the
+        // feed to the consumers the payload also serves.
+        let keys = keys(4);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys[..3] {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], NOW_MS);
+        }
+        let bytes = builder
+            .signed_package(
+                &keys[3],
+                &[(b"BTC", &[0, 0, 0, 100])],
+                NOW_MS - 60 * ONE_MINUTE,
+            )
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        assert_eq!(
+            verify_at(&payload, &config, NOW_MS)
+                .expect("three fresh signers agree")
+                .signers,
+            3
+        );
+    }
+
+    #[test]
+    fn strangers_sending_stale_packages_cannot_rename_a_threshold_failure() {
+        // The reason the timestamp is checked after recovery. If it were checked
+        // first, these packages would never be attributed to anyone and three of
+        // them would turn this into StalePackage -- telling an operator to
+        // refetch when the signer set is what does not match.
+        let keys = keys(6);
+        let set = signer_set(&keys[..3]);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys[3..] {
+            builder =
+                builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], NOW_MS - 60 * ONE_MINUTE);
+        }
+        let bytes = builder.build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        assert_eq!(
+            verify_at(&payload, &config, NOW_MS),
+            Err(VerifyError::ThresholdNotMet {
+                met: 0,
+                required: 3
+            }),
+            "none of the configured signers signed, and no stranger's age changes that"
+        );
+    }
+
+    #[test]
+    fn a_clock_that_cannot_be_read_refuses_rather_than_guesses() {
+        // Verifying without a clock would accept a package of any age, which is
+        // the replay this check exists to stop.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = agreed_at(&keys, NOW_MS);
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        for reason in [
+            TimeError::Missing,
+            TimeError::WrongAccount,
+            TimeError::Undecodable,
+            TimeError::Unavailable,
+        ] {
+            assert_eq!(
+                verify_feed(
+                    &payload,
+                    &config,
+                    &pair(),
+                    &InProgramBackend::new(),
+                    &FixedClock(Err(reason))
+                ),
+                Err(VerifyError::NoClock(reason))
+            );
+        }
+    }
+
+    #[test]
+    fn a_max_age_of_zero_is_rejected_at_configuration_time() {
+        // No package can be young enough, so the feed would never produce a
+        // price. Caught where the caller can fix it.
+        let signers = [signer(1)];
+        assert_eq!(
+            FeedConfig::try_new(b"BTC", pair(), DECIMALS, 0, &signers, 1).unwrap_err(),
+            ConfigError::MaxAgeZero
+        );
+    }
+
+    #[test]
+    fn signers_blocked_for_different_reasons_still_count_as_present() {
+        // Two configured signers reported: one package too old, one carrying a
+        // zero. Neither cause reaches a threshold of two on its own, and
+        // checking them one at a time would answer "met: 0" -- sending an
+        // operator to look for signers that are both already in the payload.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = PayloadBuilder::default()
+            .signed_package(
+                &keys[0],
+                &[(b"BTC", &[0, 0, 0, 10])],
+                NOW_MS - 60 * ONE_MINUTE,
+            )
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 0])], NOW_MS)
+            .build();
+        let payload = Payload::decode(&bytes).expect("well formed");
+
+        let config = timed_config(&set, 2, ONE_MINUTE);
+        assert_eq!(
+            verify_at(&payload, &config, NOW_MS),
+            Err(VerifyError::StalePackage),
+            "both signers are present; age is named because it resolves on its own"
+        );
+
+        // At a threshold of three the two of them could not have been enough
+        // even if nothing were wrong with either, so the count is the honest
+        // answer after all.
+        let strict = timed_config(&set, 3, ONE_MINUTE);
+        assert_eq!(
+            verify_at(&payload, &strict, NOW_MS),
+            Err(VerifyError::ThresholdNotMet {
+                met: 0,
+                required: 3
+            })
+        );
+    }
+
+    #[test]
+    fn the_largest_cause_is_named_when_several_block_the_threshold() {
+        // Three signers report zeros and one is stale, against a threshold of
+        // four. Age wins ties but does not win outright: naming staleness here
+        // would have an operator refetch a payload whose real problem is that
+        // three of its signers sent nothing usable.
+        let keys = keys(4);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys[..3] {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 0])], NOW_MS);
+        }
+        let bytes = builder
+            .signed_package(
+                &keys[3],
+                &[(b"BTC", &[0, 0, 0, 10])],
+                NOW_MS - 60 * ONE_MINUTE,
+            )
+            .build();
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 4, ONE_MINUTE);
+
+        assert_eq!(
+            verify_at(&payload, &config, NOW_MS),
+            Err(VerifyError::ValueOutOfRange)
+        );
+    }
+
+    #[test]
+    fn a_clock_below_the_max_age_does_not_underflow_into_rejecting_everything() {
+        // A fresh devnet has a clock smaller than any sensible maxAge, and
+        // `now - max_age` would wrap to nearly u64::MAX -- rejecting every
+        // package ever signed. Saturating, so it does not.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = agreed_at(&keys, 5);
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        assert_eq!(verify_at(&payload, &config, 10).expect("fresh").signers, 3);
+    }
+
+    #[test]
+    fn a_clock_near_the_top_of_its_range_neither_overflows_nor_panics() {
+        // The mirror of the underflow case. `now + MAX_AHEAD` would wrap to a
+        // small number and let every future-dated package through, so it
+        // saturates.
+        //
+        // The wire timestamp is six bytes, so no package can be dated past
+        // 2^48 - 1 ms and the wrap is unreachable from a payload — every
+        // encodable timestamp is ancient against a clock this size. The
+        // assertion is therefore that it answers rather than panics, and
+        // answers the true thing.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = agreed_at(&keys, (1u64 << 48) - 1);
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        assert_eq!(
+            verify_at(&payload, &config, u64::MAX),
+            Err(VerifyError::StalePackage)
+        );
+        assert_eq!(
+            verify_at(&payload, &config, u64::MAX - 1),
+            Err(VerifyError::StalePackage)
         );
     }
 }
