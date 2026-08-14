@@ -11,8 +11,6 @@
 //!
 //! - a `TimeSource` over the LEZ clock account
 //! - `maxAge` staleness and replay rejection
-//! - asset-identity checks
-//! - value sanity and scaling bounds
 //!
 //! `TRACEABILITY.md` maps each of these to the requirement it satisfies, the
 //! task that delivers it and the tests that verify it.

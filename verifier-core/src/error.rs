@@ -42,15 +42,24 @@ pub enum VerifyError {
     ReoccurringSigner,
     /// The package is older than the feed's `maxAge`.
     StalePackage,
-    /// The package does not carry the asset the caller asked for.
-    AssetMismatch,
-    /// The value is zero, negative, or wider than a price can represent.
+    /// The feed is registered against a different asset pair than the caller
+    /// expects.
     ///
-    /// Nothing constructs this today: an unrepresentable value is skipped
-    /// rather than rejected (ADR 15), so one configured signer cannot deny a
-    /// feed by sending one. Value-sanity bounds will give it a producer.
+    /// A comparison between the caller's expectation and the registration, not
+    /// a property of the payload: a RedStone package names a feed and nothing
+    /// else, so no signer attests to which assets that feed prices.
+    AssetMismatch,
+    /// Enough authorised signers reported for this feed that the threshold
+    /// would have been met, but every value they supplied was unusable — zero,
+    /// negative, or wider than a price can represent.
+    ///
+    /// Distinct from [`Self::ThresholdNotMet`] for the same reason
+    /// [`Self::UnauthorisedSigner`] is: signers that did report and signers
+    /// that never signed call for different responses. A single signer cannot
+    /// force this, since it can only spoil its own slot.
     ValueOutOfRange,
-    /// The value's scale or exponent is outside the feed's configured bounds.
+    /// The agreed price cannot be represented on the scale the price account
+    /// uses.
     ScalingOutOfRange,
     /// The caller's feed configuration is itself invalid.
     InvalidConfig(ConfigError),
@@ -97,6 +106,8 @@ pub enum ConfigError {
     FeedIdTooLong { len: usize },
     /// An empty or all-zero feed id would match a padded field in any payload.
     ZeroFeedId,
+    /// A decimal exponent the price conversion cannot divide by.
+    DecimalsOutOfRange { decimals: u8, max: u8 },
 }
 
 #[cfg(test)]
