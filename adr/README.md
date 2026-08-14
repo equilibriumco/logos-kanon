@@ -31,6 +31,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [15](0015-redstone-parity-verification-semantics.md) | Verification semantics follow RedStone's Rust SDK, with two divergences | accepted |
 | [16](0016-the-asset-pair-is-a-registration-claim.md) | The asset pair is a registration claim, checked against the caller's expectation | accepted |
 | [17](0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md) | Value sanity is two-level, and prices convert to the account's Q64.64 scale | accepted |
+| [18](0018-timestamp-validity-is-two-sided-and-costs-one-signer.md) | Timestamp validity is two-sided, and a bad timestamp costs one signer | accepted |
 
 ## How they fit together
 
@@ -46,9 +47,10 @@ ADR 13 are the two places where an external format and an external clock enter t
 path, and both are decided the same way — take the untrusted thing, bound it, and refuse
 to let a caller choose it.
 
-Three describe what the verifier decides once a payload is in front of it, and they read
+Four describe what the verifier decides once a payload is in front of it, and they read
 in order: ADR 15 settles who counts and what a skip costs, ADR 16 settles what the feed is
-about, and ADR 17 settles what the agreed number means. The last two both turn on the same
+about, ADR 17 settles what the agreed number means, and ADR 18 settles when it stops being
+true. ADR 18 also completes ADR 13, which chose the clock long before anything read it. The last two both turn on the same
 observation — that the canonical price account says less than it appears to, carrying
 neither the asset semantics of a feed id nor the exponent of a price — so both decisions
 are about supplying, and documenting, what the format leaves out.
