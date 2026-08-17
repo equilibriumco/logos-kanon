@@ -33,6 +33,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [17](0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md) | Value sanity is two-level, and prices convert to the account's Q64.64 scale | accepted |
 | [18](0018-timestamp-validity-is-two-sided-and-costs-one-signer.md) | Timestamp validity is two-sided, and a bad timestamp costs one signer | accepted |
 | [19](0019-conformance-against-captured-redstone-payloads.md) | Conformance is asserted against captured RedStone payloads, with the signature as the oracle | accepted |
+| [20](0020-per-component-costs-are-measured-in-the-product-guest.md) | Per-component costs are measured in the product guest, by differencing pipeline prefixes | accepted |
 
 ## How they fit together
 
@@ -56,11 +57,15 @@ observation — that the canonical price account says less than it appears to, c
 neither the asset semantics of a feed id nor the exponent of a price — so both decisions
 are about supplying, and documenting, what the format leaves out.
 
-The remaining five exist to keep claims verifiable: the licence gate (1), the guardrails
+The remaining six exist to keep claims verifiable: the licence gate (1), the guardrails
 (10), the traceability checker (11), a sequencer that cannot drift from the code it tests
-(12), and conformance against payloads nobody here controls (19). The last is the answer
-to a question the other four cannot settle -- whether the decoder is right about a format
-this repository did not define.
+(12), conformance against payloads nobody here controls (19), and a cost table generated
+by the code that asserts it (20). ADR 19 is the answer to a question the others cannot
+settle -- whether the decoder is right about a format this repository did not define --
+and ADR 20 answers the other one, where an update's cost actually goes. ADR 20 also
+completes ADR 6: the accelerator configuration is a `[patch.crates-io]` section that
+fails silently, and measuring keccak256 and recovery as separate rows is what makes both
+failure directions visible in cycles alone.
 
 ## Open questions carried by these decisions
 
@@ -81,6 +86,7 @@ One is new with M1 and belongs with them:
   (ADR 17). A consumer assuming a base-10 integer would be out by roughly `1.8 x 10^19`
   with nothing on chain to signal it. Worth confirming rather than discovering.
 
-Two are settled locally, with a measurement in M2: which clock account an oracle should
-read (ADR 13), and the CI ceilings that stop the accelerator configuration regressing
-silently (ADR 6, landing with M1-25).
+One is settled locally, with a measurement in M2: which clock account an oracle should
+read (ADR 13). The CI ceilings that stop the accelerator configuration regressing
+silently (ADR 6) landed with M1-25, and ADR 20 records that both of them turned out to
+be cycle counts.

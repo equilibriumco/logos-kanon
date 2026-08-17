@@ -31,18 +31,25 @@ kanon-idl = { path = "../../kanon-idl", version = "0.1.0" }
 # LEZ runs the same program publicly or privately, and a consumer holding
 # private accounts has this code proven -- where the accelerator costs 26.90 s
 # of proving and 223 KB of proof per update, from a coprocessor charge that
-# needs roughly 16 hashes to amortize against an update's three. It also failed
+# needs roughly 16 hashes to amortize. It also failed
 # to fit in 6 GiB of VRAM where mixed proved successfully.
+#
+# An update runs six hashes, not the three this comment used to say: recovery
+# ends by hashing the recovered public key to an address. `COSTS.md` measures
+# that and `adr/0020` records it. Six is still under sixteen, and the decision
+# rested on the proving figures rather than on the count.
 #
 # Negligibly worse in public mode, decisively better in private. Software keccak
 # is the configuration that is never badly wrong.
 #
 # Tags, not branches, so what is built is what the baseline measured. A dropped
 # or moved tag here silently restores software recovery in a green build, which
-# is what the cost baseline's *Recommendations* item 2 asks CI to guard on two
-# metrics: a cycle ceiling on one recovery catches losing secp256k1, and a
-# proof-size ceiling on a 3-of-N update catches accidentally gaining keccak.
-# Neither ceiling is in place yet.
+# is what the cost baseline's *Recommendations* item 2 asks CI to guard.
+# Both guards are `methods/tests/cost.rs`, and both are cycle counts: measuring
+# keccak256 and recovery as separate rows makes losing secp256k1 a twenty-fold
+# rise in one row and gaining keccak a seven-fold fall in another. The
+# proof-size ceiling the baseline expected for the second is unnecessary once
+# the total is broken apart (`adr/0020`).
 [patch.crates-io]
 k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.1" }
 crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.2-risczero.1" }

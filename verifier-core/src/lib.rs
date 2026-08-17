@@ -4,16 +4,17 @@
 //! (`pull-lib`) both call this crate, and nothing else does the verifying,
 //! which is what makes one audit cover both paths.
 //!
-//! # Not yet implemented
+//! # What a verification decides
 //!
-//! The wire-format decoder ([`decode`]) and the primitive backend
-//! ([`backend`]) are in place. The rest of the verification path is not:
+//! [`verify_feed`] walks a payload once and answers with a price or with a
+//! reason. Decoding ([`decode`]) and the primitives ([`backend`]) are the two
+//! steps below it; asset identity, value sanity, the staleness window read
+//! through [`time::TimeSource`], the M-of-N threshold and the conversion to the
+//! price account's scale are the decisions above it.
 //!
-//! - `maxAge` staleness and replay rejection, over the [`time::TimeSource`]
-//!   this crate declares and `kanon-clock` implements
-//!
-//! `TRACEABILITY.md` maps each of these to the requirement it satisfies, the
-//! task that delivers it and the tests that verify it.
+//! `TRACEABILITY.md` maps each of those to the requirement it satisfies, the
+//! task that delivered it and the tests that verify it, and `COSTS.md` to what
+//! it costs.
 //!
 //! [`VerifierBackend`] is what keeps a future host precompile a localised
 //! change: no caller reaches a signature primitive except through it.

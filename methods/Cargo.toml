@@ -18,5 +18,17 @@ license.workspace = true
 [build-dependencies]
 risc0-build.workspace = true
 
+# For `tests/cost.rs`, which executes the guests it builds. Nothing here is a
+# runtime dependency: the crate's job is still to hand out ELFs and image ids.
+#
+# These tests need the real ELFs, so `RISC0_SKIP_BUILD` makes them meaningless
+# and `ci.yml` excludes this crate from `build-test` for that reason.
+# `guardrails.yml` runs them instead, with the guest toolchain installed.
+[dev-dependencies]
+risc0-zkvm.workspace = true
+verifier-core.workspace = true
+serde_json = "1.0.151"
+hex = "0.4"
+
 [package.metadata.risc0]
 methods = ["guest"]
