@@ -247,7 +247,7 @@ note = "M0 measured a 3-of-N update at 1,906,737 cycles against LEZ's 32M per-tr
 id = "P2"
 status = "partial"
 tasks = ["M1-25", "M2-18", "M3-08", "M3-10", "M5-07"]
-implemented_in = ["m0/cost-baseline", "m0/lez-probe"]
+implemented_in = ["m0/cost-baseline", "m0/lez-probe", "methods/tests/cost.rs", "COSTS.md"]
 verified_by = [
   "test:recovery_cycles_are_unchanged",
   "test:keccak_cycles_per_hash_are_unchanged",
@@ -256,10 +256,16 @@ verified_by = [
   "test:proof_sizes_distinguish_the_configurations",
   "test:instruction_handling_cost_is_unchanged",
   "test:per_signer_cost_is_linear",
+  "test:per_component_cycles_are_unchanged",
+  "test:the_dominant_cost_is_linear_in_the_signer_count",
+  "test:recovery_is_still_the_accelerated_implementation",
+  "test:the_keccak_accelerator_is_still_declined",
   "ci:guardrails",
+  "ci:product-costs",
   "doc:m0/M0-report.pdf",
+  "doc:COSTS.md",
 ]
-note = "\"Reproducible from the test suite\" is satisfied the strict way: every published figure is asserted by exact equality and runs in CI on x86_64. The per-component split is measured rather than inferred: `lez_plumbing` is a third guest identical to `lez_verify` with the cryptography removed, so the framework's per-package instruction handling is subtracted directly instead of being left in a residual, and `instruction_handling_cost_is_unchanged` pins it. Without that separation, drift in the framework's cost is silently reattributed to recovery. The cross-architecture finding (M0-11) stands in the report, measured across three machines; ARM64 is not a delivery target and is no longer re-checked on every push. Still to come are the per-component table on product code (M1-25), the push write (M2-18), the pull per-read (M3-08) and byte accounting (M3-10)."
+note = "\"Reproducible from the test suite\" is satisfied the strict way: every published figure is asserted by exact equality and runs in CI on x86_64. M0 measured the two primitives in isolation, and its per-component split comes from a subtraction rather than a residual: `lez_plumbing` is a third guest identical to `lez_verify` with the cryptography removed, so the framework's per-package instruction handling is taken out directly and `instruction_handling_cost_is_unchanged` pins it. Without that separation, drift in the framework's cost is silently reattributed to recovery. M1-25 does the same for the shipped path: `COSTS.md` breaks a real update into decode, keccak256, recovery, the signer-set check and a named remainder, by differencing prefixes of `verify_feed` in the product guest over payloads RedStone published. Recovery is 95.88% of a three-signer update and nothing amortises, so a wider threshold is linearly priced. The table is printed by the code that asserts it, so a published figure and an asserted figure cannot drift apart, and the two rows for keccak256 and recovery are what finally give ADR 6 its CI guards in cycles alone. The cross-architecture finding (M0-11) stands in the report, measured across three machines; ARM64 is not a delivery target and is no longer re-checked on every push. Still to come are the push write (M2-18), the pull per-read (M3-08) and byte accounting (M3-10)."
 
 [[row]]
 id = "P3"
