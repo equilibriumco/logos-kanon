@@ -111,6 +111,50 @@ jobs:
       - name: guardrails, both projects
         run: cargo test --release --locked --workspace --manifest-path m0/Cargo.toml
 
+  # The product path's own figures. Separate from the job above because it is a
+  # separate workspace on separate pins: m0 is frozen to the toolchain its
+  # published figures were measured on, while the product tracks what LEZ pins,
+  # which is 3.0.5. `adr/0008` records that the cycle counts are identical on
+  # both, so the two sets of figures stay comparable.
+  #
+  # Here rather than in `ci.yml` for the reason this workflow exists: a red tick
+  # here means a measured figure moved.
+  product-costs:
+    name: per-component costs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Install RISC Zero toolchain
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.risc0/bin:$PATH"
+          rzup install cargo-risczero 3.0.5
+          rzup install r0vm 3.0.5
+          rzup install rust 1.97.0
+
+      - name: Cache cargo and guest builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: product-costs-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: product-costs-${{ runner.os }}-
+
+      # Asserts every figure `COSTS.md` publishes, and ADR 6's two ceilings on
+      # the accelerator configuration with it.
+      - name: cost table
+        run: cargo test --release --locked -p kanon-methods
+
   # fmt and clippy used to live here. They moved to `ci.yml` because
   # they lint product code as much as m0's, and this workflow is the cycle gate:
   # a red tick here should mean a figure moved, not that a line was too long.

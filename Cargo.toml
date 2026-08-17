@@ -97,5 +97,10 @@ twap_oracle_core = { git = "https://github.com/logos-blockchain/lez-programs", r
 # published cycle count was unchanged,
 # even though the guest image ID moves. `adr/0008-exact-pins-and-tracking-the-estate.md`
 # records the experiment and what it settled.
-risc0-zkvm = "=3.0.5"
+#
+# `client` and no more. The default set adds `bonsai`, whose remote proving
+# client drags an HTTP and TLS stack into the lockfile for a service this
+# repository does not call; `client` alone carries the local executor, which is
+# all `methods/tests/cost.rs` needs.
+risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["client"] }
 risc0-build = "=3.0.5"
