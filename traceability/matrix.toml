@@ -78,8 +78,11 @@ verified_by = [
   "test:a_package_dated_beyond_clock_skew_is_a_different_failure_from_a_stale_one",
   "test:a_replayed_payload_is_refused_however_well_signed_it_is",
   "test:any_other_account_is_refused_before_its_contents_are_read",
+  "test:every_published_signature_recovers_to_the_signer_redstone_named",
+  "test:a_published_payload_verifies_end_to_end",
+  "test:a_wrong_signed_span_recovers_to_nobody",
 ]
-note = "Four rejection classes in one requirement. The malformed-wire-format one has landed: M1-12 decodes zero-copy, bounds-checks every length, and is tested against truncation at every offset, since a panic in a guest aborts the transaction rather than rejecting the package. Conformance against published vectors is M1-21. Asset identity has landed (M1-16), and it is a comparison between the caller's expectation and the registration rather than a property of the payload, because a RedStone package names a feed and nothing else -- ADR 16 records what that check does and does not establish. Value sanity has landed too (M1-17): zero, negative and unrepresentable values are skipped per signer so that one signer cannot deny a feed, and are reported once enough of them would have met the threshold. Staleness has landed as well (M1-14, M1-15): the clock is LEZ's every-block account read through `kanon-clock`, and any other account is refused, because a caller-supplied clock makes a stale price look current. The window is two-sided, following RedStone, so a package dated beyond clock skew is its own failure rather than a stale one -- ADR 18 records why that distinction is worth a variant U6 does not name. All four rejection classes are now implemented; M1-21 conforms the decoder against published vectors."
+note = "Four rejection classes in one requirement. The malformed-wire-format one has landed: M1-12 decodes zero-copy, bounds-checks every length, and is tested against truncation at every offset, since a panic in a guest aborts the transaction rather than rejecting the package. Conformance against published vectors is M1-21. Asset identity has landed (M1-16), and it is a comparison between the caller's expectation and the registration rather than a property of the payload, because a RedStone package names a feed and nothing else -- ADR 16 records what that check does and does not establish. Value sanity has landed too (M1-17): zero, negative and unrepresentable values are skipped per signer so that one signer cannot deny a feed, and are reported once enough of them would have met the threshold. Staleness has landed as well (M1-14, M1-15): the clock is LEZ's every-block account read through `kanon-clock`, and any other account is refused, because a caller-supplied clock makes a stale price look current. The window is two-sided, following RedStone, so a package dated beyond clock skew is its own failure rather than a stale one -- ADR 18 records why that distinction is worth a variant U6 does not name. All four rejection classes are now implemented. M1-21 conforms the decoder against payloads captured from RedStone's gateway, using their own signatures as the oracle: a signature recovers to the address they published only if the signed span matches theirs byte for byte, and a negative control shows seven plausible wrong spans recovering nobody. There are no published vectors to test against -- the Rust SDK builds its test data in code and the EVM connector is BUSL -- which is what ADR 19 records."
 
 [[row]]
 id = "F5"
@@ -287,10 +290,14 @@ note = "The harness is standing: CI boots a Bedrock node and a sequencer built f
 [[row]]
 id = "S3"
 status = "partial"
-tasks = ["M1-06", "M1-22", "M1-23", "M1-24", "M2-13", "M2-14", "M2-15", "M2-16", "M5-06"]
-implemented_in = ["traceability"]
-verified_by = ["ci:traceability"]
-note = "This matrix is the requirement's own instrument. It is `partial` by construction until M5-06 leaves every row verified; the checker is what stops that from being asserted without evidence."
+tasks = ["M1-06", "M1-21", "M1-22", "M1-23", "M1-24", "M2-13", "M2-14", "M2-15", "M2-16", "M5-06"]
+implemented_in = ["traceability", "verifier-core"]
+verified_by = [
+  "ci:traceability",
+  "test:every_published_signature_recovers_to_the_signer_redstone_named",
+  "test:a_signer_set_that_is_not_the_published_one_reaches_no_threshold",
+]
+note = "This matrix is the requirement's own instrument. It is `partial` by construction until M5-06 leaves every row verified; the checker is what stops that from being asserted without evidence. S3 also asks for coverage against valid and invalid signatures specifically, which M1-21 answers with real ones: RedStone's published signatures over their published packages, and the same packages against a signer set that never signed them."
 
 [[row]]
 id = "S4"

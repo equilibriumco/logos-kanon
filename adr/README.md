@@ -32,6 +32,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [16](0016-the-asset-pair-is-a-registration-claim.md) | The asset pair is a registration claim, checked against the caller's expectation | accepted |
 | [17](0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md) | Value sanity is two-level, and prices convert to the account's Q64.64 scale | accepted |
 | [18](0018-timestamp-validity-is-two-sided-and-costs-one-signer.md) | Timestamp validity is two-sided, and a bad timestamp costs one signer | accepted |
+| [19](0019-conformance-against-captured-redstone-payloads.md) | Conformance is asserted against captured RedStone payloads, with the signature as the oracle | accepted |
 
 ## How they fit together
 
@@ -55,9 +56,11 @@ observation — that the canonical price account says less than it appears to, c
 neither the asset semantics of a feed id nor the exponent of a price — so both decisions
 are about supplying, and documenting, what the format leaves out.
 
-The remaining four exist to keep claims verifiable: the licence gate (1), the guardrails
-(10), the traceability checker (11), and a sequencer that cannot drift from the code it
-tests (12).
+The remaining five exist to keep claims verifiable: the licence gate (1), the guardrails
+(10), the traceability checker (11), a sequencer that cannot drift from the code it tests
+(12), and conformance against payloads nobody here controls (19). The last is the answer
+to a question the other four cannot settle -- whether the decoder is right about a format
+this repository did not define.
 
 ## Open questions carried by these decisions
 
