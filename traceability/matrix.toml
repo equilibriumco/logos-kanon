@@ -40,11 +40,19 @@ note = "Two halves. The verification half has landed: the `VerifierBackend` trai
 
 [[row]]
 id = "F2"
-status = "planned"
-tasks = ["M1-01", "M1-10", "M1-19", "M3-01"]
+status = "partial"
+tasks = ["M1-01", "M1-10", "M1-19", "M1-22", "M3-01"]
 implemented_in = ["verifier-core", "pull-lib"]
-verified_by = []
-note = "Structural: `verifier-core` depends on neither mode, and both modes depend on it. M3-02 asserts the pull side carries no aggregator dependency."
+verified_by = [
+  "test:exactly_the_threshold_verifies_and_reports_how_many_signers_met_it",
+  "test:more_signers_than_the_threshold_all_count_toward_the_median",
+  "test:a_signer_that_sent_an_unusable_value_does_not_deny_the_feed_to_the_rest",
+  "test:a_stranger_in_the_payload_is_ignored_when_the_configured_signers_suffice",
+  "test:a_package_at_the_far_edge_of_the_window_is_still_current",
+  "test:an_accepted_price_carries_both_scales_so_a_caller_need_not_convert",
+  "test:no_two_failure_modes_answer_with_the_same_variant",
+]
+note = "Structural: `verifier-core` depends on neither mode, and both modes depend on it. M3-02 asserts the pull side carries no aggregator dependency. M1-22 supplies the behavioural half: `verifier-core/src/accept_and_reject.rs` reads the accept and reject contract off the crate's public API, which is the surface both modes call. It is tested once rather than once per mode because `verify_feed` takes no argument naming its caller, so there is no per-mode behaviour to reach -- ADR 23 records that, and what the two callers add on top is M2-02 and M3-01, with M3-04 asserting they agree."
 
 [[row]]
 id = "F3"
@@ -202,8 +210,22 @@ verified_by = [
   "test:a_missing_clock_is_not_a_stale_package",
   "test:a_stale_package_and_a_future_one_stay_distinguishable",
   "test:a_clock_that_cannot_be_read_refuses_rather_than_guesses",
+  "test:no_two_failure_modes_answer_with_the_same_variant",
+  "test:a_malformed_payload_is_named_as_malformed_and_carries_the_decoder_reason",
+  "test:an_envelope_that_is_not_redstones_is_refused_before_any_verification",
+  "test:too_few_signers_reports_how_many_arrived_against_how_many_were_needed",
+  "test:signers_nobody_configured_are_named_as_the_fault_rather_than_the_count",
+  "test:a_pair_that_is_not_the_callers_is_refused_before_a_single_recovery",
+  "test:a_payload_older_than_the_window_is_stale_rather_than_short_of_signers",
+  "test:a_payload_dated_ahead_of_the_clock_is_its_own_failure_not_a_stale_one",
+  "test:prices_nobody_can_use_are_reported_once_enough_of_them_would_have_counted",
+  "test:one_signer_supplying_the_feed_twice_is_refused",
+  "test:a_price_the_accounts_scale_cannot_hold_is_reported_not_wrapped",
+  "test:a_clock_that_cannot_be_read_fails_the_verification_rather_than_defaulting",
+  "test:an_unusable_configuration_is_refused_before_a_payload_is_ever_seen",
+  "test:signatures_that_recover_to_nobody_are_a_threshold_failure_not_a_signature_one",
 ]
-note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all ten `VerifyError` variants now -- nine payload failure modes plus `InvalidConfig` for a bad configuration. `AssetMismatch` (M1-16), `ValueOutOfRange` and `ScalingOutOfRange` (M1-17) and `StalePackage` (M1-15) now have producers. M1-15 adds two variants U6 does not name -- `FuturePackage`, because a future-dated package points at a clock rather than at a relayer, and `NoClock`, because verifying without one accepts a package of any age. `InvalidSignature` is the only variant with no producer, and has none by design -- an unrecoverable signature is skipped, not rejected (ADR 15), so a future single-package API is where it becomes reportable."
+note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all ten `VerifyError` variants now -- nine payload failure modes plus `InvalidConfig` for a bad configuration. `AssetMismatch` (M1-16), `ValueOutOfRange` and `ScalingOutOfRange` (M1-17) and `StalePackage` (M1-15) now have producers. M1-15 adds two variants U6 does not name -- `FuturePackage`, because a future-dated package points at a clock rather than at a relayer, and `NoClock`, because verifying without one accepts a package of any age. `InvalidSignature` is the only variant with no producer, and has none by design -- an unrecoverable signature is skipped, not rejected (ADR 15), so a future single-package API is where it becomes reportable. M1-22 adds the contract-shaped reading of all of it: one module, one test per accept and reject mode, plus the assertion none of the per-mode tests can make alone -- that no two causes answer with the same variant, compared by discriminant so a collapse onto one variant cannot hide behind differing payloads. ADR 23 records the shape."
 
 [[row]]
 id = "U7"

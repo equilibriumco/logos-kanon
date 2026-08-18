@@ -36,6 +36,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [20](0020-per-component-costs-are-measured-in-the-product-guest.md) | Per-component costs are measured in the product guest, by differencing pipeline prefixes | accepted |
 | [21](0021-property-tests-for-the-invariants-examples-cannot-reach.md) | Property tests for the invariants examples cannot reach, inside the crate under test | accepted |
 | [22](0022-the-price-account-write-and-its-three-undecided-fields.md) | The price-account write, and the three fields nothing had decided | accepted |
+| [23](0023-the-accept-and-reject-suite-is-shaped-by-the-contract.md) | The accept and reject suite is shaped by the contract, and asserts that the taxonomy discriminates | accepted |
 
 ## How they fit together
 
@@ -63,6 +64,11 @@ ADR 22 is where those four stop being decisions about a verification and become 
 fields of an account. It answers what none of them had to: which of several package
 timestamps a median is dated by, what a source identifier is when the source is off chain,
 and what stops a replayed payload moving a published price backwards.
+
+ADR 23 closes that group from the other side. ADR 15 through ADR 18 each decided a
+failure mode and tested it where it was introduced; ADR 23 is the one place those
+decisions are read back as a contract, and the one assertion none of them could make
+alone — that no two of the causes they settled answer with the same variant.
 
 The remaining seven exist to keep claims verifiable: the licence gate (1), the guardrails
 (10), the traceability checker (11), a sequencer that cannot drift from the code it tests

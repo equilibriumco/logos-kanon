@@ -29,6 +29,8 @@ pub mod time;
 pub mod value;
 
 #[cfg(test)]
+mod accept_and_reject;
+#[cfg(test)]
 mod properties;
 #[cfg(test)]
 mod test_support;
