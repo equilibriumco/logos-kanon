@@ -6,6 +6,7 @@ version = 4
 name = "aggregator-program"
 version = "0.1.0"
 dependencies = [
+ "kanon-idl",
  "verifier-core",
 ]
 
@@ -1822,6 +1823,7 @@ dependencies = [
 name = "kanon-idl"
 version = "0.1.0"
 dependencies = [
+ "lee_core",
  "serde_json",
  "twap_oracle_core",
 ]

@@ -12,3 +12,8 @@ license.workspace = true
 
 [dependencies]
 verifier-core.workspace = true
+
+# The canonical price account this program exists to populate, and the
+# `AccountId` its identifier fields are made of. Through `kanon-idl` rather than
+# from upstream directly, so "re-exported, not forked" has one place it happens.
+kanon-idl.workspace = true
