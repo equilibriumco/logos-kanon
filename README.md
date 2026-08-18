@@ -122,6 +122,17 @@ every push.
 | `traceability` | every requirement has a row, and every row's evidence exists |
 | `sequencer` | a standalone LEZ sequencer comes up and serves RPC, from a prebuilt image |
 
+`build-test` is the one job whose inputs are not fixed. `verifier-core/src/properties.rs`
+generates them: the threshold, the payload framing and the scale conversion are claims
+about every input rather than about a case, and a fresh seed per run is where the value
+is (ADR 21). A failing case is written to `verifier-core/proptest-regressions/` and
+committed, so it becomes a permanent test rather than a seed nobody can reproduce.
+
+```sh
+cargo test --release -p verifier-core properties           # half a second
+PROPTEST_CASES=20000 cargo test --release -p verifier-core properties  # a soak, ~40s
+```
+
 ## Licensing
 
 Dual MIT and Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`), with third-party

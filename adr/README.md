@@ -34,6 +34,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [18](0018-timestamp-validity-is-two-sided-and-costs-one-signer.md) | Timestamp validity is two-sided, and a bad timestamp costs one signer | accepted |
 | [19](0019-conformance-against-captured-redstone-payloads.md) | Conformance is asserted against captured RedStone payloads, with the signature as the oracle | accepted |
 | [20](0020-per-component-costs-are-measured-in-the-product-guest.md) | Per-component costs are measured in the product guest, by differencing pipeline prefixes | accepted |
+| [21](0021-property-tests-for-the-invariants-examples-cannot-reach.md) | Property tests for the invariants examples cannot reach, inside the crate under test | accepted |
 
 ## How they fit together
 
@@ -57,15 +58,20 @@ observation — that the canonical price account says less than it appears to, c
 neither the asset semantics of a feed id nor the exponent of a price — so both decisions
 are about supplying, and documenting, what the format leaves out.
 
-The remaining six exist to keep claims verifiable: the licence gate (1), the guardrails
+The remaining seven exist to keep claims verifiable: the licence gate (1), the guardrails
 (10), the traceability checker (11), a sequencer that cannot drift from the code it tests
-(12), conformance against payloads nobody here controls (19), and a cost table generated
-by the code that asserts it (20). ADR 19 is the answer to a question the others cannot
+(12), conformance against payloads nobody here controls (19), a cost table generated
+by the code that asserts it (20), and generated inputs for the claims that are about every
+input rather than a case (21). ADR 19 is the answer to a question the others cannot
 settle -- whether the decoder is right about a format this repository did not define --
 and ADR 20 answers the other one, where an update's cost actually goes. ADR 20 also
 completes ADR 6: the accelerator configuration is a `[patch.crates-io]` section that
 fails silently, and measuring keccak256 and recovery as separate rows is what makes both
-failure directions visible in cycles alone.
+failure directions visible in cycles alone. ADR 21 is the odd one in this group, and
+deliberately so: it is the only place where CI runs on inputs nobody chose, which is the
+opposite of what ADR 10 argues for everywhere else, and the reason is that the decisions
+it covers -- the threshold in ADR 15, the scale in ADR 17, the framing in ADR 5 -- are
+statements about all inputs, where a cycle count is a statement about one.
 
 ## Open questions carried by these decisions
 

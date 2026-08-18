@@ -297,13 +297,19 @@ note = "The harness is standing: CI boots a Bedrock node and a sequencer built f
 id = "S3"
 status = "partial"
 tasks = ["M1-06", "M1-21", "M1-22", "M1-23", "M1-24", "M2-13", "M2-14", "M2-15", "M2-16", "M5-06"]
-implemented_in = ["traceability", "verifier-core"]
+implemented_in = ["traceability", "verifier-core", "verifier-core/src/properties.rs"]
 verified_by = [
   "ci:traceability",
   "test:every_published_signature_recovers_to_the_signer_redstone_named",
   "test:a_signer_set_that_is_not_the_published_one_reaches_no_threshold",
+  "test:lowering_the_threshold_never_changes_the_price_and_never_loses_it",
+  "test:a_payload_decodes_back_to_what_was_written_into_it",
+  "test:the_scale_conversion_is_a_shift_and_a_truncating_divide",
+  "test:the_representable_range_is_exactly_what_q64_64_can_hold",
+  "test:the_median_does_not_depend_on_the_order_the_reports_arrived_in",
+  "test:a_corrupted_payload_is_answered_rather_than_panicked_on",
 ]
-note = "This matrix is the requirement's own instrument. It is `partial` by construction until M5-06 leaves every row verified; the checker is what stops that from being asserted without evidence. S3 also asks for coverage against valid and invalid signatures specifically, which M1-21 answers with real ones: RedStone's published signatures over their published packages, and the same packages against a signer set that never signed them."
+note = "This matrix is the requirement's own instrument. It is `partial` by construction until M5-06 leaves every row verified; the checker is what stops that from being asserted without evidence. S3 also asks for coverage against valid and invalid signatures specifically, which M1-21 answers with real ones: RedStone's published signatures over their published packages, and the same packages against a signer set that never signed them. M1-24 adds the coverage an example cannot give: the threshold, the framing and the scale conversion are claims about every input, and `verifier-core/src/properties.rs` generates them (ADR 21). The last of those tests is the one that matters most for a guest, since ADR 4 makes a panic on a malformed payload an aborted transaction rather than a rejection."
 
 [[row]]
 id = "S4"

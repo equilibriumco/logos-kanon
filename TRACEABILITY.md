@@ -164,7 +164,7 @@ M0 delivered the first delta sketch against per-chain reference points. M3-09 sp
 | --- | --- | --- | --- | --- |
 | **S1** | planned | `M2‑11`, `M5‑01`, `M5‑02` | — | — |
 | **S2** | partial | `M1‑03`, `M1‑04a`, `M1‑05`, `M2‑19`, `M3‑07` | `scripts/lez‑sequencer.sh` | CI job `sequencer` |
-| **S3** | partial | `M1‑06`, `M1‑21`, `M1‑22`, `M1‑23`, `M1‑24`, `M2‑13`, `M2‑14`, `M2‑15`, `M2‑16`, `M5‑06` | `traceability`, `verifier‑core` | CI job `traceability`, `every_published_signature_recovers_to_the_signer_redstone_named`, `a_signer_set_that_is_not_the_published_one_reaches_no_threshold` |
+| **S3** | partial | `M1‑06`, `M1‑21`, `M1‑22`, `M1‑23`, `M1‑24`, `M2‑13`, `M2‑14`, `M2‑15`, `M2‑16`, `M5‑06` | `traceability`, `verifier‑core`, `verifier‑core/src/properties.rs` | CI job `traceability`, `every_published_signature_recovers_to_the_signer_redstone_named`, `a_signer_set_that_is_not_the_published_one_reaches_no_threshold`, `lowering_the_threshold_never_changes_the_price_and_never_loses_it`, `a_payload_decodes_back_to_what_was_written_into_it`, `the_scale_conversion_is_a_shift_and_a_truncating_divide`, `the_representable_range_is_exactly_what_q64_64_can_hold`, `the_median_does_not_depend_on_the_order_the_reports_arrived_in`, `a_corrupted_payload_is_answered_rather_than_panicked_on` |
 | **S4** | planned | `M5‑03` | `README.md` | — |
 | **S5** | planned | `M5‑04` | — | — |
 | **S6** | planned | `M5‑05` | — | — |
@@ -180,7 +180,7 @@ The harness is standing: CI boots a Bedrock node and a sequencer built from the 
 
 **S3** — At least one test per hard requirement, including per mode: valid-signature acceptance, invalid-signature rejection, threshold boundaries, staleness, asset mismatch, invalid value, and (push) registration and signer-set transitions
 
-This matrix is the requirement's own instrument. It is `partial` by construction until M5-06 leaves every row verified; the checker is what stops that from being asserted without evidence. S3 also asks for coverage against valid and invalid signatures specifically, which M1-21 answers with real ones: RedStone's published signatures over their published packages, and the same packages against a signer set that never signed them.
+This matrix is the requirement's own instrument. It is `partial` by construction until M5-06 leaves every row verified; the checker is what stops that from being asserted without evidence. S3 also asks for coverage against valid and invalid signatures specifically, which M1-21 answers with real ones: RedStone's published signatures over their published packages, and the same packages against a signer set that never signed them. M1-24 adds the coverage an example cannot give: the threshold, the framing and the scale conversion are claims about every input, and `verifier-core/src/properties.rs` generates them (ADR 21). The last of those tests is the one that matters most for a guest, since ADR 4 makes a panic on a malformed payload an aborted transaction rather than a rejection.
 
 **S4** — README documenting end-to-end usage for both modes: deployment, addresses, day-one feed registrations, submitting and querying, and integrating the pull library
 
