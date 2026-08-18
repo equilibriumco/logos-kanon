@@ -95,6 +95,15 @@ gives "a TWAP program or external adaptor" as what goes there. The aggregator is
 external adaptor, so it names itself: a LEZ program reads its own `ProgramId` at run time,
 and `publish` takes the resulting `AccountId` rather than holding one.
 
+Upstream's own writer does something narrower than its doc describes.
+`create_oracle_price_account` sets `source_id: price_source_id` — the AMM pool, which is
+where the price came from rather than the program that wrote it — and `publish_price` never
+touches the field again. So the doc names the populating program and the code names the
+data origin, and for a TWAP those are two different accounts. For this adaptor they are not
+two options: the data origin is RedStone, an off-chain signer set with nothing on this
+chain to point at, which leaves the writer as the only identity available and the doc's
+plain reading as the one to follow.
+
 The first version of this decision was a constant — thirty-two bytes of ASCII spelling out
 that a RedStone adaptor wrote the account — on the argument that a consumer asking "is this
 a RedStone price?" wants the same answer on every network. That argument does not survive
@@ -153,6 +162,14 @@ too — the same observation twice is not an update.
 - **The guards were checked by breaking them.** Each of the four — the oldest-package
   minimum, the pair check, the source check, and strict newness — was inverted or removed in
   turn, and each time a test that claims to cover it failed. The habit is ADR 21's.
+- **`SourceMismatch` may end up as a second line of defence.** Upstream pins the source
+  through the account's address — the price account is a PDA over
+  `(oracle_program_id, price_source_id, window_duration)` — rather than by comparing the
+  field on write, which is why `publish_price` can leave the identifiers alone without
+  checking them. If M2-01 derives Kanon's PDA the same way, a misrouted write is already
+  impossible before the check runs. The check stays: it costs a comparison, and it is what
+  makes the write correct on its own terms rather than only in the context of a derivation
+  decided in another milestone.
 - **Nothing calls `publish` yet.** M2-01 brings the SPEL skeleton and M2-02 the
   `submit_price` path that calls it; M1-26 conforms the encoded layout on top of it. The
   write is a pure function over a verified feed until then, which is why it is testable at
