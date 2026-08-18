@@ -83,8 +83,8 @@ pub fn price_account(
 /// another source, or already holds an observation at least as recent as this
 /// one.
 pub fn publish(
-    account: &mut OraclePriceAccount,
     program_id: ProgramId,
+    account: &mut OraclePriceAccount,
     config: &FeedConfig<'_>,
     feed: &VerifiedFeed,
 ) -> Result<(), PublishError> {
@@ -190,7 +190,7 @@ mod tests {
         let mut account = price_account(ADAPTOR, &config, &verified(7, 1_000));
 
         assert_eq!(
-            publish(&mut account, ADAPTOR, &config, &verified(9, 2_000)),
+            publish(ADAPTOR, &mut account, &config, &verified(9, 2_000)),
             Ok(())
         );
 
@@ -209,8 +209,8 @@ mod tests {
 
         assert_eq!(
             publish(
-                &mut account,
                 ADAPTOR,
+                &mut account,
                 &config(&signers, elsewhere),
                 &verified(9, 2_000)
             ),
@@ -226,7 +226,7 @@ mod tests {
         let mut account = price_account(OTHER, &config, &verified(7, 1_000));
 
         assert_eq!(
-            publish(&mut account, ADAPTOR, &config, &verified(9, 2_000)),
+            publish(ADAPTOR, &mut account, &config, &verified(9, 2_000)),
             Err(PublishError::SourceMismatch)
         );
         assert_eq!(account.price, 7);
@@ -242,7 +242,7 @@ mod tests {
         let mut account = price_account(ADAPTOR, &config, &verified(7, 2_000));
 
         assert_eq!(
-            publish(&mut account, ADAPTOR, &config, &verified(9, 1_999)),
+            publish(ADAPTOR, &mut account, &config, &verified(9, 1_999)),
             Err(PublishError::NotNewer {
                 stored: 2_000,
                 offered: 1_999,
@@ -258,7 +258,7 @@ mod tests {
         let mut account = price_account(ADAPTOR, &config, &verified(7, 2_000));
 
         assert_eq!(
-            publish(&mut account, ADAPTOR, &config, &verified(7, 2_000)),
+            publish(ADAPTOR, &mut account, &config, &verified(7, 2_000)),
             Err(PublishError::NotNewer {
                 stored: 2_000,
                 offered: 2_000,

@@ -88,7 +88,7 @@ array would cost 256 bytes of a guest frame that already holds about 2.7 KB.
 
 ```rust
 pub fn adaptor_id(program_id: ProgramId) -> AccountId
-pub fn publish(account: &mut OraclePriceAccount, program_id: ProgramId, ..)
+pub fn publish(program_id: ProgramId, account: &mut OraclePriceAccount, ..)
 ```
 
 The field names the source that populated the account, and the account's documentation
