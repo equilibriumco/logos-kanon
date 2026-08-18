@@ -122,9 +122,12 @@ in the direction that costs something: a consumer that has decided to trust one 
 has not thereby trusted its replacement.
 
 `ProgramId` is `[u32; 8]` and the field is thirty-two bytes, so the conversion has an
-endianness. Little-endian, which is how LEZ lays a program id out when it feeds one to a
-hash, and a test pins it — getting it wrong is silent, since every id would still map to a
-distinct thirty-two bytes, just not the ones the chain knows the program by.
+endianness. Little-endian, which is what the LEE v0.3 specification states for the same
+layout where it defines public PDA derivation — "32-byte prefix + 32-byte `program_id` (as
+8 LE u32 words) + 32-byte `seed`" — so a `source_id` and a PDA over the same program agree
+on what its thirty-two bytes are. A test pins it, because getting it wrong is silent: every
+id would still map to a distinct thirty-two bytes, just not the ones the chain knows the
+program by.
 
 ### `confidence_interval` is zero, which is a specified value here
 
@@ -183,6 +186,11 @@ too — the same observation twice is not an update.
   account another program owns and changing an owner at all — a program may claim an
   account only while its owner is still `DEFAULT_PROGRAM_ID`. There is therefore no
   operation, admin-gated or otherwise, that hands the old accounts to the new binary.
+
+  This is the model rather than a gap in the pin. The LEE v0.3 specification says the same
+  in the same words — "Program cannot change the program owner of an account" — and defines
+  no versioning, proxy, registry or indirection anywhere, so a program whose code must
+  change is deployed under a new id.
 
   What happens instead is quieter. `AccountId::for_public_pda` hashes the program id into
   the address, so the rebuilt adaptor derives a different set of PDAs, finds them empty,

@@ -111,7 +111,8 @@ M1-20 raises a second, and it is larger than the decision that surfaced it:
   the old price accounts freeze holding their last value (ADR 22). A consumer with a
   hardcoded account address then reads a plausible, permanently stale price. Either
   consumers are expected to discover the account rather than pin it, or the estate has a
-  pattern for this that Kanon should follow.
+  pattern for this that Kanon should follow. The LEE v0.3 specification does not add one,
+  so this is a question about intended practice rather than about a pin.
 
 One is settled locally, with a measurement in M2: which clock account an oracle should
 read (ADR 13). The CI ceilings that stop the accelerator configuration regressing
