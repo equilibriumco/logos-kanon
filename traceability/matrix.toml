@@ -88,7 +88,7 @@ note = "Four rejection classes in one requirement. The malformed-wire-format one
 id = "F5"
 status = "partial"
 tasks = ["M1-09", "M1-16", "M1-17", "M1-20", "M1-26", "M2-02"]
-implemented_in = ["aggregator-program/src/publish.rs", "verifier-core"]
+implemented_in = ["aggregator-program/src/publish.rs", "verifier-core", "kanon-idl"]
 verified_by = [
   "test:the_verified_price_carries_both_scales",
   "test:an_agreed_price_too_large_for_the_account_is_reported_not_wrapped",
@@ -102,8 +102,15 @@ verified_by = [
   "test:the_same_observation_twice_is_not_an_update",
   "test:the_timestamp_is_the_oldest_package_behind_the_median",
   "test:a_package_that_did_not_count_does_not_age_the_timestamp",
+  "test:the_vendored_idl_declares_the_fields_we_expect",
+  "test:field_order_is_part_of_the_standard",
+  "test:the_reexported_type_is_constructible_with_the_documented_shape",
+  "test:the_account_encodes_to_the_bytes_a_foreign_decoder_expects",
+  "test:the_encoded_length_is_what_the_idl_field_types_add_up_to",
+  "test:a_round_trip_through_the_on_chain_container_recovers_every_field",
+  "test:a_seventh_field_would_be_a_break_rather_than_something_consumers_ignore",
 ]
-note = "M1-09 found the canonical struct shipped, so the forward-compatible fallback M1-20 held in reserve was never needed and `aggregator-program/src/publish.rs` populates the real one. All six fields are decided: the pair from M1-16, `price` on the account's Q64.64 scale from M1-17, the observation timestamp from M1-20, `source_id` the adaptor naming itself, and `confidence_interval` zero as the account documents for a source that supplies none. ADR 22 records the three that were open. M1-26 conforms the layout and M2-02 calls the write from a transaction."
+note = "M1-09 found the canonical struct shipped, so the forward-compatible fallback M1-20 held in reserve was never needed and `aggregator-program/src/publish.rs` populates the real one. All six fields are decided: the pair from M1-16, `price` on the account's Q64.64 scale from M1-17, the observation timestamp from M1-20, `source_id` the adaptor naming itself, and `confidence_interval` zero as the account documents for a source that supplies none. ADR 22 records the three that were open. M1-26 conforms the layout against the vendored IDL in both directions -- the declared shape and the 136 bytes an account encodes to, which is what a consumer that does not link this crate actually depends on. M2-02 calls the write from a transaction."
 
 [[row]]
 id = "F6"
