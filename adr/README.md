@@ -35,6 +35,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [19](0019-conformance-against-captured-redstone-payloads.md) | Conformance is asserted against captured RedStone payloads, with the signature as the oracle | accepted |
 | [20](0020-per-component-costs-are-measured-in-the-product-guest.md) | Per-component costs are measured in the product guest, by differencing pipeline prefixes | accepted |
 | [21](0021-property-tests-for-the-invariants-examples-cannot-reach.md) | Property tests for the invariants examples cannot reach, inside the crate under test | accepted |
+| [22](0022-the-price-account-write-and-its-three-undecided-fields.md) | The price-account write, and the three fields nothing had decided | accepted |
 
 ## How they fit together
 
@@ -57,6 +58,11 @@ true. ADR 18 also completes ADR 13, which chose the clock long before anything r
 observation — that the canonical price account says less than it appears to, carrying
 neither the asset semantics of a feed id nor the exponent of a price — so both decisions
 are about supplying, and documenting, what the format leaves out.
+
+ADR 22 is where those four stop being decisions about a verification and become the six
+fields of an account. It answers what none of them had to: which of several package
+timestamps a median is dated by, what a source identifier is when the source is off chain,
+and what stops a replayed payload moving a published price backwards.
 
 The remaining seven exist to keep claims verifiable: the licence gate (1), the guardrails
 (10), the traceability checker (11), a sequencer that cannot drift from the code it tests
@@ -91,6 +97,11 @@ One is new with M1 and belongs with them:
   its constructor documents the fixed-point convention, which is what Kanon writes
   (ADR 17). A consumer assuming a base-10 integer would be out by roughly `1.8 x 10^19`
   with nothing on chain to signal it. Worth confirming rather than discovering.
+
+  M1-20 narrowed this (ADR 22): upstream exports the convention as
+  `PRICE_FRACTIONAL_BITS` and its own TWAP oracle writes prices on that scale, so the
+  question is no longer which convention the account uses but only whether consumers
+  implement it.
 
 One is settled locally, with a measurement in M2: which clock account an oracle should
 read (ADR 13). The CI ceilings that stop the accelerator configuration regressing
