@@ -91,19 +91,8 @@ questions outstanding with Logos*:
   (ADR 1) — and, separately, three Logos crates ship without a `license` field, which a
   one-line manifest change would fix for every downstream consumer (ADR 9).
 
-One is new with M1 and belongs with them:
-
-- **Do RFP-019 consumers read `price` as Q64.64?** The account has no exponent field and
-  its constructor documents the fixed-point convention, which is what Kanon writes
-  (ADR 17). A consumer assuming a base-10 integer would be out by roughly `1.8 x 10^19`
-  with nothing on chain to signal it. Worth confirming rather than discovering.
-
-  M1-20 narrowed this (ADR 22): upstream exports the convention as
-  `PRICE_FRACTIONAL_BITS` and its own TWAP oracle writes prices on that scale, so the
-  question is no longer which convention the account uses but only whether consumers
-  implement it.
-
-M1-20 raises a second, and it is larger than the decision that surfaced it:
+M1-20 raises one that is not in that list, and it is larger than the decision that
+surfaced it:
 
 - **How is a LEZ program upgraded, and what is a price consumer meant to hold?** A
   `ProgramId` is the image id of the ELF, accounts are bound to the id that created them,
