@@ -112,6 +112,11 @@ and any program can write those same bytes into an account it controls, so the q
 was meant to answer is exactly the question it cannot answer. An identifier the chain
 assigns is not assertable by anybody else.
 
+A LEZ `ProgramId` is the RISC Zero image id of the program's ELF, computed by the runtime
+from the binary it is about to execute and written into the guest's input stream by the
+host. The guest reads it; it cannot state it. So this is not merely harder to forge than a
+constant, it is not assertable at all.
+
 Naming the writer also keeps two deployments of this adaptor distinguishable, which matters
 in the direction that costs something: a consumer that has decided to trust one deployment
 has not thereby trusted its replacement.
@@ -170,6 +175,16 @@ too — the same observation twice is not an update.
   impossible before the check runs. The check stays: it costs a comparison, and it is what
   makes the write correct on its own terms rather than only in the context of a derivation
   decided in another milestone.
+- **An upgrade to the aggregator makes its own price accounts unwritable, and there is no
+  path for that yet.** The image id is a hash of the compiled program, so a dependency
+  bump or a one-line fix is a different `source_id`, and the first write from the new
+  binary fails its own `SourceMismatch` against every account the old one created. Refusing
+  to let a new binary inherit the previous one's accounts silently is the right default —
+  it is the same property that makes the field worth checking — but "upgrade the adaptor"
+  now needs an operation, and the place for it is M2-06's admin gating over the RFP-001
+  authority: an admin-gated re-point of an account to a new program id, which is a decision
+  about who may say two binaries are the same source. Consumers that pin a `source_id`
+  break at the same moment, which is the other half of the same question.
 - **Nothing calls `publish` yet.** M2-01 brings the SPEL skeleton and M2-02 the
   `submit_price` path that calls it; M1-26 conforms the encoded layout on top of it. The
   write is a pure function over a verified feed until then, which is why it is testable at
