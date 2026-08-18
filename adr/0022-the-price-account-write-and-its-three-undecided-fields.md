@@ -84,21 +84,33 @@ It is tracked as a running minimum rather than a timestamp per slot: slots are o
 filled, never cleared, so every update is a package that ends up behind the median, and the
 array would cost 256 bytes of a guest frame that already holds about 2.7 KB.
 
-### `source_id` is a constant, not a derived identifier
+### `source_id` is the adaptor's own identifier
 
 ```rust
-pub const REDSTONE_SOURCE_ID: AccountId = AccountId::new(*b"kanon:redstone:oracle:adaptor:v1");
+pub fn adaptor_id(program_id: ProgramId) -> AccountId
 ```
 
-The field names the source that populated the account. Upstream's TWAP oracle puts the
-price source's account there — an AMM pool, something that exists on chain. RedStone does
-not: it is an off-chain signer set, and there is no account to name.
+The field names the source that populated the account, and the account's documentation
+gives "a TWAP program or external adaptor" as what goes there. The aggregator is the
+external adaptor, so it names itself: a LEZ program reads its own `ProgramId` at run time,
+and `publish` takes the resulting `AccountId` rather than holding one.
 
-So it is a constant. Deriving one from the aggregator's program id would have followed
-upstream's PDA convention, and it would give a different answer on devnet than on mainnet,
-and another after a redeployment. A consumer asking "did a RedStone adaptor write this?"
-wants one answer. The bytes are ASCII so the identifier is legible in a hex dump, and
-thirty-two bytes of readable text is not an account id anything else will hold.
+The first version of this decision was a constant — thirty-two bytes of ASCII spelling out
+that a RedStone adaptor wrote the account — on the argument that a consumer asking "is this
+a RedStone price?" wants the same answer on every network. That argument does not survive
+contact with what the field is for. A constant is a label the writer asserts about itself,
+and any program can write those same bytes into an account it controls, so the question it
+was meant to answer is exactly the question it cannot answer. An identifier the chain
+assigns is not assertable by anybody else.
+
+Naming the writer also keeps two deployments of this adaptor distinguishable, which matters
+in the direction that costs something: a consumer that has decided to trust one deployment
+has not thereby trusted its replacement.
+
+`ProgramId` is `[u32; 8]` and the field is thirty-two bytes, so the conversion has an
+endianness. Little-endian, which is how LEZ lays a program id out when it feeds one to a
+hash, and a test pins it — getting it wrong is silent, since every id would still map to a
+distinct thirty-two bytes, just not the ones the chain knows the program by.
 
 ### `confidence_interval` is zero, which is a specified value here
 
@@ -155,9 +167,10 @@ too — the same observation twice is not an update.
 - **The newest contributing package, or the write time.** Both overstate freshness, which
   is the direction that matters: a consumer's `maxAge` exists to refuse a price that is too
   old, and a timestamp that is too new defeats it silently.
-- **A `source_id` derived from the aggregator's program id**, following upstream's PDA
-  convention. Rejected on stability — it changes per network and per deployment, and the
-  question it answers is about the source rather than about the program.
+- **A constant naming RedStone rather than the writer.** Stable across networks and
+  legible in a hex dump, and forgeable by any program that cares to write the same bytes,
+  which makes it useless for the one question it was for. Recorded here because it was the
+  first answer and the reasoning that displaced it is the point.
 - **The signer spread as `confidence_interval`.** Cheap and meaningful, and not what the
   field asks for. If Logos ever wants it, the shape of the answer is here in the record.
 - **Overwriting the identifiers on every write, treating the account as ours.** It removes

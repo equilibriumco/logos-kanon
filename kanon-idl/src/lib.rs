@@ -35,6 +35,11 @@ pub use twap_oracle_core::OraclePriceAccount;
 /// rather than one that happens to have the same shape.
 pub use lee_core::account::AccountId;
 
+/// The program identifier type, re-exported for the same reason as
+/// [`AccountId`]: a program that names itself in a price account it writes
+/// needs both types, and should get them from one place.
+pub use lee_core::program::ProgramId;
+
 /// Fractional bits in [`OraclePriceAccount::price`], re-exported from upstream.
 ///
 /// The account carries no exponent, so this constant is the whole of what a
