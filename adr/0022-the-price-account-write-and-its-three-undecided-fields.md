@@ -175,16 +175,28 @@ too — the same observation twice is not an update.
   impossible before the check runs. The check stays: it costs a comparison, and it is what
   makes the write correct on its own terms rather than only in the context of a derivation
   decided in another milestone.
-- **An upgrade to the aggregator makes its own price accounts unwritable, and there is no
-  path for that yet.** The image id is a hash of the compiled program, so a dependency
-  bump or a one-line fix is a different `source_id`, and the first write from the new
-  binary fails its own `SourceMismatch` against every account the old one created. Refusing
-  to let a new binary inherit the previous one's accounts silently is the right default —
-  it is the same property that makes the field worth checking — but "upgrade the adaptor"
-  now needs an operation, and the place for it is M2-06's admin gating over the RFP-001
-  authority: an admin-gated re-point of an account to a new program id, which is a decision
-  about who may say two binaries are the same source. Consumers that pin a `source_id`
-  break at the same moment, which is the other half of the same question.
+- **An upgrade to the aggregator moves every price account to a new address, and nothing
+  can migrate one.** This is a LEZ property rather than a Kanon decision, and it is worth
+  stating here because the write is where it first bites. A `ProgramId` is the image id of
+  the ELF, so a dependency bump is a different program; `Account::program_owner` binds each
+  account to the id that created it; and `validate_execution` forbids both writing an
+  account another program owns and changing an owner at all — a program may claim an
+  account only while its owner is still `DEFAULT_PROGRAM_ID`. There is therefore no
+  operation, admin-gated or otherwise, that hands the old accounts to the new binary.
+
+  What happens instead is quieter. `AccountId::for_public_pda` hashes the program id into
+  the address, so the rebuilt adaptor derives a different set of PDAs, finds them empty,
+  claims them and runs. The old accounts are frozen holding their last price — non-zero,
+  with a plausible timestamp — so a consumer reading a hardcoded address sees a price that
+  is valid-looking and permanently stale, and only the timestamp going cold says otherwise.
+  Discovery, not migration, is what a consumer needs, and where that lands is M2-04's
+  read path and the reference consumers.
+
+- **`SourceMismatch` is defence against a caller, not against another program.** LEZ rule 6
+  already makes it impossible to write an account this program does not own. What the check
+  still catches is `publish` being called on an account that was never initialised, whose
+  zeroed `source_id` matches nothing — a caller mistake rather than an attack, and one that
+  would otherwise write a real price into an account with no assets named in it.
 - **Nothing calls `publish` yet.** M2-01 brings the SPEL skeleton and M2-02 the
   `submit_price` path that calls it; M1-26 conforms the encoded layout on top of it. The
   write is a pure function over a verified feed until then, which is why it is testable at
