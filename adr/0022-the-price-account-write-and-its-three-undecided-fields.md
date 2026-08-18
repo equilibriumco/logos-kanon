@@ -211,10 +211,10 @@ too — the same observation twice is not an update.
   rather than pin it, or a small permanent program owns it and the upgradeable one reaches
   it by chained call, writing through the owner instead of as it. The second keeps the
   address fixed and is the only arrangement that does — splitting authority from ownership
-  does not, because the first version to claim an account owns it for good. Both are M2
-  questions, for M2-04's read path and M2-06's admin gating, and both wait on Logos: LEZ
-  documents no upgrade path anywhere, and the v0.3 specification rejects redeploying a
-  program id outright.
+  does not, because the first version to claim an account owns it for good. Both belong to
+  M2 — M2-04's read path and M2-06's admin gating — and neither is decidable from what LEZ
+  documents today: there is no upgrade path described anywhere, and the v0.3 specification
+  rejects redeploying a program id outright.
 
 - **`SourceMismatch` is defence against a caller, not against another program.** LEZ rule 6
   already makes it impossible to write an account this program does not own. What the check
@@ -225,10 +225,6 @@ too — the same observation twice is not an update.
   `submit_price` path that calls it; M1-26 conforms the encoded layout on top of it. The
   write is a pure function over a verified feed until then, which is why it is testable at
   all this early.
-- **One question stays open with Logos**, and it is smaller than ADR 17 left it: we write
-  `Q64.64`, matching `PRICE_FRACTIONAL_BITS` and what the TWAP oracle publishes, and the
-  thing worth confirming is only that consumers do the same. A consumer assuming a base-10
-  integer is out by roughly `1.8 x 10^19` with nothing on chain to signal it.
 
 ## Alternatives considered
 
@@ -240,7 +236,8 @@ too — the same observation twice is not an update.
   which makes it useless for the one question it was for. Recorded here because it was the
   first answer and the reasoning that displaced it is the point.
 - **The signer spread as `confidence_interval`.** Cheap and meaningful, and not what the
-  field asks for. If Logos ever wants it, the shape of the answer is here in the record.
+  field asks for, which is the source's own confidence. Recorded because the shape of the
+  answer is worth having if the field ever needs one.
 - **Overwriting the identifiers on every write, treating the account as ours.** It removes
   two branches and makes a misrouted write indistinguishable from a correct one. The price
   account is the only thing consumers read, so the wrong number in the right account is the
