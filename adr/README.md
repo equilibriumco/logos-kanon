@@ -91,18 +91,6 @@ questions outstanding with Logos*:
   (ADR 1) — and, separately, three Logos crates ship without a `license` field, which a
   one-line manifest change would fix for every downstream consumer (ADR 9).
 
-M1-20 raises one that is not in that list, and it is larger than the decision that
-surfaced it:
-
-- **How is a LEZ program upgraded, and what is a price consumer meant to hold?** A
-  `ProgramId` is the image id of the ELF, accounts are bound to the id that created them,
-  and ownership cannot be transferred, so a rebuilt adaptor derives a fresh set of PDAs and
-  the old price accounts freeze holding their last value (ADR 22). A consumer with a
-  hardcoded account address then reads a plausible, permanently stale price. Either
-  consumers are expected to discover the account rather than pin it, or the estate has a
-  pattern for this that Kanon should follow. The LEE v0.3 specification does not add one,
-  so this is a question about intended practice rather than about a pin.
-
 One is settled locally, with a measurement in M2: which clock account an oracle should
 read (ADR 13). The CI ceilings that stop the accelerator configuration regressing
 silently (ADR 6) landed with M1-25, and ADR 20 records that both of them turned out to
