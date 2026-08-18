@@ -197,8 +197,15 @@ too — the same observation twice is not an update.
   claims them and runs. The old accounts are frozen holding their last price — non-zero,
   with a plausible timestamp — so a consumer reading a hardcoded address sees a price that
   is valid-looking and permanently stale, and only the timestamp going cold says otherwise.
-  Discovery, not migration, is what a consumer needs, and where that lands is M2-04's
-  read path and the reference consumers.
+
+  Two shapes could answer that and neither is decided here: consumers discover the account
+  rather than pin it, or a small permanent program owns it and the upgradeable one reaches
+  it by chained call, writing through the owner instead of as it. The second keeps the
+  address fixed and is the only arrangement that does — splitting authority from ownership
+  does not, because the first version to claim an account owns it for good. Both are M2
+  questions, for M2-04's read path and M2-06's admin gating, and both wait on Logos: LEZ
+  documents no upgrade path anywhere, and the v0.3 specification rejects redeploying a
+  program id outright.
 
 - **`SourceMismatch` is defence against a caller, not against another program.** LEZ rule 6
   already makes it impossible to write an account this program does not own. What the check
