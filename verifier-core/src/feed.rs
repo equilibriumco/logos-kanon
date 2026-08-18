@@ -214,6 +214,13 @@ pub struct VerifiedFeed {
     /// How many distinct authorised signers reported. Always at least the
     /// threshold.
     pub signers: u8,
+    /// When the oldest package behind `value` was signed, in milliseconds.
+    ///
+    /// The oldest rather than the newest, because a median is only as current
+    /// as the stalest report that shaped it. A consumer applying its own
+    /// `maxAge` to this is therefore never told a price is fresher than every
+    /// signer behind it supports.
+    pub timestamp_ms: u64,
 }
 
 /// Where a package's timestamp sits relative to the chain's clock.
@@ -305,6 +312,11 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     // against `reported` after the walk, like `supplied_feed`.
     let mut stale = [false; MAX_SIGNERS];
     let mut future = [false; MAX_SIGNERS];
+    // The oldest package that filled a slot. A running minimum rather than a
+    // timestamp per slot, which would cost 256 bytes of the guest frame to hold
+    // 31 values nothing reads: slots are only ever filled, never cleared, so
+    // every update here is a package that ends up behind the median.
+    let mut oldest_ms = u64::MAX;
 
     let walked = payload.for_each_package(|package| {
         let digest = backend.keccak256(package.signable());
@@ -393,6 +405,7 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
                 return Err(VerifyError::ReoccurringSigner);
             }
             *slot = Some(value);
+            oldest_ms = oldest_ms.min(package.timestamp_ms);
         }
 
         if supplied {
@@ -502,6 +515,7 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
         value,
         price,
         signers: met_count,
+        timestamp_ms: oldest_ms,
     })
 }
 
@@ -1806,5 +1820,44 @@ mod tests {
             verify_at(&payload, &config, u64::MAX - 1),
             Err(VerifyError::StalePackage)
         );
+    }
+    #[test]
+    fn the_timestamp_is_the_oldest_package_behind_the_median() {
+        // The median is only as current as the stalest report that shaped it,
+        // so the newest package must not speak for the ones beside it.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 9_000)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 5_000)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 30])], 7_000)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = feed_config(&set, 3);
+        let verified = verify(&payload, &config).expect("verifies");
+
+        assert_eq!(verified.timestamp_ms, 5_000);
+    }
+
+    #[test]
+    fn a_package_that_did_not_count_does_not_age_the_timestamp() {
+        // A skipped value costs its own signer's slot and nothing else. Letting
+        // its timestamp through would publish a price as older than any report
+        // behind it, on the strength of a report that is not behind it.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 5_000)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 6_000)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], 1_000)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = feed_config(&set, 2);
+        let verified = verify(&payload, &config).expect("verifies");
+
+        assert_eq!(verified.signers, 2);
+        assert_eq!(verified.timestamp_ms, 5_000);
     }
 }

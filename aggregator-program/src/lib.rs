@@ -5,11 +5,17 @@
 //! the canonical RFP-019 price account that consumers read. Feed registration,
 //! signer-set updates and deregistration are admin-gated per RFP-001.
 //!
+//! [`publish`] is the write itself: what a verified feed puts in each of the
+//! canonical account's six fields, and when an existing account may be updated.
+//!
 //! # Not yet implemented
 //!
 //! Still to come: the SPEL skeleton and IDL surface, the single-transaction
-//! `submit_price` path, the admin-gated instructions, and the price-account
-//! write they depend on. `TRACEABILITY.md` maps each to its task.
+//! `submit_price` path that calls [`publish`], and the admin-gated
+//! instructions. `TRACEABILITY.md` maps each to its task.
 #![forbid(unsafe_code)]
 
+pub mod publish;
+
+pub use kanon_idl;
 pub use verifier_core;

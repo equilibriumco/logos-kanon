@@ -88,12 +88,22 @@ note = "Four rejection classes in one requirement. The malformed-wire-format one
 id = "F5"
 status = "partial"
 tasks = ["M1-09", "M1-16", "M1-17", "M1-20", "M1-26", "M2-02"]
-implemented_in = ["aggregator-program", "verifier-core"]
+implemented_in = ["aggregator-program/src/publish.rs", "verifier-core"]
 verified_by = [
   "test:the_verified_price_carries_both_scales",
   "test:an_agreed_price_too_large_for_the_account_is_reported_not_wrapped",
+  "test:a_fresh_account_takes_every_field_from_the_feed_and_its_configuration",
+  "test:a_program_id_lays_out_little_endian_the_way_lez_hashes_one",
+  "test:two_deployments_of_the_adaptor_do_not_share_a_source_id",
+  "test:a_newer_observation_moves_the_price_and_the_timestamp_and_nothing_else",
+  "test:an_account_for_another_pair_is_refused_rather_than_repointed",
+  "test:an_account_another_program_populated_is_not_this_adaptors_to_write",
+  "test:an_older_observation_inside_the_window_cannot_move_the_price_backwards",
+  "test:the_same_observation_twice_is_not_an_update",
+  "test:the_timestamp_is_the_oldest_package_behind_the_median",
+  "test:a_package_that_did_not_count_does_not_age_the_timestamp",
 ]
-note = "M1-09 spikes whether the canonical RFP-019 struct is available at all; M1-20 writes it or a forward-compatible fallback, and M1-26 conforms the layout. Two of the account's fields are already produced: the asset pair a price is registered against (M1-16) and `price` itself on the account's scale (M1-17). That scale is `Q64.64` and the account carries no exponent field to say so, which is why ADR 17 records where the convention came from and why it is a question outstanding with Logos rather than a preference."
+note = "M1-09 found the canonical struct shipped, so the forward-compatible fallback M1-20 held in reserve was never needed and `aggregator-program/src/publish.rs` populates the real one. All six fields are decided: the pair from M1-16, `price` on the account's Q64.64 scale from M1-17, the observation timestamp from M1-20, `source_id` the adaptor naming itself, and `confidence_interval` zero as the account documents for a source that supplies none. ADR 22 records the three that were open. M1-26 conforms the layout and M2-02 calls the write from a transaction."
 
 [[row]]
 id = "F6"

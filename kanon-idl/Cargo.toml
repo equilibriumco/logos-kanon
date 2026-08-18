@@ -16,5 +16,10 @@ license.workspace = true
 # it and paraphrasing it.
 twap_oracle_core.workspace = true
 
+# `AccountId`, the type three of the price account's six fields are. Re-exported
+# beside the account itself so a writer takes one dependency, not two, and so
+# the pin stays the workspace's single answer rather than a second one here.
+lee_core.workspace = true
+
 [dev-dependencies]
 serde_json = "1"

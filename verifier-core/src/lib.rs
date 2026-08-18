@@ -36,7 +36,7 @@ mod test_support;
 pub use backend::{BackendError, Signature, SignerAddress, VerifierBackend};
 pub use decode::{DataPackage, DataPoint, DecodeError, Payload};
 pub use error::{ConfigError, VerifyError};
-pub use feed::{verify_feed, FeedConfig, VerifiedFeed, MAX_SIGNERS};
+pub use feed::{verify_feed, AssetPair, FeedConfig, VerifiedFeed, MAX_SIGNERS};
 pub use value::{median, Value};
 
 /// This crate's version, for callers that record which verifier produced a
