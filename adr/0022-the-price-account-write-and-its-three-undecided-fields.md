@@ -88,12 +88,21 @@ array would cost 256 bytes of a guest frame that already holds about 2.7 KB.
 
 ```rust
 pub fn adaptor_id(program_id: ProgramId) -> AccountId
+pub fn publish(account: &mut OraclePriceAccount, program_id: ProgramId, ..)
 ```
 
 The field names the source that populated the account, and the account's documentation
 gives "a TWAP program or external adaptor" as what goes there. The aggregator is the
-external adaptor, so it names itself: a LEZ program reads its own `ProgramId` at run time,
-and `publish` takes the resulting `AccountId` rather than holding one.
+external adaptor, so it names itself: a LEZ program reads its own `ProgramId` at run time
+and hands that to the write.
+
+The parameter is a `ProgramId` rather than the `AccountId` the field holds, even though the
+conversion then happens inside on every call. `AccountId` is the type of every id in this
+struct, so a signature taking one accepts an asset id, the price account's own id, or any
+account at all, and pushes the conversion out to each call site to be remembered. Taking
+what the caller already has in hand makes the wrong argument something that does not
+compile. `adaptor_id` stays public for the reading direction, where deriving the expected
+id from a known program is the whole check.
 
 Upstream's own writer does something narrower than its doc describes.
 `create_oracle_price_account` sets `source_id: price_source_id` — the AMM pool, which is

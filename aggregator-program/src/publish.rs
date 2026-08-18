@@ -18,6 +18,11 @@ use verifier_core::{AssetPair, FeedConfig, VerifiedFeed};
 /// a program asserts about its own identity is worth more than the identity the
 /// chain already knows it by.
 ///
+/// Public because a reader needs it too: checking that a price account came
+/// from a particular adaptor means deriving the same `AccountId` from that
+/// program's id. The writing path takes a [`ProgramId`] and calls this itself,
+/// so no caller has to remember to.
+///
 /// `ProgramId` is `[u32; 8]`, reinterpreted little-endian, which is how LEZ
 /// itself lays a program id out when it feeds one to a hash.
 #[must_use]
@@ -51,7 +56,7 @@ pub enum PublishError {
 /// later write goes through [`publish`], which has something to compare.
 #[must_use]
 pub fn price_account(
-    adaptor: AccountId,
+    program_id: ProgramId,
     config: &FeedConfig<'_>,
     feed: &VerifiedFeed,
 ) -> OraclePriceAccount {
@@ -60,7 +65,7 @@ pub fn price_account(
         quote_asset: AccountId::new(config.assets().quote),
         price: feed.price,
         timestamp: feed.timestamp_ms,
-        source_id: adaptor,
+        source_id: adaptor_id(program_id),
         confidence_interval: NO_CONFIDENCE_INTERVAL,
     }
 }
@@ -79,7 +84,7 @@ pub fn price_account(
 /// one.
 pub fn publish(
     account: &mut OraclePriceAccount,
-    adaptor: AccountId,
+    program_id: ProgramId,
     config: &FeedConfig<'_>,
     feed: &VerifiedFeed,
 ) -> Result<(), PublishError> {
@@ -90,7 +95,7 @@ pub fn publish(
     if &stored != config.assets() {
         return Err(PublishError::AssetMismatch);
     }
-    if account.source_id != adaptor {
+    if account.source_id != adaptor_id(program_id) {
         return Err(PublishError::SourceMismatch);
     }
     // Strictly newer, so a package that is inside the staleness window but older
@@ -120,10 +125,8 @@ mod tests {
 
     /// Stands in for what a LEZ program reads as its own id at run time.
     const ADAPTOR: ProgramId = [0x0A0B_0C0D; 8];
-
-    fn adaptor() -> AccountId {
-        adaptor_id(ADAPTOR)
-    }
+    /// A second build of it, which is what any recompilation produces.
+    const OTHER: ProgramId = [0x0102_0304; 8];
 
     fn pair() -> AssetPair {
         AssetPair::new([0xB7; AssetPair::ID_LEN], [0x05; AssetPair::ID_LEN])
@@ -149,13 +152,13 @@ mod tests {
     #[test]
     fn a_fresh_account_takes_every_field_from_the_feed_and_its_configuration() {
         let signers = signers();
-        let account = price_account(adaptor(), &config(&signers, pair()), &verified(7, 1_000));
+        let account = price_account(ADAPTOR, &config(&signers, pair()), &verified(7, 1_000));
 
         assert_eq!(account.base_asset.into_value(), pair().base);
         assert_eq!(account.quote_asset.into_value(), pair().quote);
         assert_eq!(account.price, 7);
         assert_eq!(account.timestamp, 1_000);
-        assert_eq!(account.source_id, adaptor());
+        assert_eq!(account.source_id, adaptor_id(ADAPTOR));
         assert_eq!(account.confidence_interval, 0);
     }
 
@@ -177,37 +180,37 @@ mod tests {
         // The point of naming the writer rather than asserting a label: a second
         // deployment is a different source, and a consumer that trusts one has
         // not thereby trusted the other.
-        assert_ne!(adaptor_id(ADAPTOR), adaptor_id([0x0102_0304; 8]));
+        assert_ne!(adaptor_id(ADAPTOR), adaptor_id(OTHER));
     }
 
     #[test]
     fn a_newer_observation_moves_the_price_and_the_timestamp_and_nothing_else() {
         let signers = signers();
         let config = config(&signers, pair());
-        let mut account = price_account(adaptor(), &config, &verified(7, 1_000));
+        let mut account = price_account(ADAPTOR, &config, &verified(7, 1_000));
 
         assert_eq!(
-            publish(&mut account, adaptor(), &config, &verified(9, 2_000)),
+            publish(&mut account, ADAPTOR, &config, &verified(9, 2_000)),
             Ok(())
         );
 
         assert_eq!(account.price, 9);
         assert_eq!(account.timestamp, 2_000);
         assert_eq!(account.base_asset.into_value(), pair().base);
-        assert_eq!(account.source_id, adaptor());
+        assert_eq!(account.source_id, adaptor_id(ADAPTOR));
         assert_eq!(account.confidence_interval, 0);
     }
 
     #[test]
     fn an_account_for_another_pair_is_refused_rather_than_repointed() {
         let signers = signers();
-        let mut account = price_account(adaptor(), &config(&signers, pair()), &verified(7, 1_000));
+        let mut account = price_account(ADAPTOR, &config(&signers, pair()), &verified(7, 1_000));
         let elsewhere = AssetPair::new([0xEE; AssetPair::ID_LEN], [0x05; AssetPair::ID_LEN]);
 
         assert_eq!(
             publish(
                 &mut account,
-                adaptor(),
+                ADAPTOR,
                 &config(&signers, elsewhere),
                 &verified(9, 2_000)
             ),
@@ -220,10 +223,10 @@ mod tests {
     fn an_account_another_program_populated_is_not_this_adaptors_to_write() {
         let signers = signers();
         let config = config(&signers, pair());
-        let mut account = price_account(adaptor_id([0x0102_0304; 8]), &config, &verified(7, 1_000));
+        let mut account = price_account(OTHER, &config, &verified(7, 1_000));
 
         assert_eq!(
-            publish(&mut account, adaptor(), &config, &verified(9, 2_000)),
+            publish(&mut account, ADAPTOR, &config, &verified(9, 2_000)),
             Err(PublishError::SourceMismatch)
         );
         assert_eq!(account.price, 7);
@@ -236,10 +239,10 @@ mod tests {
         // from the same window costs nothing and would otherwise be accepted.
         let signers = signers();
         let config = config(&signers, pair());
-        let mut account = price_account(adaptor(), &config, &verified(7, 2_000));
+        let mut account = price_account(ADAPTOR, &config, &verified(7, 2_000));
 
         assert_eq!(
-            publish(&mut account, adaptor(), &config, &verified(9, 1_999)),
+            publish(&mut account, ADAPTOR, &config, &verified(9, 1_999)),
             Err(PublishError::NotNewer {
                 stored: 2_000,
                 offered: 1_999,
@@ -252,10 +255,10 @@ mod tests {
     fn the_same_observation_twice_is_not_an_update() {
         let signers = signers();
         let config = config(&signers, pair());
-        let mut account = price_account(adaptor(), &config, &verified(7, 2_000));
+        let mut account = price_account(ADAPTOR, &config, &verified(7, 2_000));
 
         assert_eq!(
-            publish(&mut account, adaptor(), &config, &verified(7, 2_000)),
+            publish(&mut account, ADAPTOR, &config, &verified(7, 2_000)),
             Err(PublishError::NotNewer {
                 stored: 2_000,
                 offered: 2_000,
