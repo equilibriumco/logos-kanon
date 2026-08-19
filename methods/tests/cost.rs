@@ -58,6 +58,9 @@
 //! ```
 
 use kanon_methods::VERIFY_COST_ELF;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use verifier_core::decode::{EMPTY_ENVELOPE_BYTES, REDSTONE_MARKER};
 
@@ -155,7 +158,33 @@ fn payload_with(vector: &Vector, n: usize) -> Vec<u8> {
 }
 
 /// Cycles for one stage over an `n`-package payload, and what the guest reported.
+///
+/// Memoised. A zkVM execution is a deterministic function of the guest ELF and
+/// its input, and the input here is fully described by the feed, the stage and
+/// the signer count -- so the eight tests between them asked for 45 distinct
+/// executions 144 times. Nothing about a repeat is a check: it is
+/// the same ELF over the same bytes, and it would have to return the same
+/// number for the arithmetic in `components` to mean anything at all.
 fn run(vector: &Vector, stage: u8, n: usize) -> (u64, u32) {
+    type Key = (String, u8, usize);
+    type Slot = Arc<OnceLock<(u64, u32)>>;
+    static MEASURED: OnceLock<Mutex<HashMap<Key, Slot>>> = OnceLock::new();
+
+    // A cell per input, taken under the lock; the execution happens outside it.
+    // Two threads asking for the same measurement share one execution, because
+    // the second blocks in `get_or_init` until the first has filled the cell,
+    // while threads asking for different ones still run at the same time.
+    let slot = MEASURED
+        .get_or_init(Mutex::default)
+        .lock()
+        .expect("not poisoned")
+        .entry((vector.feed_id.clone(), stage, n))
+        .or_default()
+        .clone();
+    *slot.get_or_init(|| execute(vector, stage, n))
+}
+
+fn execute(vector: &Vector, stage: u8, n: usize) -> (u64, u32) {
     let signer_bytes: Vec<u8> = vector.signers[..n]
         .iter()
         .flat_map(|s| *s.as_bytes())
