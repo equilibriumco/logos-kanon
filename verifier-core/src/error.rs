@@ -47,6 +47,14 @@ pub enum VerifyError {
     /// is what enforces it. A future single-package API is where this becomes
     /// reportable.
     ReoccurringSigner,
+    /// The packages are from more than one RedStone round, and no single round
+    /// carried enough signers.
+    ///
+    /// Carries the largest round found, so a caller can see how close it came.
+    /// Distinct from [`Self::ThresholdNotMet`] because the signers were there:
+    /// what is wrong is that they are not describing one observation, which
+    /// points at whoever assembled the payload rather than at the signer set.
+    MixedRounds { largest: u8, required: u8 },
     /// The payload carries more packages for this feed than verification will
     /// pay to recover.
     ///

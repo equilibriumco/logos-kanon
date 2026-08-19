@@ -37,10 +37,11 @@ a record of a decision that was later reversed is more useful than no record of 
 | [21](0021-property-tests-for-the-invariants-examples-cannot-reach.md) | Property tests for the invariants examples cannot reach, inside the crate under test | accepted |
 | [22](0022-the-price-account-write-and-its-three-undecided-fields.md) | The price-account write, and the three fields nothing had decided | accepted |
 | [23](0023-the-accept-and-reject-suite-is-shaped-by-the-contract.md) | The accept and reject suite is shaped by the contract, and asserts that the taxonomy discriminates | accepted |
-| [24](0024-a-duplicate-package-is-skipped-and-the-freshest-holds-the-slot.md) | A duplicate package is skipped, and the freshest one holds the slot | accepted |
+| [24](0024-a-duplicate-package-is-skipped-and-the-freshest-holds-the-slot.md) | A duplicate package is skipped, and the freshest one holds the slot | accepted, freshest rule superseded by 28 |
 | [25](0025-present-but-blocked-requires-a-package-that-could-have-counted.md) | "Present but blocked" requires a package that could have counted | accepted |
 | [26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
 | [27](0027-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
+| [28](0028-one-price-comes-from-one-round-chosen-by-consensus.md) | One price comes from one round, and the round is chosen by consensus | accepted |
 
 ## How they fit together
 
@@ -117,6 +118,15 @@ because reading one costs cycles before any code here runs. That last part is no
 to fix: LEZ reads a program's whole instruction data before the program's first
 instruction, so the limit is a number to publish and for callers to enforce rather than
 a check that can save the transaction it refuses.
+
+ADR 28 is the one that found a divergence nobody had decided on. ADR 15 and ADR 18 both
+worked from RedStone's Rust SDK and both named the places Kanon departs from it; neither
+opened `protocol/payload.rs`, where the SDK requires every package in a payload to carry
+one timestamp. Kanon did not, which let a payload's assembler build a median out of three
+different moments. The correction cannot be the SDK's own -- refusing a payload whose
+timestamps differ is the free denial ADR 24 and ADR 26 spent two decisions closing -- so
+the round is settled by counting distinct signers instead, which is the one tally an
+attacker cannot pad.
 
 ## Open questions carried by these decisions
 

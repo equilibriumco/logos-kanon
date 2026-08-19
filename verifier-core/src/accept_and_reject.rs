@@ -393,6 +393,31 @@ fn one_signer_supplying_the_feed_twice_counts_once_and_is_short_of_the_threshold
 }
 
 #[test]
+fn values_from_different_rounds_are_not_made_into_one_price() {
+    // Not named by U6. Each package is validly signed and inside the window;
+    // what is wrong is that they describe three moments rather than one, and a
+    // median across them is an observation RedStone never published. RedStone's
+    // own SDK requires a common timestamp and refuses the payload without one;
+    // this refuses the splice without handing anyone a way to deny the feed by
+    // appending to it (ADR 28).
+    let keys = keys(3);
+    let set = addresses(&keys);
+    let bytes = PayloadBuilder::default()
+        .signed_package(&keys[0], &[(FEED, HUNDRED)], NOW_MS)
+        .signed_package(&keys[1], &[(FEED, HUNDRED)], NOW_MS - 10_000)
+        .signed_package(&keys[2], &[(FEED, HUNDRED)], NOW_MS - 20_000)
+        .build();
+
+    assert_eq!(
+        verify(&bytes, &config(&set, 3)),
+        Err(VerifyError::MixedRounds {
+            largest: 1,
+            required: 3
+        })
+    );
+}
+
+#[test]
 fn more_packages_for_this_feed_than_verification_will_pay_for_is_refused() {
     // Not named by U6. The package count sits in the envelope, outside every
     // signature, so without a ceiling the payload decides how much of the
@@ -565,6 +590,14 @@ fn no_two_failure_modes_answer_with_the_same_variant() {
             "unusable values",
             verify(&agreed(&keys, &[0, 0, 0, 0], NOW_MS), &config(&set, 3)),
         ),
+        ("mixed rounds", {
+            let bytes = PayloadBuilder::default()
+                .signed_package(&keys[0], &[(FEED, HUNDRED)], NOW_MS)
+                .signed_package(&keys[1], &[(FEED, HUNDRED)], NOW_MS - 10_000)
+                .signed_package(&keys[2], &[(FEED, HUNDRED)], NOW_MS - 20_000)
+                .build();
+            verify(&bytes, &config(&set, 3))
+        }),
         ("too many packages", {
             let mut builder = PayloadBuilder::default();
             for i in 0..=MAX_RECOVERIES {

@@ -111,18 +111,18 @@ mod expected {
     /// It is the harness's cost, not the verifier's: it is subtracted out of
     /// every component, and a program reading a payload from an account rather
     /// than from the guest's input stream would pay something different.
-    pub const FLOOR: [(usize, u64); 3] = [(1, 25_323), (3, 62_291), (5, 99_491)];
+    pub const FLOOR: [(usize, u64); 3] = [(1, 25_324), (3, 62_294), (5, 99_494)];
 
     /// Per signer count: decode, keccak256, recovery, membership, then
     /// everything else `verify_feed` does.
     pub const COMPONENTS: [(usize, [u64; 5]); 3] = [
-        (1, [586, 17_476, 585_274, 162, 18_398]),
-        (3, [1_495, 52_428, 1_755_574, 537, 22_051]),
-        (5, [2_404, 87_380, 2_922_880, 980, 26_400]),
+        (1, [586, 17_484, 585_278, 162, 18_392]),
+        (3, [1_501, 52_452, 1_755_586, 540, 22_414]),
+        (5, [2_416, 87_420, 2_922_900, 990, 27_124]),
     ];
 
     /// The whole update, floor subtracted.
-    pub const TOTAL: [(usize, u64); 3] = [(1, 621_896), (3, 1_832_085), (5, 3_040_044)];
+    pub const TOTAL: [(usize, u64); 3] = [(1, 621_902), (3, 1_832_493), (5, 3_040_850)];
 
     /// One Q64.64 conversion: the largest single item in the remainder, and the
     /// only one worth naming separately.

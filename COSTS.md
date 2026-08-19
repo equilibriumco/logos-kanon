@@ -20,21 +20,21 @@ data point each; the 1- and 3-signer columns are the same payload cut short.
 
 | component | 1 signer | 3 signers | 5 signers |
 | --- | ---: | ---: | ---: |
-| decode | 586 | 1,495 | 2,404 |
-| keccak256 | 17,476 | 52,428 | 87,380 |
-| recovery | 585,274 | 1,755,574 | 2,922,880 |
-| signer-set membership | 162 | 537 | 980 |
-| the rest of `verify_feed` | 18,398 | 22,051 | 26,400 |
-| **whole update** | **621,896** | **1,832,085** | **3,040,044** |
-| _harness floor, subtracted out_ | 25,323 | 62,291 | 99,491 |
+| decode | 586 | 1,501 | 2,416 |
+| keccak256 | 17,484 | 52,452 | 87,420 |
+| recovery | 585,278 | 1,755,586 | 2,922,900 |
+| signer-set membership | 162 | 540 | 990 |
+| the rest of `verify_feed` | 18,392 | 22,414 | 27,124 |
+| **whole update** | **621,902** | **1,832,493** | **3,040,850** |
+| _harness floor, subtracted out_ | 25,324 | 62,294 | 99,494 |
 
 At three signers, which is RFP-020's default threshold:
 
 | component | share |
 | --- | ---: |
-| recovery | 95.82% |
+| recovery | 95.80% |
 | keccak256 | 2.86% |
-| the rest of `verify_feed` | 1.20% |
+| the rest of `verify_feed` | 1.22% |
 | decode | 0.08% |
 | signer-set membership | 0.03% |
 
@@ -81,8 +81,8 @@ account rather than from the guest input stream pays something different for it.
 
 ## What the numbers say
 
-**Recovery is the whole cost.** At three signers it is 95.82% of an update, and
-the four other components together are 4.18%. No arrangement of the remaining
+**Recovery is the whole cost.** At three signers it is 95.80% of an update, and
+the four other components together are 4.20%. No arrangement of the remaining
 code matters next to it. If LEZ ever offers a secp256k1 precompile, that is the
 one lever worth pulling, and `VerifierBackend` exists so that pulling it is one
 new implementor and one type parameter
@@ -106,7 +106,7 @@ that does not change the decision.
 an update. The wire format is a backwards walk over fixed-width fields with no
 allocation, and the membership check is a linear scan of at most 32 addresses.
 That scan is quadratic in the signer count — every package scans the whole set —
-which the numbers show and which is still not worth acting on: 980 cycles at five
+which the numbers show and which is still not worth acting on: 990 cycles at five
 signers.
 
 **Converting to the account's scale costs 11,330 cycles**, about 64% of one
