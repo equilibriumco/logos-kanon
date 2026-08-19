@@ -1,6 +1,6 @@
 # 15. Verification semantics follow RedStone's Rust SDK, with two divergences
 
-- **Status**: accepted; the duplicate-package rule is superseded by [ADR 24](0024-a-duplicate-package-is-skipped-and-the-freshest-holds-the-slot.md)
+- **Status**: accepted
 - **Milestone**: M1 (`M1-13`, `M1-18`)
 - **Requirements**: F3, U6, SEC1
 - **Artefacts**: `verifier-core/src/feed.rs`, `verifier-core/src/error.rs`, `verifier-core/src/value.rs`
@@ -27,8 +27,9 @@ false.
 
 Count-and-ignore on both axes. An unrequested feed in a package is skipped; a signer not
 in the configured set is skipped, not fatal. One slot is reserved per configured signer,
-so a repeat from an already-slotted signer is rejected rather than counted twice — a
-signer that could occupy two slots reaches any threshold alone. The reported value is
+which is what stops a signer occupying two of them and reaching any threshold alone; what
+happens to a signer's second package is [ADR 24](0024-a-duplicate-package-is-skipped.md),
+and it is the same answer as the two axes above for the same reason. The reported value is
 the median across whatever slots filled, using the overflow-safe midpoint (ADR-adjacent
 to `value.rs`, not restated here).
 

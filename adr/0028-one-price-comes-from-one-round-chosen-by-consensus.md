@@ -1,6 +1,6 @@
 # 28. One price comes from one round, and the round is chosen by consensus
 
-- **Status**: accepted, superseding ADR 24's freshest-package rule
+- **Status**: accepted
 - **Milestone**: M1 (`M1-13`, `M1-15`)
 - **Requirements**: F3, F4, SEC1, U6
 - **Artefacts**: `verifier-core/src/feed.rs`, `verifier-core/src/error.rs`, `COSTS.md`
@@ -80,11 +80,11 @@ present-but-blocked ladder, which would otherwise blame the values.
 
 ## Consequences
 
-- **ADR 24's freshest-package rule is gone, and its property is kept.** ADR 24
-  chose the freshest of a signer's packages so that a replayed older one could
-  not displace a fresh one. A replay now loses the round vote instead, which is
-  the same protection reached by the rule that also covers the newer-package
-  case ADR 24 did not.
+- **This is the answer ADR 24 left open.** ADR 24 made a duplicate skippable and
+  named the property whatever chose between them would have to keep: the price
+  is a function of the set of packages, not of their order. A replay loses the
+  round vote whether it is older or newer, which is that property with both
+  directions covered.
 - **`VerifiedFeed::timestamp_ms` is the round, not the oldest package behind the
   median.** A stronger statement, and a simpler one: every package behind the
   price now carries that exact timestamp.

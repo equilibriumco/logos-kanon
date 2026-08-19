@@ -28,7 +28,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [12](0012-a-standalone-lez-sequencer-without-lgs-run-from-a-prebuilt-image.md) | A standalone LEZ sequencer without `lgs`, run in CI from a prebuilt image | accepted |
 | [13](0013-staleness-is-measured-against-the-lez-clock-program.md) | Staleness measured against the LEZ clock program's every-block account | accepted |
 | [14](0014-build-admin-gating-against-the-unmerged-spel-admin-authority.md) | Admin gating built against the unmerged SPEL admin-authority, shim in reserve | accepted, contingency live |
-| [15](0015-redstone-parity-verification-semantics.md) | Verification semantics follow RedStone's Rust SDK, with two divergences | accepted, duplicate rule superseded by 24 |
+| [15](0015-redstone-parity-verification-semantics.md) | Verification semantics follow RedStone's Rust SDK, with two divergences | accepted |
 | [16](0016-the-asset-pair-is-a-registration-claim.md) | The asset pair is a registration claim, checked against the caller's expectation | accepted |
 | [17](0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md) | Value sanity is two-level, and prices convert to the account's Q64.64 scale | accepted |
 | [18](0018-timestamp-validity-is-two-sided-and-costs-one-signer.md) | Timestamp validity is two-sided, and a bad timestamp costs one signer | accepted |
@@ -37,7 +37,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [21](0021-property-tests-for-the-invariants-examples-cannot-reach.md) | Property tests for the invariants examples cannot reach, inside the crate under test | accepted |
 | [22](0022-the-price-account-write-and-its-three-undecided-fields.md) | The price-account write, and the three fields nothing had decided | accepted |
 | [23](0023-the-accept-and-reject-suite-is-shaped-by-the-contract.md) | The accept and reject suite is shaped by the contract, and asserts that the taxonomy discriminates | accepted |
-| [24](0024-a-duplicate-package-is-skipped-and-the-freshest-holds-the-slot.md) | A duplicate package is skipped, and the freshest one holds the slot | accepted, freshest rule superseded by 28 |
+| [24](0024-a-duplicate-package-is-skipped.md) | A duplicate package is skipped | accepted |
 | [25](0025-present-but-blocked-requires-a-package-that-could-have-counted.md) | "Present but blocked" requires a package that could have counted | accepted |
 | [26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
 | [27](0027-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
@@ -90,11 +90,11 @@ opposite of what ADR 10 argues for everywhere else, and the reason is that the d
 it covers -- the threshold in ADR 15, the scale in ADR 17, the framing in ADR 5 -- are
 statements about all inputs, where a cycle count is a statement about one.
 
-ADR 24 reopened one of them. ADR 15's own argument -- a package an attacker can
-produce for free must not be able to fail the payload for everyone -- turned out to
-apply to the one axis it had decided the other way, because a duplicate package needs no
-key: copy one already in the payload, or replay an older one still inside `maxAge`. The
-rule it replaces was doing no work the per-signer slot was not already doing.
+ADR 24 is a third axis of the same rule. ADR 15's argument -- a package an attacker can
+produce for free must not be able to fail the payload for everyone -- reaches a signer's
+second package too, because a duplicate needs no key: copy one already in the payload, or
+replay an older one still inside `maxAge`. The rejection that the anti-inflation rule
+appears to need was doing no work the per-signer slot was not already doing.
 
 ADR 25 is a correction of the same kind one layer up. ADR 18 decided that a package outside the
 window costs its signer, and ADR 15 decided when a signer set is named as the fault.

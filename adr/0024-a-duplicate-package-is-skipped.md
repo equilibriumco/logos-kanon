@@ -1,8 +1,8 @@
-# 24. A duplicate package is skipped, and the freshest one holds the slot
+# 24. A duplicate package is skipped
 
-- **Status**: accepted, superseding the third paragraph of ADR 15's decision; the cost of
+- **Status**: accepted; the cost of
   skipping is bounded by [ADR 26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md),
-  and the freshest-package rule is superseded by
+  and which of a signer's packages counts is decided by
   [ADR 28](0028-one-price-comes-from-one-round-chosen-by-consensus.md)
 - **Milestone**: M1 (`M1-13`)
 - **Requirements**: F3, SEC1
@@ -17,16 +17,15 @@ An unrecoverable signature is the clearest case. It needs no key and no valid
 signature, so rejecting on it would be the cheapest denial of service in the
 design.
 
-On one axis it decided the other way. A second package from a signer that had
-already filled its slot returned `ReoccurringSigner` and failed the whole
-payload, on the argument that a signer occupying two slots reaches any threshold
-alone.
+A signer's second package for the same feed is a third axis, and the obvious
+answer there is the opposite one: reject, because a signer occupying two slots
+reaches any threshold alone.
 
-The argument is right and the remedy was wrong, because the slot already
-enforces it. `reported[index]` is one cell per configured signer and `met`
-counts filled cells, so a signer that sends fifty packages still moves the count
-by one. The error was doing no work the data structure was not already doing —
-and it was reachable by anyone.
+The argument is right and the rejection does no work for it. `reported[index]`
+is one cell per configured signer and `met` counts filled cells, so a signer
+that sends fifty packages still moves the count by one. Failing the payload as
+well would be doing nothing the data structure was not already doing — and it
+would be reachable by anyone.
 
 **A duplicate needs no key either.** A payload's packages are public, and adding
 one means bumping the count and splicing bytes into the package region. Two
@@ -57,24 +56,23 @@ name a fault in one package, and failing a payload over one package is a free
 denial of service. Both become reportable in a single-package API, where the
 caller names one package and expects that package to verify.
 
-**The freshest package holds the slot, not the first one walked.**
+**Which of a signer's packages then counts is not decided here.**
 `for_each_package` walks the payload from the tail, so "whichever arrived first"
-would mean "whichever an attacker appended last" — the verified price would
-depend on where in the payload the bytes sit, and an attacker chooses that. A
-package only displaces what is in the slot if its timestamp is strictly greater,
-which neither a copy (equal) nor a replay (older) is. The price is then a
-function of the set of packages, not of their order.
-
-**The feed's timestamp is taken after the walk**, as the minimum over the slots
-as they finally stand. The running minimum it replaces was correct only while
-slots could not be replaced.
+would mean "whichever an attacker appended last", and the verified price would
+depend on where in the payload the bytes sit. Skipping the duplicate is what
+makes that question askable at all — until it stops being fatal there is nothing
+to choose between — and
+[ADR 28](0028-one-price-comes-from-one-round-chosen-by-consensus.md) answers it,
+by settling the round the payload speaks for and taking each signer's package
+from that round. What matters here is the property the answer has to preserve:
+the price is a function of the set of packages, not of their order.
 
 ## Consequences
 
 - **The order-independence is asserted, not just intended.**
-  `an_older_package_from_a_signer_that_already_reported_cannot_deny_the_feed`
-  runs the same replay at both ends of the package list and requires the same
-  median and the same timestamp from both.
+  `a_package_from_another_round_cannot_take_the_round_from_the_signers` runs the
+  same replay, older and newer, and requires the same median and the same
+  timestamp from both.
 - **Three tests changed their expected answer** from `ReoccurringSigner` to the
   threshold failure it is. They are the same payloads asserting the same
   property — one signer counts once — which is the point: the property never
