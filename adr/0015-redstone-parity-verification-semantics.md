@@ -17,9 +17,8 @@ single consumer configured.
 
 ## Where the answer came from
 
-`redstone-finance/rust-sdk`, under the Boost Software License 1.0, verified from its own
-`LICENSE` file rather than assumed from the package name. `deny.toml` allowlists Boost
-for exactly this reason. The BUSL-1.1 EVM connector was not consulted: `NOTICE` states
+`redstone-finance/rust-sdk`, under the Boost Software License 1.0, read from the SDK's
+own `LICENSE` file. `deny.toml` allowlists Boost for exactly this reason. The BUSL-1.1 EVM connector was not consulted: `NOTICE` states
 that no part of it is copied, ported or read for the purpose of writing this decoder or
 its verification semantics, and following its logic here would have made that statement
 false.
@@ -65,9 +64,8 @@ considered and rejected on payloads that refute them:
   `alloc::vec::Vec` assume an allocator, which ADR 4 forbids in guest-reachable code.
   ADR 5 names zero allocation among the guest constraints a decoder must guarantee, but
   it argues from wire-format control and audit surface, and never records that the SDK
-  *in fact* requires one. That concrete fact — not merely the constraint it would
-  violate — is what settles the choice not to depend on it, and this is where the fact
-  is written down.
+  *in fact* requires one. That is what settles the choice not to depend on it, and this
+  is where it is written down.
 - **A former divergence, now corrected.** An earlier revision of this decision made a
   value over 32 significant bytes `ValueOutOfRange` rather than skipped. That let one
   configured signer deny the entire feed by sending a single oversized value —

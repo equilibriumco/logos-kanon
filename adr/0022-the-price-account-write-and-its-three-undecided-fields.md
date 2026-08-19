@@ -123,8 +123,8 @@ assigns is not assertable by anybody else.
 
 A LEZ `ProgramId` is the RISC Zero image id of the program's ELF, computed by the runtime
 from the binary it is about to execute and written into the guest's input stream by the
-host. The guest reads it; it cannot state it. So this is not merely harder to forge than a
-constant, it is not assertable at all.
+host. The guest reads it; it cannot state it. Forging it is not hard so much as
+impossible: there is nothing in the guest to forge it with.
 
 Naming the writer also keeps two deployments of this adaptor distinguishable, which matters
 in the direction that costs something: a consumer that has decided to trust one deployment

@@ -24,7 +24,7 @@ use traceability::{Evidence, Kind, Matrix, Requirements, Row, Status};
 /// RFP-020's own taxonomy, counted.
 ///
 /// Transcribing an inventory is exactly the kind of work that silently loses an
-/// entry, so the counts are asserted rather than trusted. `OS1` is the *Open
+/// entry, so the counts are asserted here. `OS1` is the *Open
 /// Source Requirement* section, which is a hard obligation stated outside the
 /// numbered lists.
 const EXPECTED_COUNTS: &[(&str, usize)] = &[
