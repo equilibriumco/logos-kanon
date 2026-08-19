@@ -118,6 +118,7 @@ def main():
         served = json.load(response)
 
     vectors = []
+    skipped = False
     for feed in FEEDS:
         if feed not in served:
             print(f"{feed}: not served by {DATA_SERVICE}", file=sys.stderr)
@@ -129,6 +130,22 @@ def main():
                 file=sys.stderr,
             )
         if not resolved:
+            continue
+        # Each signer timestamps its own package from its own clock, so a
+        # capture taken while a round is landing can hold packages milliseconds
+        # apart. One `timestamp_ms` per vector would then be one signer's, and
+        # the conformance suite compares it against the whole feed's -- which
+        # `verify_feed` reports as the oldest package behind the price, not the
+        # first one in the payload. Skip the feed and capture it again rather
+        # than commit a vector that fails on arrival.
+        instants = {timestamp_ms for _, timestamp_ms, _, _ in resolved}
+        if len(instants) != 1:
+            spread = max(instants) - min(instants)
+            print(
+                f"{feed}: signers {spread}ms apart, mid-round -- not captured",
+                file=sys.stderr,
+            )
+            skipped = True
             continue
         vectors.append(
             {
@@ -161,6 +178,9 @@ def main():
         indent=1,
     )
     print(file=sys.stdout)
+
+    if skipped:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

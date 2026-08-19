@@ -7,5 +7,8 @@ target/
 # Exception: the M0 report is a delivered artifact, not a build output.
 !m0/M0-report.pdf
 
+# Python bytecode, from running the capture script by hand.
+__pycache__/
+
 # Editor scratch.
 .code_marks/
