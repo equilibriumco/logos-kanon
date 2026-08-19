@@ -39,6 +39,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [23](0023-the-accept-and-reject-suite-is-shaped-by-the-contract.md) | The accept and reject suite is shaped by the contract, and asserts that the taxonomy discriminates | accepted |
 | [24](0024-a-duplicate-package-is-skipped-and-the-freshest-holds-the-slot.md) | A duplicate package is skipped, and the freshest one holds the slot | accepted |
 | [25](0025-present-but-blocked-requires-a-package-that-could-have-counted.md) | "Present but blocked" requires a package that could have counted | accepted |
+| [26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
 
 ## How they fit together
 
@@ -100,6 +101,14 @@ holding nothing constant: a configured signer's stale package about another feed
 as present-but-blocked, so a threshold failure reported as staleness. Each tally now
 varies exactly the thing it names, which is the question the unknown-signer tally had
 been asking all along.
+
+ADR 26 is the one that had to correct an earlier decision rather than an earlier
+omission. ADR 24 stopped a duplicate package failing a payload, and in doing so removed
+the thing that had been aborting a flood of duplicates after a handful of signature
+recoveries: the denial it closed cost one package, and the denial it opened cost a whole
+transaction's cycle budget. Bounding the work before the cryptography closes both, and
+it also fixes something that was never an attack -- verifying one feed of a multi-feed
+payload was paying to recover every other feed's packages.
 
 ## Open questions carried by these decisions
 

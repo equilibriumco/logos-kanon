@@ -63,6 +63,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use verifier_core::decode::{EMPTY_ENVELOPE_BYTES, REDSTONE_MARKER};
+use verifier_core::feed::MAX_RECOVERIES;
 
 /// The M1-21 capture. Real packages, real signatures, one data point each, so a
 /// package's signable span is the 77 bytes `m0` measured keccak256 over. Read
@@ -110,22 +111,27 @@ mod expected {
     /// It is the harness's cost, not the verifier's: it is subtracted out of
     /// every component, and a program reading a payload from an account rather
     /// than from the guest's input stream would pay something different.
-    pub const FLOOR: [(usize, u64); 3] = [(1, 25_328), (3, 62_296), (5, 99_496)];
+    pub const FLOOR: [(usize, u64); 3] = [(1, 25_327), (3, 62_295), (5, 99_495)];
 
     /// Per signer count: decode, keccak256, recovery, membership, then
     /// everything else `verify_feed` does.
     pub const COMPONENTS: [(usize, [u64; 5]); 3] = [
-        (1, [551, 17_475, 585_274, 164, 18_107]),
-        (3, [1_437, 52_425, 1_755_574, 543, 21_182]),
-        (5, [2_323, 87_375, 2_922_880, 990, 24_953]),
+        (1, [549, 17_475, 585_274, 165, 18_391]),
+        (3, [1_437, 52_425, 1_755_574, 546, 22_030]),
+        (5, [2_325, 87_375, 2_922_880, 995, 26_365]),
     ];
 
     /// The whole update, floor subtracted.
-    pub const TOTAL: [(usize, u64); 3] = [(1, 621_571), (3, 1_831_161), (5, 3_038_521)];
+    pub const TOTAL: [(usize, u64); 3] = [(1, 621_854), (3, 1_832_012), (5, 3_039_940)];
 
     /// One Q64.64 conversion: the largest single item in the remainder, and the
     /// only one worth naming separately.
-    pub const SCALING: u64 = 11_293;
+    pub const SCALING: u64 = 11_295;
+
+    /// `MAX_NUM_CYCLES_PUBLIC_EXECUTION`, the cycles a LEZ public transaction
+    /// gets. Recorded in `m0/lez-probe/README.md` and the figure P1 is measured
+    /// against.
+    pub const LEZ_CYCLE_BUDGET: u64 = 33_554_432;
 
     /// What the same rows would read if the wrong `[patch.crates-io]` were in
     /// force, from `m0`'s software and accelerated measurements: one software
@@ -429,4 +435,101 @@ fn thousands(n: u64) -> String {
         out.push(ch);
     }
     out
+}
+
+/// The captured payload with its packages repeated until there are `n`.
+///
+/// Every package is a fixed stride and carries the same feed, so repeating the
+/// body and re-emitting the count gives a payload that is well formed, entirely
+/// valid, and as expensive as `n` packages of this feed can be.
+fn payload_repeating(vector: &Vector, n: usize) -> Vec<u8> {
+    let body_len = vector.payload.len() - EMPTY_ENVELOPE_BYTES;
+    let mut out = Vec::with_capacity(n * body_len);
+    while out.len() < n * (body_len / vector.signers.len()) {
+        out.extend_from_slice(&vector.payload[..body_len]);
+    }
+    out.truncate(n * (body_len / vector.signers.len()));
+    out.extend_from_slice(&(n as u16).to_be_bytes());
+    out.extend_from_slice(&[0, 0, 0]);
+    out.extend_from_slice(&REDSTONE_MARKER);
+    out
+}
+
+/// P1's ceiling, not its typical case.
+///
+/// The package count lives in the envelope, outside every signature, so anyone
+/// handling a payload can raise it. Before ADR 26 that decided how much of the
+/// transaction's budget verification spent: 56 repeated packages, an 8 KB
+/// payload, measured 34,746,599 cycles and overran the budget, so the
+/// transaction aborted rather than publishing. `MAX_RECOVERIES` is what bounds
+/// it, and this is the assertion that the bound is set low enough to matter.
+#[test]
+fn the_most_a_payload_can_cost_still_fits_in_one_transaction() {
+    let vector = vector();
+    let signer_bytes: Vec<u8> = vector.signers.iter().flat_map(|s| *s.as_bytes()).collect();
+
+    let cost = |n: usize| {
+        let bytes = payload_repeating(&vector, n);
+        let whole = raw_cycles(&vector, stage::VERIFY, bytes.clone(), &signer_bytes);
+        // The harness reads the payload through `env::read()`, which costs more
+        // for a longer one whatever verification then does with it. Subtracted
+        // out here as it is everywhere else in this file.
+        (
+            whole,
+            whole - raw_cycles(&vector, stage::FLOOR, bytes, &signer_bytes),
+        )
+    };
+
+    let (at_ceiling, _) = cost(MAX_RECOVERIES);
+    assert!(
+        at_ceiling < expected::LEZ_CYCLE_BUDGET,
+        "a payload at the ceiling costs {at_ceiling} of {} cycles, {:.1}%",
+        expected::LEZ_CYCLE_BUDGET,
+        100.0 * at_ceiling as f64 / expected::LEZ_CYCLE_BUDGET as f64
+    );
+
+    // And past it the work stops growing, which is the part that makes the
+    // ceiling a ceiling. Two payloads well over it, one three times the other,
+    // do the same verification: recover up to the ceiling, then refuse. A run
+    // past the ceiling is slightly cheaper than one at it because it never
+    // reaches the median and the conversion.
+    let (_, verified_at) = cost(MAX_RECOVERIES);
+    for n in [MAX_RECOVERIES + 8, MAX_RECOVERIES * 3, MAX_RECOVERIES * 8] {
+        let (whole, verified) = cost(n);
+        assert!(
+            verified <= verified_at,
+            "{n} packages did {verified} cycles of verification, more than the \
+             {verified_at} a payload at the ceiling does"
+        );
+        assert!(
+            whole < expected::LEZ_CYCLE_BUDGET,
+            "{n} packages cost {whole} of {} cycles",
+            expected::LEZ_CYCLE_BUDGET
+        );
+    }
+}
+
+/// Cycles for a whole `verify_feed`, on a payload this test built rather than
+/// one `payload_with` cut down. No journal assertion: these payloads are
+/// supposed to fail verification, and what is under measurement is the cost.
+fn raw_cycles(vector: &Vector, stage: u8, payload: Vec<u8>, signer_bytes: &[u8]) -> u64 {
+    let input = (
+        stage,
+        payload,
+        vector.feed_id.as_bytes().to_vec(),
+        signer_bytes.to_vec(),
+        3u8,
+        DECIMALS,
+        vector.timestamp_ms,
+        u64::MAX,
+    );
+    let env = ExecutorEnv::builder()
+        .write(&input)
+        .expect("input")
+        .build()
+        .expect("env");
+    default_executor()
+        .execute(env, VERIFY_COST_ELF)
+        .expect("execution")
+        .cycles()
 }

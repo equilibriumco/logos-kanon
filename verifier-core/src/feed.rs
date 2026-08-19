@@ -55,6 +55,22 @@ impl AssetPair {
 /// nothing else.
 pub const MAX_SIGNERS: usize = 32;
 
+/// How many packages carrying the requested feed will be recovered before the
+/// payload is refused.
+///
+/// Separate from [`MAX_SIGNERS`] because it is bounded by a different thing.
+/// `MAX_SIGNERS` costs guest stack; this costs the transaction. A recovery is
+/// 585,274 cycles and LEZ allows 33,554,432 in a public transaction
+/// (`COSTS.md`), so without a ceiling the payload decides how much of the budget
+/// verification spends -- and the package count sits in the envelope, outside
+/// every signature, where anyone handling the payload can raise it.
+///
+/// At 32 the ceiling measures 59% of the budget, which
+/// `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts, and no
+/// honest payload approaches it: one package per signer per feed, on a service
+/// running ten to twenty.
+pub const MAX_RECOVERIES: usize = 32;
+
 /// A feed, its authorised signers, and how many of them must agree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeedConfig<'a> {
@@ -253,6 +269,18 @@ fn usable(value: &Value) -> bool {
     !value.is_zero() && !value.is_negative()
 }
 
+/// Whether this package says anything at all about the requested feed.
+///
+/// The one test cheap enough to run before recovery, and the one that decides
+/// whether recovery is worth 585,274 cycles. A package carrying no data point
+/// for this feed cannot fill a slot, cannot be counted as an unknown signer and
+/// cannot set an age flag, so nothing about it changes the answer.
+fn carries_feed(package: &DataPackage<'_>, config: &FeedConfig<'_>) -> bool {
+    package
+        .data_points()
+        .any(|point| point.feed_id == config.feed_id())
+}
+
 /// Whether this package would have counted toward the threshold, on everything
 /// except the one thing being tested.
 ///
@@ -335,7 +363,24 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     // packages that actually survived it.
     let mut filled_at = [0u64; MAX_SIGNERS];
 
+    // Packages recovered so far. RedStone payloads are multi-feed and
+    // multi-consumer, so most of what arrives is somebody else's; this counts
+    // only what was worth paying for.
+    let mut recovered = 0usize;
+
     let walked = payload.for_each_package(|package| {
+        // Before the hash, and the only thing that is. Everything else the walk
+        // decides needs the signer, and the signer costs a recovery.
+        if !carries_feed(&package, config) {
+            return Ok(());
+        }
+        recovered += 1;
+        if recovered > MAX_RECOVERIES {
+            return Err(VerifyError::TooManyPackages {
+                max: MAX_RECOVERIES,
+            });
+        }
+
         let digest = backend.keccak256(package.signable());
         // An unrecoverable signature (bad recovery id, r/s outside the curve
         // order, a malleable high-s) is skipped, not fatal: it needs no key and
@@ -1599,12 +1644,16 @@ mod tests {
     }
 
     #[test]
-    fn more_unknown_signers_than_the_buffer_holds_neither_panics_nor_overruns() {
+    fn a_full_buffer_of_unknown_signers_neither_panics_nor_overruns() {
         // The buffer is sized for the configured signers, and the unknown ones
         // are whoever else happens to be in a payload — a number no consumer
         // controls. A panic here would abort the transaction rather than refuse
         // the price.
-        let keys = keys(40);
+        //
+        // Exactly `MAX_RECOVERIES` of them, because that is now the most a
+        // payload can present: the recovery ceiling and the buffer are the same
+        // size, so the buffer fills to the brim and cannot be pushed past it.
+        let keys = keys(u8::try_from(MAX_RECOVERIES).expect("fits") + 3);
         let set = signer_set(&keys[..3]);
 
         let mut builder = PayloadBuilder::default();
@@ -1615,15 +1664,85 @@ mod tests {
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
 
-        assert!(
-            keys.len() - 3 > MAX_SIGNERS,
+        assert_eq!(
+            keys.len() - 3,
+            MAX_SIGNERS,
             "the test is only meaningful if the buffer actually fills"
         );
         assert_eq!(
             verify(&payload, &config),
             Err(VerifyError::UnauthorisedSigner),
-            "thirty-seven strangers and none of the three configured signers"
+            "a full buffer of strangers and none of the three configured signers"
         );
+    }
+
+    #[test]
+    fn one_package_past_the_ceiling_is_refused_rather_than_answered() {
+        // The ceiling is what stops a payload deciding how much of the
+        // transaction's cycle budget verification spends. Refused, not
+        // truncated: answering from the packages that fit would let whoever
+        // assembled the payload choose which of a signer's packages counts.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for i in 0..=MAX_RECOVERIES {
+            builder = builder.signed_package(&keys[i % 3], &[(b"BTC", &[0, 0, 0, 50])], 1);
+        }
+        let bytes = builder.build();
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = feed_config(&set, 3);
+
+        assert_eq!(
+            verify(&payload, &config),
+            Err(VerifyError::TooManyPackages {
+                max: MAX_RECOVERIES
+            }),
+            "three signers' worth of price, presented {} times",
+            MAX_RECOVERIES + 1
+        );
+    }
+
+    #[test]
+    fn packages_for_other_feeds_are_free_and_do_not_count_against_the_ceiling() {
+        // What makes the ceiling affordable rather than a limit on payload size.
+        // A RedStone payload is multi-feed by design, so most of what arrives is
+        // somebody else's; none of it is recovered, and none of it uses up the
+        // budget this feed is allowed.
+        //
+        // Run at both ends of the package list. `for_each_package` walks from
+        // the tail, so putting the other feed's packages last would let a
+        // ceiling that counted them still pass -- the three that matter would
+        // already have been read.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let others = |builder: PayloadBuilder| {
+            (0..MAX_RECOVERIES * 2).fold(builder, |b, i| {
+                b.signed_package(&keys[i % 3], &[(b"ETH", &[0, 0, 0, 7])], 1)
+            })
+        };
+        let ours = |builder: PayloadBuilder| {
+            keys.iter().fold(builder, |b, key| {
+                b.signed_package(key, &[(b"BTC", &[0, 0, 0, 50])], 1)
+            })
+        };
+
+        for ours_first in [false, true] {
+            let builder = PayloadBuilder::default();
+            let bytes = if ours_first {
+                others(ours(builder)).build()
+            } else {
+                ours(others(builder)).build()
+            };
+            let payload = Payload::decode(&bytes).expect("well formed");
+            let config = feed_config(&set, 3);
+
+            assert_eq!(
+                verify(&payload, &config).expect("verifies").signers,
+                3,
+                "sixty-four packages for another feed change nothing \
+                 (ours_first = {ours_first})"
+            );
+        }
     }
 
     /// A payload three configured signers agree on, dated `at`.

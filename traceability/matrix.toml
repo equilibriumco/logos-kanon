@@ -69,7 +69,9 @@ verified_by = [
   "test:a_package_duplicated_by_anyone_does_not_deny_the_feed_to_the_rest",
   "test:a_threshold_of_one_is_met_by_one_signer",
   "test:a_threshold_equal_to_the_signer_count_needs_every_one_of_them",
-  "test:more_unknown_signers_than_the_buffer_holds_neither_panics_nor_overruns",
+  "test:a_full_buffer_of_unknown_signers_neither_panics_nor_overruns",
+  "test:one_package_past_the_ceiling_is_refused_rather_than_answered",
+  "test:packages_for_other_feeds_are_free_and_do_not_count_against_the_ceiling",
 ]
 note = "`verify_feed` enforces M-of-N over distinct authorised signers: one slot per configured signer, so a signer counts once however many packages it sends (M1-13). A second package from a slotted signer is skipped rather than fatal, and the freshest one holds the slot -- ADR 24 records why, and the tests cover both ways an attacker can produce a duplicate without a key. M1-23 pins the boundaries where an off-by-one would live -- M, M-1, one, and unanimity -- plus the case a consumer does not control: more unknown signers in a payload than the fixed buffer holds, where a panic would abort the transaction rather than refuse the price."
 
@@ -215,6 +217,7 @@ verified_by = [
   "test:a_stale_package_and_a_future_one_stay_distinguishable",
   "test:a_signers_stale_package_about_another_feed_does_not_make_this_one_stale",
   "test:a_signers_stale_package_about_this_feed_still_makes_it_stale",
+  "test:more_packages_for_this_feed_than_verification_will_pay_for_is_refused",
   "test:a_stale_package_carrying_a_value_this_feed_cannot_use_is_not_staleness_either",
   "test:a_clock_that_cannot_be_read_refuses_rather_than_guesses",
   "test:no_two_failure_modes_answer_with_the_same_variant",
@@ -232,7 +235,7 @@ verified_by = [
   "test:an_unusable_configuration_is_refused_before_a_payload_is_ever_seen",
   "test:signatures_that_recover_to_nobody_are_a_threshold_failure_not_a_signature_one",
 ]
-note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all ten `VerifyError` variants now -- nine payload failure modes plus `InvalidConfig` for a bad configuration. `AssetMismatch` (M1-16), `ValueOutOfRange` and `ScalingOutOfRange` (M1-17) and `StalePackage` (M1-15) now have producers. M1-15 adds two variants U6 does not name -- `FuturePackage`, because a future-dated package points at a clock rather than at a relayer, and `NoClock`, because verifying without one accepts a package of any age. `InvalidSignature` is the only variant with no producer, and has none by design -- an unrecoverable signature is skipped, not rejected (ADR 15), so a future single-package API is where it becomes reportable. M1-22 adds the contract-shaped reading of all of it: one module, one test per accept and reject mode, plus the assertion none of the per-mode tests can make alone -- that no two causes answer with the same variant, compared by discriminant so a collapse onto one variant cannot hide behind differing payloads. ADR 23 records the shape. Two variants have no producer rather than one: ADR 24 made a duplicate package a skip, so `ReoccurringSigner` joins `InvalidSignature` as a fault in one package that a payload-level API does not report. ADR 25 corrects a case where the enum named the wrong mode: a configured signer's out-of-window package about another feed no longer counts as present-but-blocked, so a threshold failure is no longer reported as staleness."
+note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all ten `VerifyError` variants now -- nine payload failure modes plus `InvalidConfig` for a bad configuration. `AssetMismatch` (M1-16), `ValueOutOfRange` and `ScalingOutOfRange` (M1-17) and `StalePackage` (M1-15) now have producers. M1-15 adds two variants U6 does not name -- `FuturePackage`, because a future-dated package points at a clock rather than at a relayer, and `NoClock`, because verifying without one accepts a package of any age. `InvalidSignature` is the only variant with no producer, and has none by design -- an unrecoverable signature is skipped, not rejected (ADR 15), so a future single-package API is where it becomes reportable. M1-22 adds the contract-shaped reading of all of it: one module, one test per accept and reject mode, plus the assertion none of the per-mode tests can make alone -- that no two causes answer with the same variant, compared by discriminant so a collapse onto one variant cannot hide behind differing payloads. ADR 23 records the shape. Two variants have no producer rather than one: ADR 24 made a duplicate package a skip, so `ReoccurringSigner` joins `InvalidSignature` as a fault in one package that a payload-level API does not report. ADR 25 corrects a case where the enum named the wrong mode: a configured signer's out-of-window package about another feed no longer counts as present-but-blocked, so a threshold failure is no longer reported as staleness. ADR 26 adds `TooManyPackages`, the one failure that was previously reported by the transaction running out of cycles -- which is not a failure a caller can act on, because it never gets to see one."
 
 [[row]]
 id = "U7"
@@ -285,9 +288,10 @@ tasks = ["M2-02", "M2-19", "M3-06"]
 implemented_in = ["m0/lez-probe"]
 verified_by = [
   "test:a_3_of_n_update_leaves_ample_budget_headroom",
+  "test:the_most_a_payload_can_cost_still_fits_in_one_transaction",
   "doc:m0/M0-report.pdf",
 ]
-note = "M0 measured a 3-of-N update at 1,906,737 cycles against LEZ's 32M per-transaction budget, 5.68%, and pinned it with a guardrail test. What is still open is the shipping path in one real transaction, per mode: M2-02 and M2-19 for push, M3-06 for pull."
+note = "M0 measured a 3-of-N update at 1,906,737 cycles against LEZ's 32M per-transaction budget, 5.68%, and pinned it with a guardrail test. That is the typical case; the ceiling is the other half, because the package count sits in the payload's envelope and a package costs 602,749 cycles to recover. Unbounded, 56 of them overran the budget and the transaction aborted instead of publishing. ADR 26 bounds it and `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts the bound holds, so this row is now a statement about every payload rather than about the captured one. What is still open is the shipping path in one real transaction, per mode: M2-02 and M2-19 for push, M3-06 for pull."
 
 [[row]]
 id = "P2"
@@ -400,7 +404,7 @@ verified_by = [
   "test:an_unknown_signer_is_skipped_and_the_payload_still_verifies",
   "test:unauthorised_is_reported_when_the_skipped_signers_would_have_made_quorum",
 ]
-note = "Both modes, one implementation: the membership check lives in `verifier-core`, so push and pull cannot diverge on who is authorised. The rule is count-and-ignore per ADR 15, not strict rejection: an unknown signer is skipped rather than failing the payload, and only named `UnauthorisedSigner` once the skipped signers would themselves have reached quorum -- a reader expecting strict rejection would otherwise read this row as unmet. ADR 24 extends the same rule to the last package class that failed a payload outright, a duplicate, because producing one needs no key and rejecting on it denied the feed to every consumer of that payload; F3 carries the evidence."
+note = "Both modes, one implementation: the membership check lives in `verifier-core`, so push and pull cannot diverge on who is authorised. The rule is count-and-ignore per ADR 15, not strict rejection: an unknown signer is skipped rather than failing the payload, and only named `UnauthorisedSigner` once the skipped signers would themselves have reached quorum -- a reader expecting strict rejection would otherwise read this row as unmet. ADR 24 extends the same rule to the last package class that failed a payload outright, a duplicate, because producing one needs no key and rejecting on it denied the feed to every consumer of that payload; F3 carries the evidence. ADR 26 bounds what that skip costs: recovering every copy of a package is what the rejection used to prevent, and unbounded it exhausted the transaction's cycle budget, so a package that says nothing about the requested feed is now skipped before it is hashed and there is a ceiling on how many are recovered. The ceiling does not restore count-and-ignore above itself, and cannot: whether a signature is anybody's is only knowable by paying for the recovery, so packages past the ceiling refuse the feed with `TooManyPackages` whether or not they were signed. What that buys is a denial at a fixed, measured cost that names itself, rather than one that exhausts the transaction. P1 carries the evidence for the bound."
 
 [[row]]
 id = "SEC2"

@@ -39,7 +39,7 @@ use crate::{
     backend::SignerAddress,
     decode::{DecodeError, Payload},
     error::{ConfigError, VerifyError},
-    feed::{verify_feed, AssetPair, FeedConfig, VerifiedFeed},
+    feed::{verify_feed, AssetPair, FeedConfig, VerifiedFeed, MAX_RECOVERIES},
     test_support::{address_of, signing_key, PayloadBuilder},
     time::{TimeError, TimeSource},
     value::{Value, MAX_DECIMALS},
@@ -393,6 +393,28 @@ fn one_signer_supplying_the_feed_twice_counts_once_and_is_short_of_the_threshold
 }
 
 #[test]
+fn more_packages_for_this_feed_than_verification_will_pay_for_is_refused() {
+    // Not named by U6. The package count sits in the envelope, outside every
+    // signature, so without a ceiling the payload decides how much of the
+    // transaction's cycle budget verification spends -- and past about 56
+    // packages it spends all of it and the transaction aborts, which is not a
+    // failure a caller can act on because it never gets to see one (ADR 26).
+    let keys = keys(3);
+    let set = addresses(&keys);
+    let mut builder = PayloadBuilder::default();
+    for i in 0..=MAX_RECOVERIES {
+        builder = builder.signed_package(&keys[i % 3], &[(FEED, HUNDRED)], NOW_MS);
+    }
+
+    assert_eq!(
+        verify(&builder.build(), &config(&set, 3)),
+        Err(VerifyError::TooManyPackages {
+            max: MAX_RECOVERIES
+        })
+    );
+}
+
+#[test]
 fn a_price_the_accounts_scale_cannot_hold_is_reported_not_wrapped() {
     // Not named by U6, and not reachable from a real feed. The alternative to
     // reporting it is writing a wrapped number that looks like a price.
@@ -543,6 +565,13 @@ fn no_two_failure_modes_answer_with_the_same_variant() {
             "unusable values",
             verify(&agreed(&keys, &[0, 0, 0, 0], NOW_MS), &config(&set, 3)),
         ),
+        ("too many packages", {
+            let mut builder = PayloadBuilder::default();
+            for i in 0..=MAX_RECOVERIES {
+                builder = builder.signed_package(&keys[i % 3], &[(FEED, HUNDRED)], NOW_MS);
+            }
+            verify(&builder.build(), &config(&set, 3))
+        }),
         (
             "past the account scale",
             verify(&agreed(&keys, &[0x7F; 12], NOW_MS), &config(&set, 3)),

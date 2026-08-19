@@ -47,6 +47,14 @@ pub enum VerifyError {
     /// is what enforces it. A future single-package API is where this becomes
     /// reportable.
     ReoccurringSigner,
+    /// The payload carries more packages for this feed than verification will
+    /// pay to recover.
+    ///
+    /// Refused rather than truncated. Stopping at the ceiling and answering from
+    /// what had been read would let whoever assembled the payload choose which
+    /// of a signer's packages counts, by placing the ones it wants inside the
+    /// ceiling and the rest outside it.
+    TooManyPackages { max: usize },
     /// Enough authorised signers reported for this feed that the threshold
     /// would have been met, but their packages were older than the feed's
     /// `maxAge`.

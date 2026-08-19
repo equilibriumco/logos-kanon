@@ -1,6 +1,7 @@
 # 24. A duplicate package is skipped, and the freshest one holds the slot
 
-- **Status**: accepted, superseding the third paragraph of ADR 15's decision
+- **Status**: accepted, superseding the third paragraph of ADR 15's decision; the cost of
+  skipping is bounded by [ADR 26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md)
 - **Milestone**: M1 (`M1-13`)
 - **Requirements**: F3, SEC1
 - **Artefacts**: `verifier-core/src/feed.rs`, `verifier-core/src/error.rs`, `COSTS.md`

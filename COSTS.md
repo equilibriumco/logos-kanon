@@ -20,21 +20,21 @@ data point each; the 1- and 3-signer columns are the same payload cut short.
 
 | component | 1 signer | 3 signers | 5 signers |
 | --- | ---: | ---: | ---: |
-| decode | 551 | 1,437 | 2,323 |
+| decode | 549 | 1,437 | 2,325 |
 | keccak256 | 17,475 | 52,425 | 87,375 |
 | recovery | 585,274 | 1,755,574 | 2,922,880 |
-| signer-set membership | 164 | 543 | 990 |
-| the rest of `verify_feed` | 18,107 | 21,182 | 24,953 |
-| **whole update** | **621,571** | **1,831,161** | **3,038,521** |
-| _harness floor, subtracted out_ | 25,328 | 62,296 | 99,496 |
+| signer-set membership | 165 | 546 | 995 |
+| the rest of `verify_feed` | 18,391 | 22,030 | 26,365 |
+| **whole update** | **621,854** | **1,832,012** | **3,039,940** |
+| _harness floor, subtracted out_ | 25,327 | 62,295 | 99,495 |
 
 At three signers, which is RFP-020's default threshold:
 
 | component | share |
 | --- | ---: |
-| recovery | 95.87% |
+| recovery | 95.83% |
 | keccak256 | 2.86% |
-| the rest of `verify_feed` | 1.16% |
+| the rest of `verify_feed` | 1.20% |
 | decode | 0.08% |
 | signer-set membership | 0.03% |
 
@@ -81,8 +81,8 @@ account rather than from the guest input stream pays something different for it.
 
 ## What the numbers say
 
-**Recovery is the whole cost.** At three signers it is 95.87% of an update, and
-the four other components together are 4.13%. No arrangement of the remaining
+**Recovery is the whole cost.** At three signers it is 95.83% of an update, and
+the four other components together are 4.17%. No arrangement of the remaining
 code matters next to it. If LEZ ever offers a secp256k1 precompile, that is the
 one lever worth pulling, and `VerifierBackend` exists so that pulling it is one
 new implementor and one type parameter
@@ -116,6 +116,32 @@ keccak256 and most of the remainder row at one signer. It is a
 runs once per update rather than once per package, which is why that row barely
 grows with the signer count. At 0.6% of a three-signer update there is nothing to
 do about it.
+
+## What a payload can spend
+
+The rows above are one update's cost. They are not the most an update can cost,
+because the number of packages is the payload's to choose: the count sits in the
+envelope, outside every signature, and a package can be copied without a key.
+
+At 602,749 cycles for a hash and a recovery, 56 packages exhaust LEZ's
+33,554,432-cycle public budget. Measured rather than extrapolated: an 8 KB
+payload of repeated packages came to 34,746,599 cycles, and a transaction that
+reaches the limit aborts instead of publishing.
+
+Two things bound it, both in `verify_feed`:
+
+- **A package carrying no data point for the requested feed is skipped before it
+  is hashed.** RedStone payloads are multi-feed by design, so most of what
+  arrives belongs to somebody else. Before this, verifying one feed of a
+  five-feed payload cost 15,477,759 cycles — 46% of the budget for 25 packages,
+  20 of which could not have changed the answer.
+- **`MAX_RECOVERIES` packages for the requested feed, then the payload is
+  refused.** At the ceiling an update costs about 19.9M cycles, 59% of the
+  budget, and past it the work stops growing.
+
+`the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts both, and
+`adr/0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md`
+records why the ceiling refuses rather than truncates.
 
 ## Agreement with the M0 baseline
 
