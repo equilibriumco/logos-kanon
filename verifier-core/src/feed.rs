@@ -6,7 +6,7 @@
 
 use crate::{
     backend::{SignerAddress, VerifierBackend},
-    decode::{Payload, FEED_ID_BYTES},
+    decode::{DataPackage, Payload, FEED_ID_BYTES},
     error::{ConfigError, VerifyError},
     time::TimeSource,
     value::{median, Value, MAX_DECIMALS},
@@ -253,6 +253,21 @@ fn usable(value: &Value) -> bool {
     !value.is_zero() && !value.is_negative()
 }
 
+/// Whether this package would have counted toward the threshold, on everything
+/// except the one thing being tested.
+///
+/// Both "present but blocked" tallies need it. A package that carries nothing
+/// this feed can use could not have reached the threshold at any age and under
+/// any signer set, so neither its signer's absence from the configured set nor
+/// its timestamp is the reason a slot stayed empty. Saying otherwise sends an
+/// operator to fix something that was never in the way.
+fn carries_usable_value(package: &DataPackage<'_>, config: &FeedConfig<'_>) -> bool {
+    package.data_points().any(|point| {
+        point.feed_id == config.feed_id()
+            && Value::from_be_slice(point.value).is_some_and(|value| usable(&value))
+    })
+}
+
 /// Verifies one feed out of a payload.
 ///
 /// Walks the payload once, recovering one signer per package, and counts the
@@ -341,10 +356,7 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
             // either, so it is not a signer set the caller should be told to fix.
             let contributes = freshness(package.timestamp_ms, now_ms, config.max_age_ms())
                 == Freshness::Current
-                && package.data_points().any(|point| {
-                    point.feed_id == config.feed_id()
-                        && Value::from_be_slice(point.value).is_some_and(|value| usable(&value))
-                });
+                && carries_usable_value(&package, config);
             if contributes
                 && unknown_count < MAX_SIGNERS
                 && !unknown
@@ -373,16 +385,28 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
         // turn a threshold failure into a staleness one. A fresh payload has
         // nothing to skip, so the saving only ever arrived in the two cases
         // where naming the right cause matters most.
+        //
+        // Gated on the package carrying something this feed could have used, the
+        // same test the unknown-signer branch above applies. Signers subscribe
+        // to different feeds on `redstone-primary-prod` (ADR 19), so a
+        // configured signer's stale package about another feed is an ordinary
+        // production shape -- and without the gate it turns an honest
+        // `ThresholdNotMet` into `StalePackage`, naming a failure the payload
+        // never had.
         match freshness(package.timestamp_ms, now_ms, config.max_age_ms()) {
             Freshness::Stale => {
-                if let Some(flag) = stale.get_mut(index) {
-                    *flag = true;
+                if carries_usable_value(&package, config) {
+                    if let Some(flag) = stale.get_mut(index) {
+                        *flag = true;
+                    }
                 }
                 return Ok(());
             }
             Freshness::Future => {
-                if let Some(flag) = future.get_mut(index) {
-                    *flag = true;
+                if carries_usable_value(&package, config) {
+                    if let Some(flag) = future.get_mut(index) {
+                        *flag = true;
+                    }
                 }
                 return Ok(());
             }
@@ -1631,6 +1655,99 @@ mod tests {
     }
 
     const ONE_MINUTE: u64 = 60 * 1000;
+
+    #[test]
+    fn a_signers_stale_package_about_another_feed_does_not_make_this_one_stale() {
+        // Signers on `redstone-primary-prod` subscribe to different feed
+        // subsets (ADR 19), so a configured signer whose package is stale and
+        // about ETH is ordinary. It reported nothing for BTC, so BTC's slot
+        // stayed empty for want of a signer, not for want of a fresh one --
+        // and `StalePackage` would send an operator to look at a relayer that
+        // is doing its job.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let now = NOW_MS;
+
+        for (label, at) in [
+            ("stale", now - 10 * ONE_MINUTE),
+            ("future dated", now + 10 * ONE_MINUTE),
+        ] {
+            let bytes = PayloadBuilder::default()
+                .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 100])], now)
+                .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 100])], now)
+                .signed_package(&keys[2], &[(b"ETH", &[0, 0, 0, 100])], at)
+                .build();
+
+            let payload = Payload::decode(&bytes).expect("well formed");
+            let config = timed_config(&set, 3, ONE_MINUTE);
+
+            assert_eq!(
+                verify_at(&payload, &config, now),
+                Err(VerifyError::ThresholdNotMet {
+                    met: 2,
+                    required: 3
+                }),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_signers_stale_package_about_this_feed_still_makes_it_stale() {
+        // The other half of the gate, and the one that has to keep working: the
+        // signer did report this feed with a value the threshold could have
+        // used, so age is the only thing in the way and age is what resolves on
+        // its own. Paired with the test above so a gate that suppressed too
+        // much would fail here.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let now = NOW_MS;
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 100])], now)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 100])], now)
+            .signed_package(
+                &keys[2],
+                &[(b"BTC", &[0, 0, 0, 100])],
+                now - 10 * ONE_MINUTE,
+            )
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        assert_eq!(
+            verify_at(&payload, &config, now),
+            Err(VerifyError::StalePackage),
+            "two of three reported and the third is only late"
+        );
+    }
+
+    #[test]
+    fn a_stale_package_carrying_a_value_this_feed_cannot_use_is_not_staleness_either() {
+        // The same gate, reached the other way: the signer did report BTC, but
+        // a zero is RedStone's "no report". Fixing the age would not have
+        // produced a price and neither would fixing the value, so naming
+        // either one would point at a repair that does not work.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let now = NOW_MS;
+        let bytes = PayloadBuilder::default()
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 100])], now)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 100])], now)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], now - 10 * ONE_MINUTE)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        assert_eq!(
+            verify_at(&payload, &config, now),
+            Err(VerifyError::ThresholdNotMet {
+                met: 2,
+                required: 3
+            })
+        );
+    }
 
     #[test]
     fn a_package_inside_the_window_verifies_and_one_past_it_does_not() {

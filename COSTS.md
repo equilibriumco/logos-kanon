@@ -24,17 +24,17 @@ data point each; the 1- and 3-signer columns are the same payload cut short.
 | keccak256 | 17,475 | 52,425 | 87,375 |
 | recovery | 585,274 | 1,755,574 | 2,922,880 |
 | signer-set membership | 164 | 543 | 990 |
-| the rest of `verify_feed` | 18,062 | 20,962 | 24,550 |
-| **whole update** | **621,526** | **1,830,941** | **3,038,118** |
-| _harness floor, subtracted out_ | 25,328 | 62,298 | 99,498 |
+| the rest of `verify_feed` | 18,107 | 21,182 | 24,953 |
+| **whole update** | **621,571** | **1,831,161** | **3,038,521** |
+| _harness floor, subtracted out_ | 25,328 | 62,296 | 99,496 |
 
 At three signers, which is RFP-020's default threshold:
 
 | component | share |
 | --- | ---: |
-| recovery | 95.88% |
+| recovery | 95.87% |
 | keccak256 | 2.86% |
-| the rest of `verify_feed` | 1.14% |
+| the rest of `verify_feed` | 1.16% |
 | decode | 0.08% |
 | signer-set membership | 0.03% |
 
@@ -81,8 +81,8 @@ account rather than from the guest input stream pays something different for it.
 
 ## What the numbers say
 
-**Recovery is the whole cost.** At three signers it is 95.88% of an update, and
-the four other components together are 4.12%. No arrangement of the remaining
+**Recovery is the whole cost.** At three signers it is 95.87% of an update, and
+the four other components together are 4.13%. No arrangement of the remaining
 code matters next to it. If LEZ ever offers a secp256k1 precompile, that is the
 one lever worth pulling, and `VerifierBackend` exists so that pulling it is one
 new implementor and one type parameter
@@ -109,7 +109,7 @@ That scan is quadratic in the signer count — every package scans the whole set
 which the numbers show and which is still not worth acting on: 995 cycles at five
 signers.
 
-**Converting to the account's scale costs 11,270 cycles**, about 64% of one
+**Converting to the account's scale costs 11,293 cycles**, about 64% of one
 keccak256 and most of the remainder row at one signer. It is a
 16-byte long division with 128-bit intermediates
 (`adr/0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md`), and it

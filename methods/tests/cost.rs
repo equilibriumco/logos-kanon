@@ -106,22 +106,22 @@ mod expected {
     /// It is the harness's cost, not the verifier's: it is subtracted out of
     /// every component, and a program reading a payload from an account rather
     /// than from the guest's input stream would pay something different.
-    pub const FLOOR: [(usize, u64); 3] = [(1, 25_328), (3, 62_298), (5, 99_498)];
+    pub const FLOOR: [(usize, u64); 3] = [(1, 25_328), (3, 62_296), (5, 99_496)];
 
     /// Per signer count: decode, keccak256, recovery, membership, then
     /// everything else `verify_feed` does.
     pub const COMPONENTS: [(usize, [u64; 5]); 3] = [
-        (1, [551, 17_475, 585_274, 164, 18_062]),
-        (3, [1_437, 52_425, 1_755_574, 543, 20_962]),
-        (5, [2_323, 87_375, 2_922_880, 990, 24_550]),
+        (1, [551, 17_475, 585_274, 164, 18_107]),
+        (3, [1_437, 52_425, 1_755_574, 543, 21_182]),
+        (5, [2_323, 87_375, 2_922_880, 990, 24_953]),
     ];
 
     /// The whole update, floor subtracted.
-    pub const TOTAL: [(usize, u64); 3] = [(1, 621_526), (3, 1_830_941), (5, 3_038_118)];
+    pub const TOTAL: [(usize, u64); 3] = [(1, 621_571), (3, 1_831_161), (5, 3_038_521)];
 
     /// One Q64.64 conversion: the largest single item in the remainder, and the
     /// only one worth naming separately.
-    pub const SCALING: u64 = 11_270;
+    pub const SCALING: u64 = 11_293;
 
     /// What the same rows would read if the wrong `[patch.crates-io]` were in
     /// force, from `m0`'s software and accelerated measurements: one software

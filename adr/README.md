@@ -38,6 +38,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [22](0022-the-price-account-write-and-its-three-undecided-fields.md) | The price-account write, and the three fields nothing had decided | accepted |
 | [23](0023-the-accept-and-reject-suite-is-shaped-by-the-contract.md) | The accept and reject suite is shaped by the contract, and asserts that the taxonomy discriminates | accepted |
 | [24](0024-a-duplicate-package-is-skipped-and-the-freshest-holds-the-slot.md) | A duplicate package is skipped, and the freshest one holds the slot | accepted |
+| [25](0025-present-but-blocked-requires-a-package-that-could-have-counted.md) | "Present but blocked" requires a package that could have counted | accepted |
 
 ## How they fit together
 
@@ -91,6 +92,14 @@ produce for free must not be able to fail the payload for everyone -- turned out
 apply to the one axis it had decided the other way, because a duplicate package needs no
 key: copy one already in the payload, or replay an older one still inside `maxAge`. The
 rule it replaces was doing no work the per-signer slot was not already doing.
+
+ADR 25 is a correction of the same kind one layer up. ADR 18 decided that a package outside the
+window costs its signer, and ADR 15 decided when a signer set is named as the fault.
+Each was tested where it was introduced, and between them the two age tallies ended up
+holding nothing constant: a configured signer's stale package about another feed counted
+as present-but-blocked, so a threshold failure reported as staleness. Each tally now
+varies exactly the thing it names, which is the question the unknown-signer tally had
+been asking all along.
 
 ## Open questions carried by these decisions
 
