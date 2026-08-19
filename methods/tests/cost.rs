@@ -59,11 +59,16 @@
 
 use kanon_methods::VERIFY_COST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
-use verifier_core::{backend::SignerAddress, decode::REDSTONE_MARKER};
+use verifier_core::decode::{EMPTY_ENVELOPE_BYTES, REDSTONE_MARKER};
 
 /// The M1-21 capture. Real packages, real signatures, one data point each, so a
-/// package's signable span is the 77 bytes `m0` measured keccak256 over.
-const VECTORS: &str = include_str!("../../verifier-core/tests/vectors/redstone-primary-prod.json");
+/// package's signable span is the 77 bytes `m0` measured keccak256 over. Read
+/// through the same module `verifier-core`'s conformance suite reads it with,
+/// so the two cannot disagree about the file's shape.
+#[path = "../../verifier-core/tests/support/vectors.rs"]
+mod vectors;
+
+use vectors::Vector;
 
 /// RedStone's scale for `redstone-primary-prod`.
 const DECIMALS: u8 = 8;
@@ -76,10 +81,6 @@ const FEED: &str = "BTC";
 /// Signer counts. 3 is RFP-020's default threshold and the row `m0`'s 3-of-N
 /// figure compares against; 1 is the unit cost; 5 is what the capture holds.
 const SIGNER_COUNTS: [usize; 3] = [1, 3, 5];
-
-/// Bytes after the last package: count, unsigned metadata size, marker. The
-/// captured payloads carry no unsigned metadata.
-const ENVELOPE_BYTES: usize = 2 + 3 + REDSTONE_MARKER.len();
 
 mod stage {
     pub const FLOOR: u8 = 0;
@@ -130,41 +131,8 @@ mod expected {
     pub const ACCELERATED_KECCAK: u64 = 2_527;
 }
 
-struct Vector {
-    feed_id: String,
-    timestamp_ms: u64,
-    signers: Vec<SignerAddress>,
-    payload: Vec<u8>,
-}
-
 fn vector() -> Vector {
-    named(FEED)
-}
-
-fn named(feed: &str) -> Vector {
-    let parsed: serde_json::Value = serde_json::from_str(VECTORS).expect("vectors parse");
-    let found = parsed["vectors"]
-        .as_array()
-        .expect("a vectors array")
-        .iter()
-        .find(|v| v["feed_id"].as_str() == Some(feed))
-        .unwrap_or_else(|| panic!("{feed} is not in the capture"));
-
-    Vector {
-        feed_id: feed.to_owned(),
-        timestamp_ms: found["timestamp_ms"].as_u64().expect("timestamp"),
-        signers: found["signers"]
-            .as_array()
-            .expect("signers")
-            .iter()
-            .map(|s| {
-                let bytes = hex::decode(s.as_str().expect("signer").trim_start_matches("0x"))
-                    .expect("signer hex");
-                SignerAddress(bytes.try_into().expect("twenty bytes"))
-            })
-            .collect(),
-        payload: hex::decode(found["payload_hex"].as_str().expect("payload")).expect("payload hex"),
-    }
+    vectors::named(FEED)
 }
 
 /// The captured payload cut down to its first `n` packages.
@@ -174,7 +142,7 @@ fn named(feed: &str) -> Vector {
 /// once the count is re-emitted. Signatures are untouched, so the shortened
 /// payload still recovers to `signers[..n]`.
 fn payload_with(vector: &Vector, n: usize) -> Vec<u8> {
-    let body_len = vector.payload.len() - ENVELOPE_BYTES;
+    let body_len = vector.payload.len() - EMPTY_ENVELOPE_BYTES;
     let count = vector.signers.len();
     assert_eq!(body_len % count, 0, "packages are not a fixed stride apart");
     let stride = body_len / count;
@@ -344,7 +312,7 @@ fn the_table_is_not_particular_to_one_feed() {
     let btc = components(&vector(), 5);
 
     for feed in ["ETH", "SOL", "XMR", "ZEC"] {
-        let other = components(&named(feed), 5);
+        let other = components(&vectors::named(feed), 5);
         assert_eq!(
             [other[0], other[1], other[3]],
             [btc[0], btc[1], btc[3]],

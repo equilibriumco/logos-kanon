@@ -38,7 +38,7 @@ use proptest::prelude::*;
 
 use crate::{
     backend::{InProgramBackend, Signature, SignerAddress},
-    decode::{Payload, FEED_ID_BYTES, REDSTONE_MARKER},
+    decode::{Payload, EMPTY_ENVELOPE_BYTES, FEED_ID_BYTES},
     error::VerifyError,
     feed::{verify_feed, AssetPair, FeedConfig, VerifiedFeed, MAX_SIGNERS},
     test_support::{address_of, signing_key, PayloadBuilder},
@@ -387,9 +387,7 @@ proptest! {
         threshold in 1u8..=4,
     ) {
         let (addresses, bytes) = signed_feed(signers, signers, 42_000);
-        // Package count, an empty metadata section, its length, and the marker.
-        let envelope = 2 + 3 + REDSTONE_MARKER.len();
-        let (body, tail) = bytes.split_at(bytes.len() - envelope);
+        let (body, tail) = bytes.split_at(bytes.len() - EMPTY_ENVELOPE_BYTES);
 
         let mut body = body.to_vec();
         for (index, byte) in mutations {

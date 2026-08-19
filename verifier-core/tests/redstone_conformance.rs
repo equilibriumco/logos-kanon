@@ -32,7 +32,10 @@ use verifier_core::{
     value::Value,
 };
 
-const VECTORS: &str = include_str!("vectors/redstone-primary-prod.json");
+#[path = "support/vectors.rs"]
+mod vectors;
+
+use vectors::all as vectors;
 
 /// RedStone's own scale for `redstone-primary-prod`, confirmed by the capture:
 /// no other exponent reproduces a signature they published.
@@ -44,47 +47,6 @@ impl TimeSource for FixedClock {
     fn now_ms(&self) -> Result<u64, TimeError> {
         Ok(self.0)
     }
-}
-
-struct Vector {
-    feed_id: String,
-    timestamp_ms: u64,
-    signers: Vec<SignerAddress>,
-    values: Vec<Value>,
-    payload: Vec<u8>,
-}
-
-fn vectors() -> Vec<Vector> {
-    let parsed: serde_json::Value = serde_json::from_str(VECTORS).expect("vectors parse");
-    parsed["vectors"]
-        .as_array()
-        .expect("a vectors array")
-        .iter()
-        .map(|v| Vector {
-            feed_id: v["feed_id"].as_str().expect("feed id").to_owned(),
-            timestamp_ms: v["timestamp_ms"].as_u64().expect("timestamp"),
-            signers: v["signers"]
-                .as_array()
-                .expect("signers")
-                .iter()
-                .map(|s| {
-                    let bytes = hex::decode(s.as_str().expect("signer").trim_start_matches("0x"))
-                        .expect("signer hex");
-                    SignerAddress(bytes.try_into().expect("twenty bytes"))
-                })
-                .collect(),
-            values: v["values"]
-                .as_array()
-                .expect("values")
-                .iter()
-                .map(|value| {
-                    let digits: u128 = value.as_str().expect("value").parse().expect("an integer");
-                    Value::from_be_slice(&digits.to_be_bytes()).expect("sixteen bytes fit")
-                })
-                .collect(),
-            payload: hex::decode(v["payload_hex"].as_str().expect("payload")).expect("payload hex"),
-        })
-        .collect()
 }
 
 fn pair() -> AssetPair {

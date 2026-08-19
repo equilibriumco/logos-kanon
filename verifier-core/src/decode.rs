@@ -58,6 +58,14 @@ const VALUE_SIZE_BYTES: usize = 4;
 const TIMESTAMP_BYTES: usize = 6;
 const SIGNATURE_BYTES: usize = Signature::LEN;
 
+/// Bytes after the last package, when there is no unsigned metadata: the
+/// package count, the metadata section's own length, and the marker.
+///
+/// Public because assembling or trimming a payload needs it, and every place
+/// that restated the sum was a place it could drift from the decoder.
+pub const EMPTY_ENVELOPE_BYTES: usize =
+    PACKAGE_COUNT_BYTES + UNSIGNED_METADATA_SIZE_BYTES + MARKER_BYTES;
+
 /// Why a payload could not be decoded.
 ///
 /// Every variant means "this payload is not well formed". None of them means
@@ -587,8 +595,7 @@ mod tests {
             .build();
 
         // The package count sits just before the metadata size and marker.
-        let count_at =
-            bytes.len() - MARKER_BYTES - UNSIGNED_METADATA_SIZE_BYTES - PACKAGE_COUNT_BYTES;
+        let count_at = bytes.len() - EMPTY_ENVELOPE_BYTES;
         bytes[count_at] = 0xFF;
         bytes[count_at + 1] = 0xFF;
 
@@ -604,8 +611,7 @@ mod tests {
         let mut bytes = PayloadBuilder::default()
             .opaque_package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
             .build();
-        let count_at =
-            bytes.len() - MARKER_BYTES - UNSIGNED_METADATA_SIZE_BYTES - PACKAGE_COUNT_BYTES;
+        let count_at = bytes.len() - EMPTY_ENVELOPE_BYTES;
         bytes[count_at] = 0;
         bytes[count_at + 1] = 0;
 
