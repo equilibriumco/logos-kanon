@@ -15,6 +15,12 @@ the last digit was rounded up or truncated. So each candidate is tried and the
 one whose reconstructed package recovers to the signer address RedStone
 published is the true one.
 
+The numbers are parsed as `Decimal` rather than as `float`, so the only
+uncertainty is the gateway's rendering. Through float64 the scaling adds an
+error of its own, which can put the product on the wrong side of the true
+integer and leave every candidate wrong -- a package that then drops without
+comment.
+
 That search is the test's strength rather than a workaround. The signature is
 RedStone's, over RedStone's own serialisation, so a candidate can only recover
 correctly if the byte layout used to rebuild the package matches theirs exactly
@@ -36,6 +42,7 @@ import json
 import sys
 import urllib.request
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from eth_hash.auto import keccak
 from eth_keys import keys
@@ -85,9 +92,16 @@ def resolve(package):
     timestamp_ms = package["timestampMilliseconds"]
     expected = package["signerAddress"].lower()
 
-    scaled = [(p["dataFeedId"], p["value"] * 10**DECIMALS) for p in package["dataPoints"]]
-    for pick in (round, lambda x: int(x), lambda x: int(x) + 1):
-        points = [(feed, pick(value)) for feed, value in scaled]
+    # Exact decimal arithmetic, on the digits the gateway actually sent. Scaling
+    # a float64 introduces an error of its own on top of the rendering's, which
+    # can land the product on the wrong side of the true integer -- and then
+    # every candidate offset from it is wrong too, the package silently drops,
+    # and a feed arrives with four signers where the tests expect five.
+    scaled = [(p["dataFeedId"], int(p["value"] * 10**DECIMALS)) for p in package["dataPoints"]]
+    # Both directions. The gateway's rendering may have rounded up or down, so
+    # the signed integer is within one either way.
+    for offset in (0, 1, -1):
+        points = [(feed, value + offset) for feed, value in scaled]
         if any(v <= 0 or v.bit_length() > VALUE_SIZE * 8 for _, v in points):
             continue
         try:
@@ -115,7 +129,7 @@ def payload(packages):
 def main():
     url = f"{GATEWAY}/data-packages/latest/{DATA_SERVICE}"
     with urllib.request.urlopen(url, timeout=30) as response:
-        served = json.load(response)
+        served = json.load(response, parse_float=Decimal)
 
     vectors = []
     skipped = False
@@ -123,13 +137,19 @@ def main():
         if feed not in served:
             print(f"{feed}: not served by {DATA_SERVICE}", file=sys.stderr)
             continue
+        # Every served package or none. A vector short one signer is a valid
+        # payload and passes the conformance suite, then panics the cost
+        # harness, which slices `signers[..5]`. Whatever made a package
+        # unreconstructible is worth knowing about at the capture rather than
+        # three tests later.
         resolved = [r for r in (resolve(p) for p in served[feed]) if r]
         if len(resolved) != len(served[feed]):
             print(
-                f"{feed}: {len(resolved)}/{len(served[feed])} packages reconstructed",
+                f"{feed}: {len(resolved)}/{len(served[feed])} packages "
+                "reconstructed -- not captured",
                 file=sys.stderr,
             )
-        if not resolved:
+            skipped = True
             continue
         # Each signer timestamps its own package from its own clock, so a
         # capture taken while a round is landing can hold packages milliseconds
