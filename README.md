@@ -116,7 +116,7 @@ every push.
 |---|---|
 | `lint` | `cargo fmt` and `cargo clippy -D warnings` over the whole workspace |
 | `build-test` | the product crates build and their tests pass, `kanon-methods` excepted: its tests need real guest ELFs, so `guardrails.yml` runs them |
-| `no-std` | `verifier-core` and `pull-lib` build for `riscv32im-unknown-none-elf` |
+| `no-std` | `verifier-core`, `pull-lib` and `kanon-clock` build for `riscv32im-unknown-none-elf` |
 | `guest` | product code cross-compiles to a real guest ELF with the pinned rzup toolchain |
 | `licenses` | `cargo deny`, on the product workspace, `m0/`, and each of the six guest workspaces |
 | `traceability` | every requirement has a row, and every row's evidence exists |
