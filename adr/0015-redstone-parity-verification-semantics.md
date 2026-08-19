@@ -1,6 +1,6 @@
 # 15. Verification semantics follow RedStone's Rust SDK, with two divergences
 
-- **Status**: accepted
+- **Status**: accepted; the duplicate-package rule is superseded by [ADR 24](0024-a-duplicate-package-is-skipped-and-the-freshest-holds-the-slot.md)
 - **Milestone**: M1 (`M1-13`, `M1-18`)
 - **Requirements**: F3, U6, SEC1
 - **Artefacts**: `verifier-core/src/feed.rs`, `verifier-core/src/error.rs`, `verifier-core/src/value.rs`

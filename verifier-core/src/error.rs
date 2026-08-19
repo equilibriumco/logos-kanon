@@ -3,9 +3,11 @@
 //! Every failure mode gets its own variant, because a caller that cannot tell
 //! them apart cannot act on any of them. A value out of scale is separate from a
 //! value that is zero or negative, since they point at different faults upstream.
-//! `ReoccurringSigner` is separate again: the payload is well formed and its
-//! signer is authorised, so neither `Malformed` nor `UnauthorisedSigner`
-//! describes it.
+//! Two variants have no producer, and for the same reason: `InvalidSignature`
+//! and `ReoccurringSigner` both describe one package rather than the payload,
+//! and failing a whole payload over one package hands an attacker a denial of
+//! service that costs nothing to mount. Both are kept for the single-package
+//! API where a caller names one package and expects it to verify.
 //!
 //! [`DecodeError`] and [`BackendError`] are wrapped rather than flattened.
 //! `decode` exists to keep "not well formed" and "not authorised" apart, and
@@ -37,8 +39,13 @@ pub enum VerifyError {
     ThresholdNotMet { met: u8, required: u8 },
     /// One signer supplied the requested feed twice.
     ///
-    /// Rejected rather than counted once, because a signer that can occupy two
-    /// slots reaches any threshold alone.
+    /// Nothing constructs this today: the second package is skipped, because a
+    /// duplicate needs no key to produce -- copying a package already in the
+    /// payload, or replaying an older one still inside `maxAge`, would
+    /// otherwise deny the feed to everyone (ADR 24). One signer still counts
+    /// once, which is what the anti-inflation rule needs; the per-signer slot
+    /// is what enforces it. A future single-package API is where this becomes
+    /// reportable.
     ReoccurringSigner,
     /// Enough authorised signers reported for this feed that the threshold
     /// would have been met, but their packages were older than the feed's

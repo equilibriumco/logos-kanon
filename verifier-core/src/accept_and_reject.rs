@@ -168,6 +168,32 @@ fn a_signer_that_sent_an_unusable_value_does_not_deny_the_feed_to_the_rest() {
 }
 
 #[test]
+fn a_package_duplicated_by_anyone_does_not_deny_the_feed_to_the_rest() {
+    // Appending a package needs no key: copy one already in the payload, or
+    // replay an older one still inside `maxAge`. Both are skipped, so neither
+    // is a way to deny a verified price to every consumer of that payload
+    // (ADR 24).
+    let keys = keys(3);
+    let set = addresses(&keys);
+    let bytes = PayloadBuilder::default()
+        .signed_package(&keys[0], &[(FEED, &[0, 0, 0, 10])], NOW_MS)
+        .signed_package(&keys[1], &[(FEED, &[0, 0, 0, 20])], NOW_MS)
+        .signed_package(&keys[2], &[(FEED, &[0, 0, 0, 30])], NOW_MS)
+        // A byte-for-byte copy of the first, and a replay of the second from a
+        // round still inside the window. Values chosen so that admitting
+        // either would move the median.
+        .signed_package(&keys[0], &[(FEED, &[0, 0, 0, 10])], NOW_MS)
+        .signed_package(&keys[1], &[(FEED, &[0, 0, 0, 200])], NOW_MS - MAX_AGE_MS)
+        .build();
+
+    let verified = verify(&bytes, &config(&set, 3)).expect("verifies");
+
+    assert_eq!(verified.signers, 3, "neither appended package fills a slot");
+    assert_eq!(verified.value, Value::from_be_slice(&[20]).expect("fits"));
+    assert_eq!(verified.timestamp_ms, NOW_MS);
+}
+
+#[test]
 fn a_stranger_in_the_payload_is_ignored_when_the_configured_signers_suffice() {
     // The reason unknown signers are skipped rather than fatal: one published
     // payload serves consumers whose signer sets differ, and anyone able to
@@ -346,9 +372,11 @@ fn prices_nobody_can_use_are_reported_once_enough_of_them_would_have_counted() {
 }
 
 #[test]
-fn one_signer_supplying_the_feed_twice_is_refused() {
+fn one_signer_supplying_the_feed_twice_counts_once_and_is_short_of_the_threshold() {
     // Not named by U6. A signer that can occupy two slots can reach a threshold
-    // alone, which is the one thing M-of-N is counting on being impossible.
+    // alone, which is the one thing M-of-N is counting on being impossible. The
+    // second package is skipped rather than fatal (ADR 24), so what a caller
+    // sees is the threshold failure it is.
     let keys = keys(3);
     let set = addresses(&keys);
     let bytes = PayloadBuilder::default()
@@ -357,7 +385,10 @@ fn one_signer_supplying_the_feed_twice_is_refused() {
 
     assert_eq!(
         verify(&bytes, &config(&set, 3)),
-        Err(VerifyError::ReoccurringSigner)
+        Err(VerifyError::ThresholdNotMet {
+            met: 1,
+            required: 3
+        })
     );
 }
 
@@ -511,15 +542,6 @@ fn no_two_failure_modes_answer_with_the_same_variant() {
         (
             "unusable values",
             verify(&agreed(&keys, &[0, 0, 0, 0], NOW_MS), &config(&set, 3)),
-        ),
-        (
-            "one signer twice",
-            verify(
-                &PayloadBuilder::default()
-                    .signed_package(&keys[0], &[(FEED, HUNDRED), (FEED, HUNDRED)], NOW_MS)
-                    .build(),
-                &config(&set, 3),
-            ),
         ),
         (
             "past the account scale",

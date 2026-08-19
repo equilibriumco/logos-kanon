@@ -63,11 +63,15 @@ verified_by = [
   "test:three_of_three_signers_reporting_the_same_price_verifies",
   "test:the_threshold_boundary_accepts_at_m_and_rejects_at_m_minus_one",
   "test:one_signer_cannot_reach_the_threshold_alone_by_repeating_the_feed",
+  "test:a_single_package_carrying_the_requested_feed_twice_still_counts_once",
+  "test:a_copy_of_a_package_already_in_the_payload_cannot_deny_the_feed",
+  "test:an_older_package_from_a_signer_that_already_reported_cannot_deny_the_feed",
+  "test:a_package_duplicated_by_anyone_does_not_deny_the_feed_to_the_rest",
   "test:a_threshold_of_one_is_met_by_one_signer",
   "test:a_threshold_equal_to_the_signer_count_needs_every_one_of_them",
   "test:more_unknown_signers_than_the_buffer_holds_neither_panics_nor_overruns",
 ]
-note = "`verify_feed` enforces M-of-N over distinct authorised signers and rejects a signer occupying two slots (M1-13). M1-23 pins the boundaries where an off-by-one would live -- M, M-1, one, and unanimity -- plus the case a consumer does not control: more unknown signers in a payload than the fixed buffer holds, where a panic would abort the transaction rather than refuse the price."
+note = "`verify_feed` enforces M-of-N over distinct authorised signers: one slot per configured signer, so a signer counts once however many packages it sends (M1-13). A second package from a slotted signer is skipped rather than fatal, and the freshest one holds the slot -- ADR 24 records why, and the tests cover both ways an attacker can produce a duplicate without a key. M1-23 pins the boundaries where an off-by-one would live -- M, M-1, one, and unanimity -- plus the case a consumer does not control: more unknown signers in a payload than the fixed buffer holds, where a panic would abort the transaction rather than refuse the price."
 
 [[row]]
 id = "F4"
@@ -219,7 +223,7 @@ verified_by = [
   "test:a_payload_older_than_the_window_is_stale_rather_than_short_of_signers",
   "test:a_payload_dated_ahead_of_the_clock_is_its_own_failure_not_a_stale_one",
   "test:prices_nobody_can_use_are_reported_once_enough_of_them_would_have_counted",
-  "test:one_signer_supplying_the_feed_twice_is_refused",
+  "test:one_signer_supplying_the_feed_twice_counts_once_and_is_short_of_the_threshold",
   "test:a_price_the_accounts_scale_cannot_hold_is_reported_not_wrapped",
   "test:a_clock_that_cannot_be_read_fails_the_verification_rather_than_defaulting",
   "test:an_unusable_configuration_is_refused_before_a_payload_is_ever_seen",
@@ -393,7 +397,7 @@ verified_by = [
   "test:an_unknown_signer_is_skipped_and_the_payload_still_verifies",
   "test:unauthorised_is_reported_when_the_skipped_signers_would_have_made_quorum",
 ]
-note = "Both modes, one implementation: the membership check lives in `verifier-core`, so push and pull cannot diverge on who is authorised. The rule is count-and-ignore per ADR 15, not strict rejection: an unknown signer is skipped rather than failing the payload, and only named `UnauthorisedSigner` once the skipped signers would themselves have reached quorum -- a reader expecting strict rejection would otherwise read this row as unmet."
+note = "Both modes, one implementation: the membership check lives in `verifier-core`, so push and pull cannot diverge on who is authorised. The rule is count-and-ignore per ADR 15, not strict rejection: an unknown signer is skipped rather than failing the payload, and only named `UnauthorisedSigner` once the skipped signers would themselves have reached quorum -- a reader expecting strict rejection would otherwise read this row as unmet. ADR 24 extends the same rule to the last package class that failed a payload outright, a duplicate, because producing one needs no key and rejecting on it denied the feed to every consumer of that payload; F3 carries the evidence."
 
 [[row]]
 id = "SEC2"

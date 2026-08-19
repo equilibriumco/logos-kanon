@@ -20,13 +20,13 @@ data point each; the 1- and 3-signer columns are the same payload cut short.
 
 | component | 1 signer | 3 signers | 5 signers |
 | --- | ---: | ---: | ---: |
-| decode | 551 | 1,435 | 2,319 |
+| decode | 551 | 1,437 | 2,323 |
 | keccak256 | 17,475 | 52,425 | 87,375 |
 | recovery | 585,274 | 1,755,574 | 2,922,880 |
-| signer-set membership | 165 | 546 | 995 |
-| the rest of `verify_feed` | 17,939 | 20,962 | 24,681 |
-| **whole update** | **621,404** | **1,830,942** | **3,038,250** |
-| _harness floor, subtracted out_ | 25,323 | 62,293 | 99,493 |
+| signer-set membership | 164 | 543 | 990 |
+| the rest of `verify_feed` | 18,062 | 20,962 | 24,550 |
+| **whole update** | **621,526** | **1,830,941** | **3,038,118** |
+| _harness floor, subtracted out_ | 25,328 | 62,298 | 99,498 |
 
 At three signers, which is RFP-020's default threshold:
 

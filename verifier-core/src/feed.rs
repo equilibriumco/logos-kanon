@@ -274,10 +274,11 @@ fn usable(value: &Value) -> bool {
 /// # Errors
 ///
 /// [`VerifyError`] for a malformed payload, an asset pair that is not the
-/// caller's, one signer supplying the feed twice, a threshold that was not
-/// reached, values that were unusable, or a price the account's scale cannot
-/// hold. An unrecoverable signature is skipped rather than reported; see
-/// [`VerifyError::InvalidSignature`].
+/// caller's, a threshold that was not reached, values that were unusable, or a
+/// price the account's scale cannot hold. An unrecoverable signature, and a
+/// second package from a signer that already filled its slot, are skipped
+/// rather than reported; see [`VerifyError::InvalidSignature`] and
+/// [`VerifyError::ReoccurringSigner`].
 pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     payload: &Payload<'_>,
     config: &FeedConfig<'_>,
@@ -296,7 +297,8 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     let now_ms = clock.now_ms()?;
 
     // One slot per configured signer: the slot is both the collection point and
-    // the duplicate check, exactly as RedStone's (feed, signer) matrix cell is.
+    // the duplicate rule, exactly as RedStone's (feed, signer) matrix cell is.
+    // One slot is all a signer ever gets, however many packages it sends.
     let mut reported: [Option<Value>; MAX_SIGNERS] = [None; MAX_SIGNERS];
     // Distinct unknown signers. Counting packages instead would let three
     // packages from one unknown address read as three missing signers.
@@ -312,11 +314,11 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     // against `reported` after the walk, like `supplied_feed`.
     let mut stale = [false; MAX_SIGNERS];
     let mut future = [false; MAX_SIGNERS];
-    // The oldest package that filled a slot. A running minimum rather than a
-    // timestamp per slot, which would cost 256 bytes of the guest frame to hold
-    // 31 values nothing reads: slots are only ever filled, never cleared, so
-    // every update here is a package that ends up behind the median.
-    let mut oldest_ms = u64::MAX;
+    // When each filled slot's package was signed. A timestamp per slot rather
+    // than one running minimum, because a slot can now be replaced: a signer's
+    // freshest package wins, and the minimum is taken after the walk over the
+    // packages that actually survived it.
+    let mut filled_at = [0u64; MAX_SIGNERS];
 
     let walked = payload.for_each_package(|package| {
         let digest = backend.keccak256(package.signable());
@@ -401,11 +403,27 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
             let Some(value) = Value::from_be_slice(point.value).filter(usable) else {
                 continue;
             };
-            if slot.is_some() {
-                return Err(VerifyError::ReoccurringSigner);
+            // A second package from this signer is skipped, not fatal: it
+            // needs no key -- copy one already in the payload, or replay an
+            // older one still inside `maxAge` -- so failing on it would deny
+            // the feed to everyone for free. The slot is the anti-inflation
+            // rule by itself, so nothing is lost by skipping.
+            //
+            // Freshest wins rather than first seen. `for_each_package` walks
+            // from the tail, so "first seen" would mean "whatever an attacker
+            // appended last", and the price would depend on where in the
+            // payload a package sits. Neither a copy (same timestamp) nor a
+            // replay (older) displaces what is already here. See ADR 24.
+            let fresher = slot.is_none()
+                || filled_at
+                    .get(index)
+                    .is_some_and(|at| package.timestamp_ms > *at);
+            if fresher {
+                *slot = Some(value);
+                if let Some(at) = filled_at.get_mut(index) {
+                    *at = package.timestamp_ms;
+                }
             }
-            *slot = Some(value);
-            oldest_ms = oldest_ms.min(package.timestamp_ms);
         }
 
         if supplied {
@@ -424,10 +442,15 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
 
     let mut collected = [Value::default(); MAX_SIGNERS];
     let mut met = 0usize;
-    for value in reported.iter().flatten() {
+    // The oldest package behind the price, taken over the slots as they finally
+    // stand rather than as they were first filled.
+    let mut oldest_ms = u64::MAX;
+    for (value, at) in reported.iter().zip(filled_at.iter()) {
+        let Some(value) = value else { continue };
         if let Some(slot) = collected.get_mut(met) {
             *slot = *value;
             met += 1;
+            oldest_ms = oldest_ms.min(*at);
         }
     }
 
@@ -895,7 +918,8 @@ mod tests {
     #[test]
     fn one_signer_cannot_reach_the_threshold_alone_by_repeating_the_feed() {
         // The anti-inflation rule. Without it a single signer occupies as many
-        // slots as it sends packages.
+        // slots as it sends packages. Reported as the threshold failure it is:
+        // one signer of three, whatever it sent.
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
@@ -909,8 +933,86 @@ mod tests {
 
         assert_eq!(
             verify(&payload, &config),
-            Err(VerifyError::ReoccurringSigner)
+            Err(VerifyError::ThresholdNotMet {
+                met: 1,
+                required: 3
+            })
         );
+    }
+
+    #[test]
+    fn a_copy_of_a_package_already_in_the_payload_cannot_deny_the_feed() {
+        // The denial of service the skip exists to close. Appending a package
+        // takes no key and no valid signature -- copy one that is already
+        // there -- so failing the payload over it would be the cheapest way to
+        // deny a verified price to everyone the payload serves.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], 1);
+        }
+        // Byte for byte what the first package already is.
+        let bytes = builder
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 60])], 1)
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = feed_config(&set, 3);
+        let verified = verify(&payload, &config).expect("verifies");
+
+        assert_eq!(verified.signers, 3, "the copy fills no second slot");
+    }
+
+    #[test]
+    fn an_older_package_from_a_signer_that_already_reported_cannot_deny_the_feed() {
+        // The same attack with a package that is not a copy: every RedStone
+        // package inside `maxAge` is public and validly signed, so an attacker
+        // has around eighteen of each signer's to choose from. Erroring on
+        // disagreeing values rather than on duplicates would leave this open.
+        // Values spread so that admitting the replay would move the median,
+        // and it is dated behind the round so that admitting it would also drag
+        // the feed's own timestamp backwards.
+        //
+        // Run at both ends of the package list, because `for_each_package`
+        // walks from the tail: an attacker chooses where the bytes go, so the
+        // answer has to be the same wherever they put them.
+        let keys = keys(3);
+        let set = signer_set(&keys);
+        let round = |replay_first: bool| {
+            let mut builder = PayloadBuilder::default();
+            if replay_first {
+                builder =
+                    builder.signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 99])], NOW_MS - 60_000);
+            }
+            builder = builder
+                .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], NOW_MS)
+                .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
+                .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 30])], NOW_MS);
+            if !replay_first {
+                builder =
+                    builder.signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 99])], NOW_MS - 60_000);
+            }
+            builder.build()
+        };
+
+        for replay_first in [false, true] {
+            let bytes = round(replay_first);
+            let payload = Payload::decode(&bytes).expect("well formed");
+            let config = feed_config(&set, 3);
+            let verified = verify(&payload, &config).expect("verifies");
+
+            assert_eq!(verified.signers, 3, "replay_first = {replay_first}");
+            assert_eq!(
+                verified.value,
+                Value::from_be_slice(&[20]).expect("fits"),
+                "the freshest package holds the slot, so the median does not move                  (replay_first = {replay_first})"
+            );
+            assert_eq!(
+                verified.timestamp_ms, NOW_MS,
+                "and the replay does not age the feed (replay_first = {replay_first})"
+            );
+        }
     }
 
     #[test]
@@ -1195,10 +1297,10 @@ mod tests {
     }
 
     #[test]
-    fn a_single_package_carrying_the_requested_feed_twice_is_reoccurring_signer() {
-        // The cheaper attack: one signature instead of three, reaching the
-        // same rule from the inner point loop rather than across packages.
-        let keys = keys(1);
+    fn a_single_package_carrying_the_requested_feed_twice_still_counts_once() {
+        // The same rule reached from the inner point loop rather than across
+        // packages: two data points for one feed in one signature.
+        let keys = keys(2);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
             .signed_package(
@@ -1209,11 +1311,15 @@ mod tests {
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
-        let config = feed_config(&set, 1);
+        let config = feed_config(&set, 2);
 
         assert_eq!(
             verify(&payload, &config),
-            Err(VerifyError::ReoccurringSigner)
+            Err(VerifyError::ThresholdNotMet {
+                met: 1,
+                required: 2
+            }),
+            "the second point does not fill a second slot"
         );
     }
 
