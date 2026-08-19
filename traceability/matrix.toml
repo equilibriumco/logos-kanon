@@ -111,11 +111,11 @@ verified_by = [
   "test:the_verified_price_carries_both_scales",
   "test:an_agreed_price_too_large_for_the_account_is_reported_not_wrapped",
   "test:a_fresh_account_takes_every_field_from_the_feed_and_its_configuration",
-  "test:a_program_id_lays_out_little_endian_the_way_lez_hashes_one",
-  "test:two_deployments_of_the_adaptor_do_not_share_a_source_id",
+  "test:the_source_id_is_the_bytes_a_consumer_can_write_down",
+  "test:rebuilding_the_adaptor_does_not_change_what_it_writes",
   "test:a_newer_observation_moves_the_price_and_the_timestamp_and_nothing_else",
   "test:an_account_for_another_pair_is_refused_rather_than_repointed",
-  "test:an_account_another_program_populated_is_not_this_adaptors_to_write",
+  "test:an_account_another_source_populated_is_not_this_adaptors_to_write",
   "test:an_older_observation_inside_the_window_cannot_move_the_price_backwards",
   "test:the_same_observation_twice_is_not_an_update",
   "test:the_timestamp_is_the_round_every_counted_package_shares",
@@ -128,7 +128,7 @@ verified_by = [
   "test:a_round_trip_through_the_on_chain_container_recovers_every_field",
   "test:a_seventh_field_would_be_a_break_rather_than_something_consumers_ignore",
 ]
-note = "M1-09 found the canonical struct shipped, so the forward-compatible fallback M1-20 held in reserve was never needed and `aggregator-program/src/publish.rs` populates the real one. All six fields are decided: the pair from M1-16, `price` on the account's Q64.64 scale from M1-17, the observation timestamp from M1-20, `source_id` the adaptor naming itself, and `confidence_interval` zero as the account documents for a source that supplies none. ADR 22 records the three that were open. M1-26 conforms the layout against the vendored IDL in both directions -- the declared shape and the 136 bytes an account encodes to, which is what a consumer that does not link this crate actually depends on. M2-02 calls the write from a transaction."
+note = "The account is RFP-019's, re-exported rather than forked (M1-09), and `publish` decides what goes in its six fields. `source_id` is the constant F5 names: `RedStone`, ASCII right-padded, so a consumer checking where a price came from needs nothing from this repository to construct it. ADR 22 records the decision, including why the writer's own identity was the wrong answer: `source_id` is one of the three identifiers `publish` refuses to overwrite, so an identifier that moved with the program id would leave a rebuilt adaptor unable to update the accounts it created. The pair comes from the registration claim (M1-16), the price is the median on the account's Q64.64 scale (M1-17), the timestamp is the observation's and not the write's, and the confidence interval is zero because RedStone publishes none. M1-26 conforms the layout in both directions. What remains is M2-02: the instruction that calls `publish` inside a real transaction."
 
 [[row]]
 id = "F6"

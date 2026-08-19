@@ -84,59 +84,50 @@ It is tracked as a running minimum rather than a timestamp per slot: slots are o
 filled, never cleared, so every update is a package that ends up behind the median, and the
 array would cost 256 bytes of a guest frame that already holds about 2.7 KB.
 
-### `source_id` is the adaptor's own identifier
+### `source_id` is a constant naming RedStone
 
 ```rust
-pub fn adaptor_id(program_id: ProgramId) -> AccountId
-pub fn publish(program_id: ProgramId, account: &mut OraclePriceAccount, ..)
+pub const REDSTONE_SOURCE_ID: AccountId   // b"RedStone", right-padded to 32
 ```
 
-The field names the source that populated the account, and the account's documentation
-gives "a TWAP program or external adaptor" as what goes there. The aggregator is the
-external adaptor, so it names itself: a LEZ program reads its own `ProgramId` at run time
-and hands that to the write.
+F5 settles it, in a parenthetical the requirement inventory had dropped and this
+decision was written without:
 
-The parameter is a `ProgramId` rather than the `AccountId` the field holds, even though the
-conversion then happens inside on every call. `AccountId` is the type of every id in this
-struct, so a signature taking one accepts an asset id, the price account's own id, or any
-account at all, and pushes the conversion out to each call site to be remembered. Taking
-what the caller already has in hand makes the wrong argument something that does not
-compile. `adaptor_id` stays public for the reading direction, where deriving the expected
-id from a known program is the whole check.
+> The adaptor must populate `base_asset`, `quote_asset`, price, timestamp, source
+> identifier **(a constant identifying RedStone)**, and confidence interval (zero;
+> RedStone does not publish confidence intervals in its standard data packages).
+
+So the field names where the data came from, not which program wrote it. ASCII,
+right-padded with zeros, the same way RedStone pads its own feed ids: a consumer comparing
+against it can read it out of a hex dump and needs nothing from this repository to
+construct it. It identifies RedStone and not a data service — which service a feed trusts
+is part of its configuration, and two feeds on different services are still both RedStone.
+
+The alternative the field's own documentation suggests is the writer. It gives "a TWAP
+program or external adaptor" as what goes there, and a LEZ program can read its own
+`ProgramId` at run time and hand that to the write — an identifier the chain assigns, which
+nothing in the guest can forge, where a constant is a label the writer asserts about
+itself and any program can write those same bytes into an account it controls.
+
+That argument is real and it answers a question this field is not being asked. What stops a
+consumer being fooled is reading the account the registration points at; the label says
+which source populated a known account, and was never an authentication of the account
+itself. Against it stands a consequence that is not survivable: `source_id` is one of the
+three identifiers `publish` refuses to overwrite, so an identifier that moved with the
+program id would leave a rebuilt adaptor unable to update the accounts it had created, and
+every consumer checking the source needing to be told the new value. A canonical account
+standard exists to stop exactly that.
 
 Upstream's own writer does something narrower than its doc describes.
 `create_oracle_price_account` sets `source_id: price_source_id` — the AMM pool, which is
 where the price came from rather than the program that wrote it — and `publish_price` never
 touches the field again. So the doc names the populating program and the code names the
-data origin, and for a TWAP those are two different accounts. For this adaptor they are not
-two options: the data origin is RedStone, an off-chain signer set with nothing on this
-chain to point at, which leaves the writer as the only identity available and the doc's
-plain reading as the one to follow.
+data origin, and for a TWAP those are two different accounts. For this adaptor the data
+origin is RedStone, an off-chain signer set with nothing on this chain to point at, which
+is precisely the case F5 answers by naming a constant.
 
-The first version of this decision was a constant — thirty-two bytes of ASCII spelling out
-that a RedStone adaptor wrote the account — on the argument that a consumer asking "is this
-a RedStone price?" wants the same answer on every network. That argument does not survive
-contact with what the field is for. A constant is a label the writer asserts about itself,
-and any program can write those same bytes into an account it controls, so the question it
-was meant to answer is exactly the question it cannot answer. An identifier the chain
-assigns is not assertable by anybody else.
-
-A LEZ `ProgramId` is the RISC Zero image id of the program's ELF, computed by the runtime
-from the binary it is about to execute and written into the guest's input stream by the
-host. The guest reads it; it cannot state it. Forging it is not hard so much as
-impossible: there is nothing in the guest to forge it with.
-
-Naming the writer also keeps two deployments of this adaptor distinguishable, which matters
-in the direction that costs something: a consumer that has decided to trust one deployment
-has not thereby trusted its replacement.
-
-`ProgramId` is `[u32; 8]` and the field is thirty-two bytes, so the conversion has an
-endianness. Little-endian, which is what the LEE v0.3 specification states for the same
-layout where it defines public PDA derivation — "32-byte prefix + 32-byte `program_id` (as
-8 LE u32 words) + 32-byte `seed`" — so a `source_id` and a PDA over the same program agree
-on what its thirty-two bytes are. A test pins it, because getting it wrong is silent: every
-id would still map to a distinct thirty-two bytes, just not the ones the chain knows the
-program by.
+`price_account` and `publish` therefore take no `ProgramId` at all. The parameter existed
+to derive this field and has nothing else to do.
 
 ### `confidence_interval` is zero, which is a specified value here
 

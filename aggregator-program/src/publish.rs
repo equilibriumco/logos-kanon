@@ -3,36 +3,33 @@
 //! The account is RFP-019's, re-exported through [`kanon_idl`] rather than
 //! restated, so this module only decides what goes in the six fields: the price
 //! on the account's `Q64.64` scale, the timestamp of the observation rather than
-//! of the write, the adaptor itself as the source, and a zero confidence
-//! interval because RedStone supplies none.
+//! of the write, RedStone as the source, and a zero confidence interval because
+//! RedStone supplies none.
 
-use kanon_idl::{AccountId, OraclePriceAccount, ProgramId};
+use kanon_idl::{AccountId, OraclePriceAccount};
 use verifier_core::{AssetPair, FeedConfig, VerifiedFeed};
 
-/// The adaptor's own identifier, as the price account's `source_id` holds it.
+/// What the price account's `source_id` holds: RedStone, as a constant.
 ///
-/// The field names the source that populated the account, and the account's own
-/// documentation gives "a TWAP program or external adaptor" as what goes there,
-/// so the aggregator names itself. A LEZ program reads its own `ProgramId` at
-/// run time, which is why this is a conversion rather than a constant: nothing
-/// a program asserts about its own identity is worth more than the identity the
-/// chain already knows it by.
+/// F5 asks for "a constant identifying RedStone", so the field names where the
+/// data came from rather than which program wrote it. ASCII, right-padded with
+/// zeros, the same way RedStone pads its own feed ids -- a consumer comparing
+/// against it can read it out of a hex dump, and needs nothing from this
+/// repository to construct it.
 ///
-/// Public because a reader needs it too: checking that a price account came
-/// from a particular adaptor means deriving the same `AccountId` from that
-/// program's id. The writing path takes a [`ProgramId`] and calls this itself,
-/// so no caller has to remember to.
-///
-/// `ProgramId` is `[u32; 8]`, reinterpreted little-endian, which is how LEZ
-/// itself lays a program id out when it feeds one to a hash.
-#[must_use]
-pub fn adaptor_id(program_id: ProgramId) -> AccountId {
+/// It identifies RedStone and not a data service. Which service a feed trusts
+/// is part of its configuration, and two feeds on different services are still
+/// both RedStone.
+pub const REDSTONE_SOURCE_ID: AccountId = {
     let mut bytes = [0u8; 32];
-    for (word, slot) in program_id.iter().zip(bytes.chunks_exact_mut(4)) {
-        slot.copy_from_slice(&word.to_le_bytes());
+    let name = b"RedStone";
+    let mut i = 0;
+    while i < name.len() {
+        bytes[i] = name[i];
+        i += 1;
     }
     AccountId::new(bytes)
-}
+};
 
 /// RedStone supplies no confidence interval, and the account documents zero as
 /// what a source without one writes.
@@ -55,17 +52,13 @@ pub enum PublishError {
 /// For the first write, where there is no account yet to check against. Every
 /// later write goes through [`publish`], which has something to compare.
 #[must_use]
-pub fn price_account(
-    program_id: ProgramId,
-    config: &FeedConfig<'_>,
-    feed: &VerifiedFeed,
-) -> OraclePriceAccount {
+pub fn price_account(config: &FeedConfig<'_>, feed: &VerifiedFeed) -> OraclePriceAccount {
     OraclePriceAccount {
         base_asset: AccountId::new(config.assets().base),
         quote_asset: AccountId::new(config.assets().quote),
         price: feed.price,
         timestamp: feed.timestamp_ms,
-        source_id: adaptor_id(program_id),
+        source_id: REDSTONE_SOURCE_ID,
         confidence_interval: NO_CONFIDENCE_INTERVAL,
     }
 }
@@ -83,7 +76,6 @@ pub fn price_account(
 /// another source, or already holds an observation at least as recent as this
 /// one.
 pub fn publish(
-    program_id: ProgramId,
     account: &mut OraclePriceAccount,
     config: &FeedConfig<'_>,
     feed: &VerifiedFeed,
@@ -95,7 +87,7 @@ pub fn publish(
     if &stored != config.assets() {
         return Err(PublishError::AssetMismatch);
     }
-    if account.source_id != adaptor_id(program_id) {
+    if account.source_id != REDSTONE_SOURCE_ID {
         return Err(PublishError::SourceMismatch);
     }
     // Strictly newer, so a package that is inside the staleness window but older
@@ -123,10 +115,9 @@ mod tests {
     const DECIMALS: u8 = 8;
     const MAX_AGE_MS: u64 = 60_000;
 
-    /// Stands in for what a LEZ program reads as its own id at run time.
-    const ADAPTOR: ProgramId = [0x0A0B_0C0D; 8];
-    /// A second build of it, which is what any recompilation produces.
-    const OTHER: ProgramId = [0x0102_0304; 8];
+    /// Any other oracle's account: the on-chain TWAP tier writes one of these
+    /// into the same standard, and it is not this adaptor's to touch.
+    const ANOTHER_SOURCE: AccountId = AccountId::new([0x5A; 32]);
 
     fn pair() -> AssetPair {
         AssetPair::new([0xB7; AssetPair::ID_LEN], [0x05; AssetPair::ID_LEN])
@@ -152,64 +143,66 @@ mod tests {
     #[test]
     fn a_fresh_account_takes_every_field_from_the_feed_and_its_configuration() {
         let signers = signers();
-        let account = price_account(ADAPTOR, &config(&signers, pair()), &verified(7, 1_000));
+        let account = price_account(&config(&signers, pair()), &verified(7, 1_000));
 
         assert_eq!(account.base_asset.into_value(), pair().base);
         assert_eq!(account.quote_asset.into_value(), pair().quote);
         assert_eq!(account.price, 7);
         assert_eq!(account.timestamp, 1_000);
-        assert_eq!(account.source_id, adaptor_id(ADAPTOR));
+        assert_eq!(account.source_id, REDSTONE_SOURCE_ID);
         assert_eq!(account.confidence_interval, 0);
     }
 
     #[test]
-    fn a_program_id_lays_out_little_endian_the_way_lez_hashes_one() {
-        // `ProgramId` is `[u32; 8]` and the account field is 32 bytes, so the
-        // conversion has an endianness and getting it wrong is silent: every id
-        // still maps to a distinct 32 bytes, just not the ones the chain knows
-        // the program by.
+    fn the_source_id_is_the_bytes_a_consumer_can_write_down() {
+        // Pinned as bytes rather than derived, because the point of a constant
+        // is that a consumer needs nothing from this repository to check it.
         let mut expected = [0u8; 32];
-        for slot in expected.chunks_exact_mut(4) {
-            slot.copy_from_slice(&0x0A0B_0C0Du32.to_le_bytes());
-        }
-        assert_eq!(adaptor_id(ADAPTOR).into_value(), expected);
+        expected[..8].copy_from_slice(b"RedStone");
+        assert_eq!(REDSTONE_SOURCE_ID.into_value(), expected);
     }
 
     #[test]
-    fn two_deployments_of_the_adaptor_do_not_share_a_source_id() {
-        // The point of naming the writer rather than asserting a label: a second
-        // deployment is a different source, and a consumer that trusts one has
-        // not thereby trusted the other.
-        assert_ne!(adaptor_id(ADAPTOR), adaptor_id(OTHER));
+    fn rebuilding_the_adaptor_does_not_change_what_it_writes() {
+        // What a constant buys over naming the writer. `source_id` is one of the
+        // three identifiers `publish` refuses to overwrite, so if it moved with
+        // the program id then a rebuilt adaptor could no longer write the
+        // accounts it had populated, and every consumer checking the source
+        // would have to be told the new one.
+        let signers = signers();
+        let config = config(&signers, pair());
+        let mut account = price_account(&config, &verified(7, 1_000));
+
+        assert_eq!(
+            publish(&mut account, &config, &verified(9, 2_000)),
+            Ok(()),
+            "a later build writes the account an earlier one created"
+        );
     }
 
     #[test]
     fn a_newer_observation_moves_the_price_and_the_timestamp_and_nothing_else() {
         let signers = signers();
         let config = config(&signers, pair());
-        let mut account = price_account(ADAPTOR, &config, &verified(7, 1_000));
+        let mut account = price_account(&config, &verified(7, 1_000));
 
-        assert_eq!(
-            publish(ADAPTOR, &mut account, &config, &verified(9, 2_000)),
-            Ok(())
-        );
+        assert_eq!(publish(&mut account, &config, &verified(9, 2_000)), Ok(()));
 
         assert_eq!(account.price, 9);
         assert_eq!(account.timestamp, 2_000);
         assert_eq!(account.base_asset.into_value(), pair().base);
-        assert_eq!(account.source_id, adaptor_id(ADAPTOR));
+        assert_eq!(account.source_id, REDSTONE_SOURCE_ID);
         assert_eq!(account.confidence_interval, 0);
     }
 
     #[test]
     fn an_account_for_another_pair_is_refused_rather_than_repointed() {
         let signers = signers();
-        let mut account = price_account(ADAPTOR, &config(&signers, pair()), &verified(7, 1_000));
+        let mut account = price_account(&config(&signers, pair()), &verified(7, 1_000));
         let elsewhere = AssetPair::new([0xEE; AssetPair::ID_LEN], [0x05; AssetPair::ID_LEN]);
 
         assert_eq!(
             publish(
-                ADAPTOR,
                 &mut account,
                 &config(&signers, elsewhere),
                 &verified(9, 2_000)
@@ -220,13 +213,14 @@ mod tests {
     }
 
     #[test]
-    fn an_account_another_program_populated_is_not_this_adaptors_to_write() {
+    fn an_account_another_source_populated_is_not_this_adaptors_to_write() {
         let signers = signers();
         let config = config(&signers, pair());
-        let mut account = price_account(OTHER, &config, &verified(7, 1_000));
+        let mut account = price_account(&config, &verified(7, 1_000));
+        account.source_id = ANOTHER_SOURCE;
 
         assert_eq!(
-            publish(ADAPTOR, &mut account, &config, &verified(9, 2_000)),
+            publish(&mut account, &config, &verified(9, 2_000)),
             Err(PublishError::SourceMismatch)
         );
         assert_eq!(account.price, 7);
@@ -239,10 +233,10 @@ mod tests {
         // from the same window costs nothing and would otherwise be accepted.
         let signers = signers();
         let config = config(&signers, pair());
-        let mut account = price_account(ADAPTOR, &config, &verified(7, 2_000));
+        let mut account = price_account(&config, &verified(7, 2_000));
 
         assert_eq!(
-            publish(ADAPTOR, &mut account, &config, &verified(9, 1_999)),
+            publish(&mut account, &config, &verified(9, 1_999)),
             Err(PublishError::NotNewer {
                 stored: 2_000,
                 offered: 1_999,
@@ -255,10 +249,10 @@ mod tests {
     fn the_same_observation_twice_is_not_an_update() {
         let signers = signers();
         let config = config(&signers, pair());
-        let mut account = price_account(ADAPTOR, &config, &verified(7, 2_000));
+        let mut account = price_account(&config, &verified(7, 2_000));
 
         assert_eq!(
-            publish(ADAPTOR, &mut account, &config, &verified(7, 2_000)),
+            publish(&mut account, &config, &verified(7, 2_000)),
             Err(PublishError::NotNewer {
                 stored: 2_000,
                 offered: 2_000,
