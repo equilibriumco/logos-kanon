@@ -66,6 +66,31 @@ const SIGNATURE_BYTES: usize = Signature::LEN;
 pub const EMPTY_ENVELOPE_BYTES: usize =
     PACKAGE_COUNT_BYTES + UNSIGNED_METADATA_SIZE_BYTES + MARKER_BYTES;
 
+/// The longest payload this decoder will read.
+///
+/// Not a framing rule: a longer payload can be perfectly well formed. It is a
+/// cost rule, and the only one this crate is in a position to state.
+///
+/// Getting a payload into guest memory costs about 113 cycles per byte, before
+/// any verification and before this function is called. LEZ allows 33,554,432
+/// cycles in a public transaction and `MAX_RECOVERIES` bounds verification at
+/// about 19.4M of them, which leaves roughly 125 KB of payload before the two
+/// together exhaust the budget -- with nothing left for the program doing the
+/// verifying. 32 KiB is a third of that: the read costs about 3.7M cycles, the
+/// pair comes to 69% of the budget, and the remaining 31% belongs to the caller.
+///
+/// It is not a tight fit for anything real. RedStone's own payloads run to
+/// hundreds of bytes per feed, so this admits a bundle of ten feeds at twenty
+/// signers each and then some.
+///
+/// **The read is not refundable.** LEZ reads a program's whole instruction data
+/// before the program's first instruction (`lee_core`'s `read_lee_inputs`), so
+/// by the time this check runs the cycles are already spent. What the limit is
+/// for is the caller: a payload above it is one Kanon will not verify, which is
+/// what lets a relayer, an aggregator or a sequencer refuse it earlier, where
+/// refusing is still free. See ADR 27.
+pub const MAX_PAYLOAD_BYTES: usize = 32 * 1024;
+
 /// Why a payload could not be decoded.
 ///
 /// Every variant means "this payload is not well formed". None of them means
@@ -86,6 +111,12 @@ pub enum DecodeError {
     /// fire today. It exists so that a future field wider than `u64` fails
     /// closed here rather than wrapping silently.
     NumberOverflow,
+    /// The payload is longer than [`MAX_PAYLOAD_BYTES`].
+    ///
+    /// The only variant here that is not about framing. A payload this long can
+    /// be well formed; it is refused because reading it and verifying it will
+    /// not both fit in a transaction.
+    TooLong { len: usize, max: usize },
     /// The payload declares no data packages.
     ///
     /// Rejected rather than returned as an empty set, because an empty payload
@@ -256,10 +287,20 @@ impl<'a> Payload<'a> {
     ///
     /// # Errors
     ///
-    /// [`DecodeError`] for any malformed input. Never panics, which matters
+    /// [`DecodeError`] for any malformed input, and [`DecodeError::TooLong`]
+    /// for a payload past [`MAX_PAYLOAD_BYTES`]. Never panics, which matters
     /// because this runs in a guest where a panic aborts the transaction rather
     /// than rejecting the package.
     pub fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        // First, and before the marker: everything below is proportional to the
+        // payload, and this is the one check that is not.
+        if bytes.len() > MAX_PAYLOAD_BYTES {
+            return Err(DecodeError::TooLong {
+                len: bytes.len(),
+                max: MAX_PAYLOAD_BYTES,
+            });
+        }
+
         let mut cursor = Cursor::new(bytes);
 
         let marker = cursor.take(MARKER_BYTES)?;
@@ -586,6 +627,30 @@ mod tests {
         // covers one such field by hand; the general case is an arbitrary-bytes
         // property test, which is a separate planned task rather than something
         // this loop quietly already does.
+    }
+
+    #[test]
+    fn a_payload_past_the_size_limit_is_refused_before_it_is_parsed() {
+        // The limit is a cost rule, not a framing one, so the payload it
+        // refuses is otherwise perfectly good: the same bytes under the limit
+        // decode. Checked before the marker, because every other check is
+        // proportional to the payload and this one is not.
+        let mut bytes = std::vec![0u8; MAX_PAYLOAD_BYTES + 1];
+        assert_eq!(
+            Payload::decode(&bytes),
+            Err(DecodeError::TooLong {
+                len: MAX_PAYLOAD_BYTES + 1,
+                max: MAX_PAYLOAD_BYTES,
+            }),
+            "and not MissingMarker, which these bytes also are"
+        );
+
+        bytes.truncate(MAX_PAYLOAD_BYTES);
+        assert_eq!(
+            Payload::decode(&bytes),
+            Err(DecodeError::MissingMarker),
+            "one byte shorter and the size is no longer what is wrong with it"
+        );
     }
 
     #[test]

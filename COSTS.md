@@ -20,19 +20,19 @@ data point each; the 1- and 3-signer columns are the same payload cut short.
 
 | component | 1 signer | 3 signers | 5 signers |
 | --- | ---: | ---: | ---: |
-| decode | 549 | 1,437 | 2,325 |
-| keccak256 | 17,475 | 52,425 | 87,375 |
+| decode | 586 | 1,495 | 2,404 |
+| keccak256 | 17,476 | 52,428 | 87,380 |
 | recovery | 585,274 | 1,755,574 | 2,922,880 |
-| signer-set membership | 165 | 546 | 995 |
-| the rest of `verify_feed` | 18,391 | 22,030 | 26,365 |
-| **whole update** | **621,854** | **1,832,012** | **3,039,940** |
-| _harness floor, subtracted out_ | 25,327 | 62,295 | 99,495 |
+| signer-set membership | 162 | 537 | 980 |
+| the rest of `verify_feed` | 18,398 | 22,051 | 26,400 |
+| **whole update** | **621,896** | **1,832,085** | **3,040,044** |
+| _harness floor, subtracted out_ | 25,323 | 62,291 | 99,491 |
 
 At three signers, which is RFP-020's default threshold:
 
 | component | share |
 | --- | ---: |
-| recovery | 95.83% |
+| recovery | 95.82% |
 | keccak256 | 2.86% |
 | the rest of `verify_feed` | 1.20% |
 | decode | 0.08% |
@@ -81,8 +81,8 @@ account rather than from the guest input stream pays something different for it.
 
 ## What the numbers say
 
-**Recovery is the whole cost.** At three signers it is 95.83% of an update, and
-the four other components together are 4.17%. No arrangement of the remaining
+**Recovery is the whole cost.** At three signers it is 95.82% of an update, and
+the four other components together are 4.18%. No arrangement of the remaining
 code matters next to it. If LEZ ever offers a secp256k1 precompile, that is the
 one lever worth pulling, and `VerifierBackend` exists so that pulling it is one
 new implementor and one type parameter
@@ -106,10 +106,10 @@ that does not change the decision.
 an update. The wire format is a backwards walk over fixed-width fields with no
 allocation, and the membership check is a linear scan of at most 32 addresses.
 That scan is quadratic in the signer count — every package scans the whole set —
-which the numbers show and which is still not worth acting on: 995 cycles at five
+which the numbers show and which is still not worth acting on: 980 cycles at five
 signers.
 
-**Converting to the account's scale costs 11,293 cycles**, about 64% of one
+**Converting to the account's scale costs 11,330 cycles**, about 64% of one
 keccak256 and most of the remainder row at one signer. It is a
 16-byte long division with 128-bit intermediates
 (`adr/0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md`), and it
@@ -142,6 +142,22 @@ Two things bound it, both in `verify_feed`:
 `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts both, and
 `adr/0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md`
 records why the ceiling refuses rather than truncates.
+
+Neither bounds what a payload costs to *read*. LEZ reads a program's whole
+instruction data before the program's first instruction, at about 113 cycles a
+byte, so those cycles are spent before any code here runs: a 127,814-byte payload
+came to 33,792,622 cycles and overran the budget on the read alone, with
+verification still correctly bounded at 19.3M of it.
+
+`MAX_PAYLOAD_BYTES` is the answer, at 32 KiB. The largest payload the decoder
+accepts — 230 packages, every one carrying the requested feed — reads and
+verifies in **23,042,390 cycles, 69% of the budget**, leaving 31% for the program
+doing the verifying. `the_largest_payload_the_decoder_accepts_is_read_and_verified_inside_the_budget`
+asserts it. The limit is a cost rule rather than a framing one, and refusing at
+this point does not refund the read; what it does is state the size above which a
+caller must not submit, so a relayer or a sequencer can refuse it where refusing
+is still free. `adr/0027-a-maximum-payload-size-and-where-it-has-to-be-enforced.md`
+records the derivation.
 
 ## Agreement with the M0 baseline
 

@@ -62,7 +62,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use risc0_zkvm::{default_executor, ExecutorEnv};
-use verifier_core::decode::{EMPTY_ENVELOPE_BYTES, REDSTONE_MARKER};
+use verifier_core::decode::{EMPTY_ENVELOPE_BYTES, MAX_PAYLOAD_BYTES, REDSTONE_MARKER};
 use verifier_core::feed::MAX_RECOVERIES;
 
 /// The M1-21 capture. Real packages, real signatures, one data point each, so a
@@ -111,22 +111,22 @@ mod expected {
     /// It is the harness's cost, not the verifier's: it is subtracted out of
     /// every component, and a program reading a payload from an account rather
     /// than from the guest's input stream would pay something different.
-    pub const FLOOR: [(usize, u64); 3] = [(1, 25_327), (3, 62_295), (5, 99_495)];
+    pub const FLOOR: [(usize, u64); 3] = [(1, 25_323), (3, 62_291), (5, 99_491)];
 
     /// Per signer count: decode, keccak256, recovery, membership, then
     /// everything else `verify_feed` does.
     pub const COMPONENTS: [(usize, [u64; 5]); 3] = [
-        (1, [549, 17_475, 585_274, 165, 18_391]),
-        (3, [1_437, 52_425, 1_755_574, 546, 22_030]),
-        (5, [2_325, 87_375, 2_922_880, 995, 26_365]),
+        (1, [586, 17_476, 585_274, 162, 18_398]),
+        (3, [1_495, 52_428, 1_755_574, 537, 22_051]),
+        (5, [2_404, 87_380, 2_922_880, 980, 26_400]),
     ];
 
     /// The whole update, floor subtracted.
-    pub const TOTAL: [(usize, u64); 3] = [(1, 621_854), (3, 1_832_012), (5, 3_039_940)];
+    pub const TOTAL: [(usize, u64); 3] = [(1, 621_896), (3, 1_832_085), (5, 3_040_044)];
 
     /// One Q64.64 conversion: the largest single item in the remainder, and the
     /// only one worth naming separately.
-    pub const SCALING: u64 = 11_295;
+    pub const SCALING: u64 = 11_330;
 
     /// `MAX_NUM_CYCLES_PUBLIC_EXECUTION`, the cycles a LEZ public transaction
     /// gets. Recorded in `m0/lez-probe/README.md` and the figure P1 is measured
@@ -532,4 +532,50 @@ fn raw_cycles(vector: &Vector, stage: u8, payload: Vec<u8>, signer_bytes: &[u8])
         .execute(env, VERIFY_COST_ELF)
         .expect("execution")
         .cycles()
+}
+
+/// The whole of P1's ceiling, read included.
+///
+/// `the_most_a_payload_can_cost_still_fits_in_one_transaction` bounds what
+/// verification spends. It does not bound what getting the payload into guest
+/// memory spends, and that is not verification's to bound: LEZ reads a program's
+/// entire instruction data before the program's first instruction, so the cycles
+/// are gone before `Payload::decode` can object. At about 113 cycles a byte a
+/// 900-package payload -- 127,814 bytes, well formed, and refused by the
+/// recovery ceiling -- measured 33,792,622 cycles and overran the budget on the
+/// read alone.
+///
+/// `MAX_PAYLOAD_BYTES` is what makes the pair statable, and this is the
+/// assertion that the pair fits: the largest payload the decoder will accept,
+/// every package of it carrying the requested feed, read and verified.
+#[test]
+fn the_largest_payload_the_decoder_accepts_is_read_and_verified_inside_the_budget() {
+    let vector = vector();
+    let signer_bytes: Vec<u8> = vector.signers.iter().flat_map(|s| *s.as_bytes()).collect();
+    let stride = (vector.payload.len() - EMPTY_ENVELOPE_BYTES) / vector.signers.len();
+
+    let n = (MAX_PAYLOAD_BYTES - EMPTY_ENVELOPE_BYTES) / stride;
+    let bytes = payload_repeating(&vector, n);
+    assert!(
+        bytes.len() <= MAX_PAYLOAD_BYTES && MAX_PAYLOAD_BYTES - bytes.len() < stride,
+        "the test is only meaningful at the limit; this payload is {} of {MAX_PAYLOAD_BYTES} bytes",
+        bytes.len()
+    );
+
+    let whole = raw_cycles(&vector, stage::VERIFY, bytes, &signer_bytes);
+    assert!(
+        whole < expected::LEZ_CYCLE_BUDGET,
+        "{n} packages in {MAX_PAYLOAD_BYTES} bytes cost {whole} of {} cycles, {:.1}%",
+        expected::LEZ_CYCLE_BUDGET,
+        100.0 * whole as f64 / expected::LEZ_CYCLE_BUDGET as f64
+    );
+
+    // The headroom is worth asserting too, because it is what the program doing
+    // the verifying gets to spend: the account write, the framework's own floor,
+    // whatever the caller does with the price.
+    let headroom = expected::LEZ_CYCLE_BUDGET - whole;
+    assert!(
+        headroom > expected::LEZ_CYCLE_BUDGET / 4,
+        "only {headroom} cycles left for the rest of the program"
+    );
 }

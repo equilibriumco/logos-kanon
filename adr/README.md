@@ -40,6 +40,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [24](0024-a-duplicate-package-is-skipped-and-the-freshest-holds-the-slot.md) | A duplicate package is skipped, and the freshest one holds the slot | accepted |
 | [25](0025-present-but-blocked-requires-a-package-that-could-have-counted.md) | "Present but blocked" requires a package that could have counted | accepted |
 | [26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
+| [27](0027-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
 
 ## How they fit together
 
@@ -109,6 +110,13 @@ recoveries: the denial it closed cost one package, and the denial it opened cost
 transaction's cycle budget. Bounding the work before the cryptography closes both, and
 it also fixes something that was never an attack -- verifying one feed of a multi-feed
 payload was paying to recover every other feed's packages.
+
+ADR 27 finishes what ADR 26 started, and finds the boundary of what this repository
+can decide. ADR 26 bounded the work a payload buys; ADR 27 bounds the payload itself,
+because reading one costs cycles before any code here runs. That last part is not ours
+to fix: LEZ reads a program's whole instruction data before the program's first
+instruction, so the limit is a number to publish and for callers to enforce rather than
+a check that can save the transaction it refuses.
 
 ## Open questions carried by these decisions
 

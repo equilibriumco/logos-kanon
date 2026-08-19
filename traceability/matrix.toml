@@ -289,9 +289,11 @@ implemented_in = ["m0/lez-probe"]
 verified_by = [
   "test:a_3_of_n_update_leaves_ample_budget_headroom",
   "test:the_most_a_payload_can_cost_still_fits_in_one_transaction",
+  "test:the_largest_payload_the_decoder_accepts_is_read_and_verified_inside_the_budget",
+  "test:a_payload_past_the_size_limit_is_refused_before_it_is_parsed",
   "doc:m0/M0-report.pdf",
 ]
-note = "M0 measured a 3-of-N update at 1,906,737 cycles against LEZ's 32M per-transaction budget, 5.68%, and pinned it with a guardrail test. That is the typical case; the ceiling is the other half, because the package count sits in the payload's envelope and a package costs 602,749 cycles to recover. Unbounded, 56 of them overran the budget and the transaction aborted instead of publishing. ADR 26 bounds it and `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts the bound holds, so this row is now a statement about every payload rather than about the captured one. What is still open is the shipping path in one real transaction, per mode: M2-02 and M2-19 for push, M3-06 for pull."
+note = "M0 measured a 3-of-N update at 1,906,737 cycles against LEZ's 32M per-transaction budget, 5.68%, and pinned it with a guardrail test. That is the typical case; the ceiling is the other half, because the package count sits in the payload's envelope and a package costs 602,749 cycles to recover. Unbounded, 56 of them overran the budget and the transaction aborted instead of publishing. ADR 26 bounds it and `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts the bound holds. That covers verification and not the read: LEZ reads a program's whole instruction data before the program's first instruction, at about 113 cycles a byte, so a 127,814-byte payload overran the budget on the read alone with verification still correctly bounded. ADR 27 sets `MAX_PAYLOAD_BYTES` at 32 KiB and the largest payload the decoder accepts reads and verifies in 23,042,390 cycles, 69% of the budget. Between the two this row is now a statement about every payload rather than about the captured one. Bounding `InstructionData` itself is LEZ's, not this adaptor's -- no program can refuse bytes it has already been charged for -- so the limit is also a number for the relayer and the aggregator to enforce before submitting. What is still open is the shipping path in one real transaction, per mode: M2-02 and M2-19 for push, M3-06 for pull."
 
 [[row]]
 id = "P2"
