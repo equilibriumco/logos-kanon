@@ -42,6 +42,7 @@ a record of a decision that was later reversed is more useful than no record of 
 | [26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
 | [27](0027-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
 | [28](0028-one-price-comes-from-one-round-chosen-by-consensus.md) | One price comes from one round, and the round is chosen by consensus | accepted |
+| [29](0029-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
 
 ## How they fit together
 

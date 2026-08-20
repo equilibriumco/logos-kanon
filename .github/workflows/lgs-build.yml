@@ -1,0 +1,96 @@
+# M1's `lgs build` gate: the Logos toolchain accepts this repository as a project.
+#
+# It asserts compatibility, not correctness. `lgs build` ends in
+# `cargo build --workspace` and a release build of `methods/`, both of which
+# `ci.yml` already runs directly; what only this workflow can catch is the layout
+# drifting away from what `lgs` expects, which no cargo invocation would notice.
+#
+# Separate from `ci.yml` because of what it costs. `lgs build` calls `lgs setup`
+# first, and setup builds `sequencer_service`, `wallet` and `spel` from source --
+# roughly eight minutes of compiling on a developer machine and 30 on a
+# `ubuntu-24.04` runner, measured. None of those three binaries is used by `build`;
+# setup runs unconditionally and there is no flag to skip it. `--prebuilt` does not help:
+# it looks for a `lssa-prebuilt-<sha>-x86_64-linux` release tag, and LEZ has never
+# published one, for this revision or any other.
+#
+# So this runs on the manifests instead of on every push. Layout compatibility can
+# only break when the manifests, the lockfile or this file change, which is exactly
+# the trigger below. Deliberately uncached: at this cadence a cache would be evicted
+# between runs more often than hit, and 4.5 GB of LEZ and SPEL build output would
+# crowd out the caches `ci.yml` and `guardrails.yml` depend on every push.
+name: lgs build
+
+on:
+  # Push only, no `pull_request`, for the reason `ci.yml` gives at length: a push
+  # run already reports as a check on any pull request opened from the branch.
+  push:
+    paths:
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "scaffold.toml"
+      - ".github/workflows/lgs-build.yml"
+      # `m0/` is a workspace of its own and is not part of the project `lgs` sees.
+      - "!m0/**"
+  workflow_dispatch:
+
+concurrency:
+  group: lgs-build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lgs-build:
+    name: lgs build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      # `lgs build` compiles `methods/`, which cross-compiles the product guest, so
+      # this needs the same rzup toolchain `ci.yml`'s `guest` job installs. 3.0.5 is
+      # what the product tracks; `adr/0008` has why m0 sits on 3.0.6.
+      - name: Install RISC Zero toolchain
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.risc0/bin:$PATH"
+          rzup install cargo-risczero 3.0.5
+          rzup install r0vm 3.0.5
+          rzup install rust 1.97.0
+
+      - name: Install lgs
+        run: cargo install logos-scaffold --version 0.3.0 --locked
+
+      # `scaffold.toml` names the LEZ and SPEL revisions a second time, after
+      # `Cargo.lock` has already resolved them. A bump that misses this file would
+      # hand `lgs` a different estate than the product builds against, silently and
+      # in a green run -- the mismatch ADR 12 removed by deriving the revision from
+      # the lockfile. This is where it cannot come back.
+      - name: scaffold.toml agrees with the lockfile
+        run: |
+          set -euo pipefail
+          pin_of() {
+            awk -v s="[repos.$1]" '$0==s{f=1;next} /^\[/{f=0} f&&/^pin =/{gsub(/[" ]/,"",$3); print $3; exit}' scaffold.toml
+          }
+          lez_lock="$(scripts/lez-sequencer.sh pin)"
+          spel_lock="$(grep -o 'spel\.git?tag=[^#]*#[0-9a-f]\{40\}' Cargo.lock | sed 's/.*#//' | sort -u)"
+          [ "$(printf '%s' "$spel_lock" | wc -l)" -eq 0 ] || { echo "Cargo.lock resolves more than one SPEL revision:"; echo "$spel_lock"; exit 1; }
+          for repo in lez spel; do
+            eval "want=\$${repo}_lock"
+            got="$(pin_of "$repo")"
+            [ "$got" = "$want" ] || { echo "scaffold.toml [repos.$repo].pin is $got; Cargo.lock resolves $want"; exit 1; }
+            echo "$repo: $got"
+          done
+
+      - name: lgs build
+        run: lgs build

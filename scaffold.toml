@@ -1,0 +1,26 @@
+# What the `lgs` toolchain needs to recognise this repository as a project.
+#
+# M1's gate asks for `lgs build` green in CI, and `lgs` refuses to run outside a
+# project with this file. Nothing else in the repository reads it: the layout it
+# describes is the one that was already here, and `lgs build` ends in the same two
+# cargo invocations `ci.yml` runs directly.
+#
+# Only the two pinned repositories are set. Every other section -- wallet, framework,
+# localnet, circuits -- is left to the defaults, because `lgs build` is the only
+# command run against this file and it consults none of them. `adr/0029` has the
+# reasoning, including why `lgs test-node` is still not used (`adr/0012`).
+#
+# The pins duplicate what `Cargo.lock` already resolves, which is the one hazard here:
+# a second place for a LEZ revision to be wrong is exactly what ADR 12 removed. They
+# are therefore checked against the lockfile on every run of `lgs-build.yml`, and a
+# pin bump that misses this file fails there.
+[scaffold]
+version = "0.2.0"
+
+[repos.lez]
+source = "https://github.com/logos-blockchain/logos-execution-zone.git"
+pin = "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+
+[repos.spel]
+source = "https://github.com/logos-co/spel.git"
+pin = "0cb7e0980535af619482cf1c823f4d394b3ebd61"

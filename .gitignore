@@ -12,3 +12,7 @@ __pycache__/
 
 # Editor scratch.
 .code_marks/
+
+# `lgs setup` materialises circuits, a wallet and its state here. Build output of a
+# toolchain run, not project state; `scaffold.toml` is the part that is committed.
+.scaffold/
