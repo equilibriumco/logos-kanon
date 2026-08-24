@@ -317,9 +317,8 @@ fn carries_feed(package: &DataPackage<'_>, config: &FeedConfig<'_>) -> bool {
 /// [`VerifyError`] for a malformed payload, an invalid signature, an
 /// unauthorised signer, a package outside the timestamp window, an asset pair
 /// that is not the caller's, a threshold that was not reached, an unusable
-/// value, or a price the account's scale cannot hold. A second package from a
-/// signer that already filled its slot remains non-counting rather than fatal;
-/// see [`VerifyError::ReoccurringSigner`].
+/// value, or a price the account's scale cannot hold. A second valid package
+/// from one signer remains non-counting rather than fatal; ADR 24 records why.
 pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     payload: &Payload<'_>,
     config: &FeedConfig<'_>,

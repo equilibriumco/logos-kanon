@@ -3,9 +3,9 @@
 //! Every failure mode gets its own variant, because a caller that cannot tell
 //! them apart cannot act on any of them. A value out of scale is separate from a
 //! value that is zero or negative, since they point at different faults upstream.
-//! `ReoccurringSigner` has no producer: a repeated package is ignored after its
-//! signer has filled a slot, so it cannot inflate the threshold. Every rejection
-//! promised by F4, U6, and SEC1 is produced directly by the payload verifier.
+//! Every variant has a producer. A repeated package is not a failure: one signer
+//! can fill only one threshold slot, so duplicates remain non-counting without
+//! adding an unreachable error to the public API.
 //!
 //! [`DecodeError`] and [`BackendError`] are wrapped rather than flattened.
 //! `decode` exists to keep "not well formed" and "not authorised" apart, and
@@ -25,16 +25,6 @@ pub enum VerifyError {
     UnauthorisedSigner,
     /// Fewer distinct authorised signers than the feed requires.
     ThresholdNotMet { met: u8, required: u8 },
-    /// One signer supplied the requested feed twice.
-    ///
-    /// Nothing constructs this today: the second package is skipped, because a
-    /// duplicate needs no key to produce -- copying a package already in the
-    /// payload, or replaying an older one still inside `maxAge`, would
-    /// otherwise deny the feed to everyone (ADR 24). One signer still counts
-    /// once, which is what the anti-inflation rule needs; the per-signer slot
-    /// is what enforces it. A future single-package API is where this becomes
-    /// reportable.
-    ReoccurringSigner,
     /// The packages are from more than one RedStone round, and no single round
     /// carried enough signers.
     ///

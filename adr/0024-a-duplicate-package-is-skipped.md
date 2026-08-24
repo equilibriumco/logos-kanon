@@ -45,10 +45,10 @@ supplies.
 ## Decision
 
 **After ADR 15's strict checks, a second valid package from one signer cannot
-fill another signer slot, and `ReoccurringSigner` is never constructed.** It
-stays in the enum as the one variant without a producer. Reports are retained
-long enough for ADR 28 to select a round, then the per-signer slot rather than
-an error enforces the anti-inflation property.
+fill another signer slot and is not an error.** Reports are retained long enough
+for ADR 28 to select a round, then the per-signer slot enforces the
+anti-inflation property. The public error enum has no duplicate-specific
+variant because callers can never observe one.
 
 **Which of a signer's packages then counts is not decided here.**
 `for_each_package` walks the payload from the tail, so "whichever arrived first"
@@ -67,13 +67,11 @@ the price is a function of the set of packages, not of their order.
   `a_package_from_another_round_cannot_take_the_round_from_the_signers` runs the
   same replay, older and newer, and requires the same median and the same
   timestamp from both.
-- **Three tests changed their expected answer** from `ReoccurringSigner` to the
-  threshold failure it is. They are the same payloads asserting the same
-  property — one signer counts once — which is the point: the property never
-  depended on the error.
-- **`no_two_failure_modes_answer_with_the_same_variant` omits
-  `ReoccurringSigner`.** "One signer twice" is no longer a distinct failure
-  mode, because it is no longer a failure.
+- **Three tests changed from duplicate rejection to the threshold failure it
+  is.** They are the same payloads asserting the same property — one signer
+  counts once — which is the point: the property never depended on an error.
+- **Every public error variant is observable.** "One signer twice" is not in
+  the taxonomy because it is not a distinct failure mode.
 - **The extra report bookkeeping is included in the product measurements.**
   `COSTS.md` and `methods/tests/cost.rs` carry the current exact numbers.
 - **A signer that signs two different values under one timestamp is still

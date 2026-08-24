@@ -243,7 +243,7 @@ verified_by = [
   "test:an_unusable_configuration_is_refused_before_a_payload_is_ever_seen",
   "test:a_signature_that_recovers_to_nobody_is_reported_directly",
 ]
-note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines the payload and configuration failures, while later hardening added `TooManyPackages` and `MixedRounds`. ADR 15 requires strict package rejection: `InvalidSignature`, `UnauthorisedSigner`, `StalePackage`, `FuturePackage`, and `ValueOutOfRange` return immediately for any package carrying the requested feed, before threshold evaluation. `ReoccurringSigner` remains the sole variant without a producer because duplicate packages cannot fill another signer slot and ADR 24 keeps them non-fatal. M1-22 provides the contract-shaped suite and asserts that no two causes collapse onto the same variant."
+note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines the payload and configuration failures, while later hardening added `TooManyPackages` and `MixedRounds`. ADR 15 requires strict package rejection: `InvalidSignature`, `UnauthorisedSigner`, `StalePackage`, `FuturePackage`, and `ValueOutOfRange` return immediately for any package carrying the requested feed, before threshold evaluation. Every public variant has a producer. Duplicate packages cannot fill another signer slot and ADR 24 keeps them non-fatal, so they are not represented as an unreachable error. M1-22 provides the contract-shaped suite and asserts that no two causes collapse onto the same variant."
 
 [[row]]
 id = "U7"

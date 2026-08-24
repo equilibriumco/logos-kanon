@@ -18,13 +18,13 @@ Measured in the guest rather than extrapolated from the table: an 8 KB payload o
 repeated packages came to **34,746,599 cycles, 103.6% of the budget**, and a
 transaction that reaches the limit aborts instead of publishing.
 
-**ADR 24 is what made that cheap.** Before it, a repeated package returned
-`ReoccurringSigner` from the point loop as soon as a signer's slot was already
-filled, so a flood aborted the walk after a handful of recoveries — the same 56
-packages measured 4,545,420 cycles, 13.6%. Skipping the duplicate instead was
-right for the reason ADR 24 gives, and it turned a denial that cost one package
-into a denial that costs a whole transaction. Trading one for the other was not
-the intention and is not a defensible resting place.
+**ADR 24 is what made that cheap.** Before it, a repeated package returned a
+duplicate-package error from the point loop as soon as a signer's slot was
+already filled, so a flood aborted the walk after a handful of recoveries — the
+same 56 packages measured 4,545,420 cycles, 13.6%. Skipping the duplicate
+instead was right for the reason ADR 24 gives, and it turned a denial that cost
+one package into a denial that costs a whole transaction. Trading one for the
+other was not the intention and is not a defensible resting place.
 
 The second half is not an attack at all. **RedStone payloads carry several feeds
 at once**, and every package was recovered whatever feed it named. Verifying one
