@@ -47,7 +47,10 @@ ported; `NOTICE` records that boundary.
 3. returns `StalePackage` or `FuturePackage` when the timestamp is outside the
    two-sided window; and
 4. returns `ValueOutOfRange` when the requested data point is zero, negative,
-   or too wide to represent.
+   or too wide to represent; and
+5. returns `TimestampMismatch` when the package describes a different moment
+   than the first package carrying this feed (ADR 27), which is checked before
+   the hash because it needs no signer.
 
 The first package failure encountered is returned before threshold evaluation.
 This preserves the proposed typed-error interface without adding a second
@@ -60,9 +63,9 @@ packages verification will recover.
 
 **M-of-N counts distinct valid signers.** One slot is reserved per configured
 signer. A repeated package cannot fill another slot, so it cannot inflate the
-threshold; ADR 24 records why duplicates remain non-fatal. ADR 27 decides which
-single round supplies the result when individually valid packages carry more
-than one in-window timestamp.
+threshold; ADR 24 records why duplicates remain non-fatal, and a copy agrees
+about the moment by construction. ADR 27 requires every package carrying this
+feed to describe one moment, and refuses the payload otherwise.
 
 The reported value is the median of the slots filled by the selected round,
 using the overflow-safe midpoint.
@@ -75,7 +78,7 @@ using the overflow-safe midpoint.
 - A payload with three good packages and one bad package is rejected. A relayer
   receiving aggregates wider than the configured signer set must validate and
   select the packages it submits.
-- Error precedence is deterministic in decoder walk order: signature,
+- Error precedence is deterministic in decoder walk order: moment, signature,
   authority, age, then value within one package. The verifier reports the first
   defect it encounters rather than inventorying every defect in rejected input.
 - `MAX_SIGNERS = 32` remains the fixed signer-set and median-buffer limit.

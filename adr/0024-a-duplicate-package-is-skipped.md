@@ -3,7 +3,7 @@
 - **Status**: accepted; the cost of
   skipping is bounded by [ADR 25](0025-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md),
   and which of a signer's packages counts is decided by
-  [ADR 27](0027-one-price-comes-from-one-round-chosen-by-consensus.md)
+  [ADR 27](0027-one-price-comes-from-one-round-and-a-mixed-payload-is-refused.md)
 - **Milestone**: M1 (`M1-13`)
 - **Requirements**: F3, SEC1
 - **Artefacts**: `verifier-core/src/feed.rs`, `verifier-core/src/error.rs`, `COSTS.md`
@@ -56,10 +56,14 @@ would mean "whichever an attacker appended last", and the verified price would
 depend on where in the payload the bytes sit. Skipping the duplicate is what
 makes that question askable at all — until it stops being fatal there is nothing
 to choose between — and
-[ADR 27](0027-one-price-comes-from-one-round-chosen-by-consensus.md) answers it,
-by settling the round the payload speaks for and taking each signer's package
-from that round. What matters here is the property the answer has to preserve:
-the price is a function of the set of packages, not of their order.
+[ADR 27](0027-one-price-comes-from-one-round-and-a-mixed-payload-is-refused.md) answers it
+by removing the choice: every package carrying the feed describes the same
+moment or the payload is refused, so a signer's packages are interchangeable and
+the first the walk reaches holds the slot. What matters here is the property that
+answer preserves: the price is a function of the set of packages, not of their
+order. A copy is still non-fatal, because a copy agrees about the moment; a
+package replayed from an older round does not, and ADR 27 records what that
+costs.
 
 ## Consequences
 

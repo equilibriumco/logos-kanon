@@ -65,12 +65,13 @@ verified_by = [
   "test:one_signer_cannot_reach_the_threshold_alone_by_repeating_the_feed",
   "test:a_single_package_carrying_the_requested_feed_twice_still_counts_once",
   "test:a_copy_of_a_package_already_in_the_payload_cannot_deny_the_feed",
-  "test:copies_of_one_package_cannot_outvote_the_round_the_signers_agree_on",
-  "test:one_package_cannot_crowd_the_other_signers_out_of_the_report_buffer",
-  "test:a_package_from_another_round_cannot_take_the_round_from_the_signers",
-  "test:two_rounds_with_equal_support_are_settled_by_the_newer",
-  "test:an_older_package_from_a_signer_that_already_reported_cannot_deny_the_feed",
+  "test:copies_of_a_package_from_another_round_refuse_the_payload",
+  "test:one_package_cannot_crowd_the_other_signers_out",
+  "test:a_package_from_another_round_refuses_the_payload",
+  "test:a_payload_carrying_two_whole_rounds_is_refused",
+  "test:an_older_package_from_a_signer_that_already_reported_refuses_the_payload",
   "test:a_package_duplicated_by_anyone_does_not_deny_the_feed_to_the_rest",
+  "test:a_package_replayed_from_an_older_round_refuses_the_payload",
   "test:a_threshold_of_one_is_met_by_one_signer",
   "test:a_threshold_equal_to_the_signer_count_needs_every_one_of_them",
   "test:one_package_past_the_ceiling_is_refused_rather_than_answered",
@@ -243,7 +244,7 @@ verified_by = [
   "test:an_unusable_configuration_is_refused_before_a_payload_is_ever_seen",
   "test:a_signature_that_recovers_to_nobody_is_reported_directly",
 ]
-note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines the payload and configuration failures, while later hardening added `TooManyPackages` and `MixedRounds`. ADR 15 requires strict package rejection: `InvalidSignature`, `UnauthorisedSigner`, `StalePackage`, `FuturePackage`, and `ValueOutOfRange` return immediately for any package carrying the requested feed, before threshold evaluation. Every public variant has a producer. Duplicate packages cannot fill another signer slot and ADR 24 keeps them non-fatal, so they are not represented as an unreachable error. M1-22 provides the contract-shaped suite and asserts that no two causes collapse onto the same variant."
+note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines the payload and configuration failures, while later hardening added `TooManyPackages` and `TimestampMismatch`. ADR 15 requires strict package rejection: `InvalidSignature`, `UnauthorisedSigner`, `StalePackage`, `FuturePackage`, `ValueOutOfRange` and `TimestampMismatch` return immediately for any package carrying the requested feed, before threshold evaluation. Every public variant has a producer. Duplicate packages cannot fill another signer slot and ADR 24 keeps them non-fatal, so they are not represented as an unreachable error. M1-22 provides the contract-shaped suite and asserts that no two causes collapse onto the same variant."
 
 [[row]]
 id = "U7"
@@ -325,7 +326,7 @@ verified_by = [
   "doc:m0/M0-report.pdf",
   "doc:COSTS.md",
 ]
-note = "\"Reproducible from the test suite\" is satisfied the strict way: every published figure is asserted by exact equality and runs in CI on x86_64. M0 measured the two primitives in isolation, and its per-component split comes from a subtraction rather than a residual: `lez_plumbing` is a third guest identical to `lez_verify` with the cryptography removed, so the framework's per-package instruction handling is taken out directly and `instruction_handling_cost_is_unchanged` pins it. Without that separation, drift in the framework's cost is silently reattributed to recovery. M1-25 does the same for the shipped path: `COSTS.md` breaks a real update into decode, keccak256, recovery, the signer-set check and a named remainder, by differencing prefixes of `verify_feed` in the product guest over payloads RedStone published. Recovery is 95.81% of a three-signer update and nothing amortises, so a wider threshold is linearly priced. The table is printed by the code that asserts it, so a published figure and an asserted figure cannot drift apart, and the two rows for keccak256 and recovery are what finally give ADR 6 its CI guards in cycles alone. The cross-architecture finding (M0-11) stands in the report, measured across three machines; ARM64 is not a delivery target and is no longer re-checked on every push. Still to come are the push write (M2-18), the pull per-read (M3-08) and byte accounting (M3-10)."
+note = "\"Reproducible from the test suite\" is satisfied the strict way: every published figure is asserted by exact equality and runs in CI on x86_64. M0 measured the two primitives in isolation, and its per-component split comes from a subtraction rather than a residual: `lez_plumbing` is a third guest identical to `lez_verify` with the cryptography removed, so the framework's per-package instruction handling is taken out directly and `instruction_handling_cost_is_unchanged` pins it. Without that separation, drift in the framework's cost is silently reattributed to recovery. M1-25 does the same for the shipped path: `COSTS.md` breaks a real update into decode, keccak256, recovery, the signer-set check and a named remainder, by differencing prefixes of `verify_feed` in the product guest over payloads RedStone published. Recovery is 95.85% of a three-signer update and nothing amortises, so a wider threshold is linearly priced. The table is printed by the code that asserts it, so a published figure and an asserted figure cannot drift apart, and the two rows for keccak256 and recovery are what finally give ADR 6 its CI guards in cycles alone. The cross-architecture finding (M0-11) stands in the report, measured across three machines; ARM64 is not a delivery target and is no longer re-checked on every push. Still to come are the push write (M2-18), the pull per-read (M3-08) and byte accounting (M3-10)."
 
 [[row]]
 id = "P3"

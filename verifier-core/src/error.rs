@@ -25,14 +25,13 @@ pub enum VerifyError {
     UnauthorisedSigner,
     /// Fewer distinct authorised signers than the feed requires.
     ThresholdNotMet { met: u8, required: u8 },
-    /// The packages are from more than one RedStone round, and no single round
-    /// carried enough signers.
+    /// The payload's packages do not all describe the same moment.
     ///
-    /// Carries the largest round found, so a caller can see how close it came.
-    /// Distinct from [`Self::ThresholdNotMet`] because the signers were there:
-    /// what is wrong is that they are not describing one observation, which
-    /// points at whoever assembled the payload rather than at the signer set.
-    MixedRounds { largest: u8, required: u8 },
+    /// Carries the timestamp the payload settled on and the first one that
+    /// disagreed. A price is a statement about one observation, so a payload
+    /// carrying two is one whose author chose which observation answers. Points
+    /// at whoever assembled the payload rather than at the signer set.
+    TimestampMismatch { expected: u64, found: u64 },
     /// The payload carries more packages for this feed than verification will
     /// pay to recover.
     ///

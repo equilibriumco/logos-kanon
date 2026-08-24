@@ -111,22 +111,22 @@ mod expected {
     /// It is the harness's cost, not the verifier's: it is subtracted out of
     /// every component, and a program reading a payload from an account rather
     /// than from the guest's input stream would pay something different.
-    pub const FLOOR: [(usize, u64); 3] = [(1, 25_327), (3, 62_299), (5, 99_499)];
+    pub const FLOOR: [(usize, u64); 3] = [(1, 25_315), (3, 62_283), (5, 99_482)];
 
     /// Per signer count: decode, keccak256, recovery, membership, then
     /// everything else `verify_feed` does.
     pub const COMPONENTS: [(usize, [u64; 5]); 3] = [
-        (1, [587, 17_479, 585_277, 162, 18_141]),
-        (3, [1_506, 52_437, 1_755_583, 537, 22_348]),
-        (5, [2_425, 87_395, 2_922_895, 980, 27_247]),
+        (1, [587, 17_476, 585_276, 160, 17_783]),
+        (3, [1_506, 52_428, 1_755_580, 528, 21_629]),
+        (5, [2_425, 87_380, 2_922_890, 960, 26_188]),
     ];
 
     /// The whole update, floor subtracted.
-    pub const TOTAL: [(usize, u64); 3] = [(1, 621_646), (3, 1_832_411), (5, 3_040_942)];
+    pub const TOTAL: [(usize, u64); 3] = [(1, 621_282), (3, 1_831_671), (5, 3_039_843)];
 
     /// One Q64.64 conversion: the largest single item in the remainder, and the
     /// only one worth naming separately.
-    pub const SCALING: u64 = 11_307;
+    pub const SCALING: u64 = 11_263;
 
     /// `MAX_NUM_CYCLES_PUBLIC_EXECUTION`, the cycles a LEZ public transaction
     /// gets. Recorded in `m0/lez-probe/README.md` and the figure P1 is measured

@@ -42,7 +42,7 @@ they describe the design being proposed for acceptance.
 | [24](0024-a-duplicate-package-is-skipped.md) | A duplicate package is skipped | accepted |
 | [25](0025-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
 | [26](0026-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
-| [27](0027-one-price-comes-from-one-round-chosen-by-consensus.md) | One price comes from one round, and the round is chosen by consensus | accepted |
+| [27](0027-one-price-comes-from-one-round-and-a-mixed-payload-is-refused.md) | One price comes from one round, and a payload that mixes rounds is refused | accepted |
 | [28](0028-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
 
 ## How they fit together
@@ -114,14 +114,15 @@ to fix: LEZ reads a program's whole instruction data before the program's first
 instruction, so the limit is a number to publish and for callers to enforce rather than
 a check that can save the transaction it refuses.
 
-ADR 27 is the one that found a divergence nobody had decided on. ADR 15 and ADR 18 both
-worked from RedStone's Rust SDK and both named the places Kanon departs from it; neither
-opened `protocol/payload.rs`, where the SDK requires every package in a payload to carry
-one timestamp. Kanon did not, which let a payload's assembler build a median out of three
-different moments. The correction cannot be the SDK's own -- refusing a payload whose
-timestamps differ is the free denial ADR 24 and ADR 25 spent two decisions closing -- so
-the round is settled by counting distinct signers instead, which is the one tally an
-attacker cannot pad.
+ADR 27 is the one that found a gap nobody had decided on: a price is a statement about one
+observation, and nothing required the packages behind one to describe the same moment, so a
+payload's assembler could build a median out of three. It is also the decision this
+milestone made twice. The first answer chose a round by vote, to avoid making a replayed
+package fatal; the second refuses the payload, because ADR 15 had already ruled that a bad
+package refuses and accepted what that costs. Being strict about four properties of a
+package and holding a vote on the fifth was two positions rather than one. What the second
+answer costs is written into ADR 27 rather than left for SEC3's analysis to discover: a
+replay is now a denial, so a submitter has to own the bytes it submits.
 
 ## Open questions carried by these decisions
 
