@@ -46,8 +46,8 @@ implemented_in = ["verifier-core", "pull-lib"]
 verified_by = [
   "test:exactly_the_threshold_verifies_and_reports_how_many_signers_met_it",
   "test:more_signers_than_the_threshold_all_count_toward_the_median",
-  "test:a_signer_that_sent_an_unusable_value_does_not_deny_the_feed_to_the_rest",
-  "test:a_stranger_in_the_payload_is_ignored_when_the_configured_signers_suffice",
+  "test:one_unusable_value_rejects_even_when_the_other_signers_reach_threshold",
+  "test:one_stranger_rejects_even_when_the_authorised_signers_reach_threshold",
   "test:a_package_at_the_far_edge_of_the_window_is_still_current",
   "test:an_accepted_price_carries_both_scales_so_a_caller_need_not_convert",
   "test:no_two_failure_modes_answer_with_the_same_variant",
@@ -73,11 +73,10 @@ verified_by = [
   "test:a_package_duplicated_by_anyone_does_not_deny_the_feed_to_the_rest",
   "test:a_threshold_of_one_is_met_by_one_signer",
   "test:a_threshold_equal_to_the_signer_count_needs_every_one_of_them",
-  "test:a_full_buffer_of_unknown_signers_neither_panics_nor_overruns",
   "test:one_package_past_the_ceiling_is_refused_rather_than_answered",
   "test:packages_for_other_feeds_are_free_and_do_not_count_against_the_ceiling",
 ]
-note = "`verify_feed` enforces M-of-N over distinct authorised signers: one slot per configured signer, so a signer counts once however many packages it sends (M1-13). A second package from a slotted signer is skipped rather than fatal -- ADR 24 records why, and the tests cover both ways an attacker can produce a duplicate without a key. Which of a signer's packages fills its slot is settled by ADR 28 rather than by ADR 24's freshest rule: the price comes from one round, chosen as the timestamp the most distinct configured signers agree on, and one package files one report however many times it repeats the feed. M1-23 pins the boundaries where an off-by-one would live -- M, M-1, one, and unanimity -- plus the case a consumer does not control: more unknown signers in a payload than the fixed buffer holds, where a panic would abort the transaction rather than refuse the price."
+note = "`verify_feed` enforces M-of-N over distinct authorised signers: one slot per configured signer, so a signer counts once however many packages it sends (M1-13). A second package from a slotted signer is skipped rather than fatal -- ADR 24 records why, and the tests cover both ways an attacker can produce a duplicate without a key. Which of a signer's packages fills its slot is settled by ADR 27 rather than by ADR 24's freshest rule: the price comes from one round, chosen as the timestamp the most distinct configured signers agree on, and one package files one report however many times it repeats the feed. M1-23 pins the boundaries where an off-by-one would live -- M, M-1, one, and unanimity. ADR 15 records the contract's strict package checks before the threshold is evaluated."
 
 [[row]]
 id = "F4"
@@ -90,7 +89,10 @@ verified_by = [
   "test:trailing_bytes_before_the_packages_are_rejected",
   "test:a_feed_registered_against_another_pair_is_refused",
   "test:a_pair_matching_only_on_the_base_is_still_a_mismatch",
-  "test:a_negative_value_costs_only_the_signer_that_sent_it",
+  "test:a_negative_value_rejects_even_when_quorum_is_present",
+  "test:every_repeated_point_for_the_requested_feed_is_validated",
+  "test:one_stale_package_rejects_even_when_quorum_is_present",
+  "test:one_future_package_rejects_even_when_quorum_is_present",
   "test:signers_that_all_reported_something_unusable_are_named_as_the_fault",
   "test:the_staleness_boundary_admits_a_package_exactly_max_age_old",
   "test:a_package_dated_beyond_clock_skew_is_a_different_failure_from_a_stale_one",
@@ -100,7 +102,7 @@ verified_by = [
   "test:a_published_payload_verifies_end_to_end",
   "test:a_wrong_signed_span_recovers_to_nobody",
 ]
-note = "Four rejection classes in one requirement. The malformed-wire-format one has landed: M1-12 decodes zero-copy, bounds-checks every length, and is tested against truncation at every offset, since a panic in a guest aborts the transaction rather than rejecting the package. Conformance against published vectors is M1-21. Asset identity has landed (M1-16), and it is a comparison between the caller's expectation and the registration rather than a property of the payload, because a RedStone package names a feed and nothing else -- ADR 16 records what that check does and does not establish. Value sanity has landed too (M1-17): zero, negative and unrepresentable values are skipped per signer so that one signer cannot deny a feed, and are reported once enough of them would have met the threshold. Staleness has landed as well (M1-14, M1-15): the clock is LEZ's every-block account read through `kanon-clock`, and any other account is refused, because a caller-supplied clock makes a stale price look current. The window is two-sided, following RedStone, so a package dated beyond clock skew is its own failure rather than a stale one -- ADR 18 records why that distinction is worth a variant U6 does not name. All four rejection classes are now implemented. M1-21 conforms the decoder against payloads captured from RedStone's gateway, using their own signatures as the oracle: a signature recovers to the address they published only if the signed span matches theirs byte for byte, and a negative control shows seven plausible wrong spans recovering nobody. There are no published vectors to test against -- the Rust SDK builds its test data in code and the EVM connector is BUSL -- which is what ADR 19 records."
+note = "Four rejection classes in one requirement. The malformed-wire-format one has landed: M1-12 decodes zero-copy, bounds-checks every length, and is tested against truncation at every offset, since a panic in a guest aborts the transaction rather than rejecting the package. Conformance against published vectors is M1-21. Asset identity has landed (M1-16), and it is a comparison between the caller's expectation and the registration rather than a property of the payload, because a RedStone package names a feed and nothing else -- ADR 16 records what that check does and does not establish. Value sanity has landed too (M1-17): zero, negative and unrepresentable values reject the payload immediately, even when other packages meet the threshold. Staleness has landed as well (M1-14, M1-15): every package for the requested feed must be inside the two-sided window, read from LEZ's pinned every-block clock account. ADR 15 records the strict package-level contract. M1-21 conforms the decoder against payloads captured from RedStone's gateway, using their own signatures as the oracle: a signature recovers to the address they published only if the signed span matches theirs byte for byte, and a negative control shows seven plausible wrong spans recovering nobody. There are no published vectors to test against -- the Rust SDK builds its test data in code and the EVM connector is BUSL -- which is what ADR 19 records."
 
 [[row]]
 id = "F5"
@@ -119,7 +121,6 @@ verified_by = [
   "test:an_older_observation_inside_the_window_cannot_move_the_price_backwards",
   "test:the_same_observation_twice_is_not_an_update",
   "test:the_timestamp_is_the_round_every_counted_package_shares",
-  "test:a_package_that_did_not_count_does_not_decide_the_round",
   "test:the_vendored_idl_declares_the_fields_we_expect",
   "test:field_order_is_part_of_the_standard",
   "test:the_reexported_type_is_constructible_with_the_documented_shape",
@@ -214,8 +215,8 @@ verified_by = [
   "test:the_threshold_failure_carries_what_was_reached_and_what_was_needed",
   "test:a_feed_registered_against_another_pair_is_refused",
   "test:signers_that_all_reported_something_unusable_are_named_as_the_fault",
-  "test:a_bad_value_that_could_not_have_met_the_threshold_anyway_is_not_blamed",
-  "test:a_configured_signers_bad_value_is_named_before_a_strangers_absence",
+  "test:one_bad_value_is_reported_before_threshold_is_evaluated",
+  "test:the_first_bad_package_in_the_wire_walk_is_reported",
   "test:an_exponent_the_conversion_cannot_divide_by_is_a_configuration_error",
   "test:a_missing_clock_is_not_a_stale_package",
   "test:a_stale_package_and_a_future_one_stay_distinguishable",
@@ -225,7 +226,7 @@ verified_by = [
   "test:values_from_different_rounds_are_not_made_into_one_price",
   "test:the_timestamp_is_the_round_every_counted_package_shares",
   "test:more_packages_for_this_feed_than_verification_will_pay_for_is_refused",
-  "test:a_stale_package_carrying_a_value_this_feed_cannot_use_is_not_staleness_either",
+  "test:package_age_is_checked_before_its_value",
   "test:a_clock_that_cannot_be_read_refuses_rather_than_guesses",
   "test:no_two_failure_modes_answer_with_the_same_variant",
   "test:a_malformed_payload_is_named_as_malformed_and_carries_the_decoder_reason",
@@ -235,14 +236,14 @@ verified_by = [
   "test:a_pair_that_is_not_the_callers_is_refused_before_a_single_recovery",
   "test:a_payload_older_than_the_window_is_stale_rather_than_short_of_signers",
   "test:a_payload_dated_ahead_of_the_clock_is_its_own_failure_not_a_stale_one",
-  "test:prices_nobody_can_use_are_reported_once_enough_of_them_would_have_counted",
+  "test:zero_and_negative_prices_are_rejected_directly",
   "test:one_signer_supplying_the_feed_twice_counts_once_and_is_short_of_the_threshold",
   "test:a_price_the_accounts_scale_cannot_hold_is_reported_not_wrapped",
   "test:a_clock_that_cannot_be_read_fails_the_verification_rather_than_defaulting",
   "test:an_unusable_configuration_is_refused_before_a_payload_is_ever_seen",
-  "test:signatures_that_recover_to_nobody_are_a_threshold_failure_not_a_signature_one",
+  "test:a_signature_that_recovers_to_nobody_is_reported_directly",
 ]
-note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines all ten `VerifyError` variants now -- nine payload failure modes plus `InvalidConfig` for a bad configuration. `AssetMismatch` (M1-16), `ValueOutOfRange` and `ScalingOutOfRange` (M1-17) and `StalePackage` (M1-15) now have producers. M1-15 adds two variants U6 does not name -- `FuturePackage`, because a future-dated package points at a clock rather than at a relayer, and `NoClock`, because verifying without one accepts a package of any age. `InvalidSignature` is the only variant with no producer, and has none by design -- an unrecoverable signature is skipped, not rejected (ADR 15), so a future single-package API is where it becomes reportable. M1-22 adds the contract-shaped reading of all of it: one module, one test per accept and reject mode, plus the assertion none of the per-mode tests can make alone -- that no two causes answer with the same variant, compared by discriminant so a collapse onto one variant cannot hide behind differing payloads. ADR 23 records the shape. Two variants have no producer rather than one: ADR 24 made a duplicate package a skip, so `ReoccurringSigner` joins `InvalidSignature` as a fault in one package that a payload-level API does not report. ADR 25 corrects a case where the enum named the wrong mode: a configured signer's out-of-window package about another feed no longer counts as present-but-blocked, so a threshold failure is no longer reported as staleness. ADR 26 adds `TooManyPackages`, the one failure that was previously reported by the transaction running out of cycles -- which is not a failure a caller can act on, because it never gets to see one. ADR 28 adds `MixedRounds`: RedStone signs a round's packages under one timestamp and its own SDK refuses a payload whose packages disagree, which Kanon did not, so a payload could be spliced from several rounds into a median nobody published. Its own variant because the signers were there and their values were fine -- the fault is the payload, and neither `ThresholdNotMet` nor `ValueOutOfRange` says so."
+note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines the payload and configuration failures, while later hardening added `TooManyPackages` and `MixedRounds`. ADR 15 requires strict package rejection: `InvalidSignature`, `UnauthorisedSigner`, `StalePackage`, `FuturePackage`, and `ValueOutOfRange` return immediately for any package carrying the requested feed, before threshold evaluation. Every public variant has a producer. Duplicate packages cannot fill another signer slot and ADR 24 keeps them non-fatal, so they are not represented as an unreachable error. M1-22 provides the contract-shaped suite and asserts that no two causes collapse onto the same variant."
 
 [[row]]
 id = "U7"
@@ -300,7 +301,7 @@ verified_by = [
   "test:a_payload_past_the_size_limit_is_refused_before_it_is_parsed",
   "doc:m0/M0-report.pdf",
 ]
-note = "M0 measured a 3-of-N update at 1,906,737 cycles against LEZ's 32M per-transaction budget, 5.68%, and pinned it with a guardrail test. That is the typical case; the ceiling is the other half, because the package count sits in the payload's envelope and a package costs 602,749 cycles to recover. Unbounded, 56 of them overran the budget and the transaction aborted instead of publishing. ADR 26 bounds it and `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts the bound holds. That covers verification and not the read: LEZ reads a program's whole instruction data before the program's first instruction, at about 113 cycles a byte, so a 127,814-byte payload overran the budget on the read alone with verification still correctly bounded. ADR 27 sets `MAX_PAYLOAD_BYTES` at 32 KiB and the largest payload the decoder accepts reads and verifies in 23,042,390 cycles, 69% of the budget. Between the two this row is now a statement about every payload rather than about the captured one. Bounding `InstructionData` itself is LEZ's, not this adaptor's -- no program can refuse bytes it has already been charged for -- so the limit is also a number for the relayer and the aggregator to enforce before submitting. What is still open is the shipping path in one real transaction, per mode: M2-02 and M2-19 for push, M3-06 for pull."
+note = "M0 measured a 3-of-N update at 1,906,737 cycles against LEZ's 32M per-transaction budget, 5.68%, and pinned it with a guardrail test. That is the typical case; the ceiling is the other half, because the package count sits in the payload's envelope and a hash plus recovery costs about 602,700 cycles per package. Unbounded, 56 of them overran the budget and the transaction aborted instead of publishing. ADR 25 bounds it and `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts the bound holds. That covers verification and not the read: LEZ reads a program's whole instruction data before the program's first instruction, at about 113 cycles a byte, so a 127,814-byte payload overran the budget on the read alone with verification still correctly bounded. ADR 26 sets `MAX_PAYLOAD_BYTES` at 32 KiB and the largest payload the decoder accepts reads and verifies in 23,042,390 cycles, 69% of the budget. Between the two this row is now a statement about every payload rather than about the captured one. Bounding `InstructionData` itself is LEZ's, not this adaptor's -- no program can refuse bytes it has already been charged for -- so the limit is also a number for the relayer and the aggregator to enforce before submitting. What is still open is the shipping path in one real transaction, per mode: M2-02 and M2-19 for push, M3-06 for pull."
 
 [[row]]
 id = "P2"
@@ -324,7 +325,7 @@ verified_by = [
   "doc:m0/M0-report.pdf",
   "doc:COSTS.md",
 ]
-note = "\"Reproducible from the test suite\" is satisfied the strict way: every published figure is asserted by exact equality and runs in CI on x86_64. M0 measured the two primitives in isolation, and its per-component split comes from a subtraction rather than a residual: `lez_plumbing` is a third guest identical to `lez_verify` with the cryptography removed, so the framework's per-package instruction handling is taken out directly and `instruction_handling_cost_is_unchanged` pins it. Without that separation, drift in the framework's cost is silently reattributed to recovery. M1-25 does the same for the shipped path: `COSTS.md` breaks a real update into decode, keccak256, recovery, the signer-set check and a named remainder, by differencing prefixes of `verify_feed` in the product guest over payloads RedStone published. Recovery is 95.88% of a three-signer update and nothing amortises, so a wider threshold is linearly priced. The table is printed by the code that asserts it, so a published figure and an asserted figure cannot drift apart, and the two rows for keccak256 and recovery are what finally give ADR 6 its CI guards in cycles alone. The cross-architecture finding (M0-11) stands in the report, measured across three machines; ARM64 is not a delivery target and is no longer re-checked on every push. Still to come are the push write (M2-18), the pull per-read (M3-08) and byte accounting (M3-10)."
+note = "\"Reproducible from the test suite\" is satisfied the strict way: every published figure is asserted by exact equality and runs in CI on x86_64. M0 measured the two primitives in isolation, and its per-component split comes from a subtraction rather than a residual: `lez_plumbing` is a third guest identical to `lez_verify` with the cryptography removed, so the framework's per-package instruction handling is taken out directly and `instruction_handling_cost_is_unchanged` pins it. Without that separation, drift in the framework's cost is silently reattributed to recovery. M1-25 does the same for the shipped path: `COSTS.md` breaks a real update into decode, keccak256, recovery, the signer-set check and a named remainder, by differencing prefixes of `verify_feed` in the product guest over payloads RedStone published. Recovery is 95.81% of a three-signer update and nothing amortises, so a wider threshold is linearly priced. The table is printed by the code that asserts it, so a published figure and an asserted figure cannot drift apart, and the two rows for keccak256 and recovery are what finally give ADR 6 its CI guards in cycles alone. The cross-architecture finding (M0-11) stands in the report, measured across three machines; ARM64 is not a delivery target and is no longer re-checked on every push. Still to come are the push write (M2-18), the pull per-read (M3-08) and byte accounting (M3-10)."
 
 [[row]]
 id = "P3"
@@ -360,6 +361,7 @@ implemented_in = ["traceability", "verifier-core", "verifier-core/src/properties
 verified_by = [
   "ci:traceability",
   "test:every_published_signature_recovers_to_the_signer_redstone_named",
+  "test:a_garbage_signature_rejects_even_when_quorum_is_present",
   "test:a_signer_set_that_is_not_the_published_one_reaches_no_threshold",
   "test:lowering_the_threshold_never_changes_the_price_and_never_loses_it",
   "test:a_payload_decodes_back_to_what_was_written_into_it",
@@ -368,7 +370,7 @@ verified_by = [
   "test:the_median_does_not_depend_on_the_order_the_reports_arrived_in",
   "test:a_corrupted_payload_is_answered_rather_than_panicked_on",
 ]
-note = "This matrix is the requirement's own instrument. It is `partial` by construction until M5-06 leaves every row verified; the checker is what stops that from being asserted without evidence. S3 also asks for coverage against valid and invalid signatures specifically, which M1-21 answers with real ones: RedStone's published signatures over their published packages, and the same packages against a signer set that never signed them. M1-24 adds the coverage an example cannot give: the threshold, the framing and the scale conversion are claims about every input, and `verifier-core/src/properties.rs` generates them (ADR 21). The last of those tests is the one that matters most for a guest, since ADR 4 makes a panic on a malformed payload an aborted transaction rather than a rejection."
+note = "This matrix is the requirement's own instrument. It is `partial` by construction until M5-06 leaves every row verified; the checker is what stops that from being asserted without evidence. S3 asks for valid-signature acceptance and invalid-signature rejection specifically: M1-21 verifies RedStone's published signatures over their published packages, while ADR 15 adds a payload with an unrecoverable signature alongside an otherwise valid quorum and requires `InvalidSignature`. M1-24 adds the coverage an example cannot give: the threshold, the framing and the scale conversion are claims about every input, and `verifier-core/src/properties.rs` generates them (ADR 21). The last of those tests is the one that matters most for a guest, since ADR 4 makes a panic on a malformed payload an aborted transaction rather than a rejection."
 
 [[row]]
 id = "S4"
@@ -410,10 +412,10 @@ status = "partial"
 tasks = ["M1-13", "M1-22", "M2-13", "M3-03"]
 implemented_in = ["verifier-core"]
 verified_by = [
-  "test:an_unknown_signer_is_skipped_and_the_payload_still_verifies",
-  "test:unauthorised_is_reported_when_the_skipped_signers_would_have_made_quorum",
+  "test:an_unknown_signer_rejects_the_payload_even_when_quorum_is_present",
+  "test:an_unauthorised_signer_is_reported_directly",
 ]
-note = "Both modes, one implementation: the membership check lives in `verifier-core`, so push and pull cannot diverge on who is authorised. The rule is count-and-ignore per ADR 15, not strict rejection: an unknown signer is skipped rather than failing the payload, and only named `UnauthorisedSigner` once the skipped signers would themselves have reached quorum -- a reader expecting strict rejection would otherwise read this row as unmet. ADR 24 extends the same rule to the last package class that failed a payload outright, a duplicate, because producing one needs no key and rejecting on it denied the feed to every consumer of that payload; F3 carries the evidence. ADR 26 bounds what that skip costs: recovering every copy of a package is what the rejection used to prevent, and unbounded it exhausted the transaction's cycle budget, so a package that says nothing about the requested feed is now skipped before it is hashed and there is a ceiling on how many are recovered. The ceiling does not restore count-and-ignore above itself, and cannot: whether a signature is anybody's is only knowable by paying for the recovery, so packages past the ceiling refuse the feed with `TooManyPackages` whether or not they were signed. What that buys is a denial at a fixed, measured cost that names itself, rather than one that exhausts the transaction. P1 carries the evidence for the bound. ADR 28 keeps that shape for the round rule too: RedStone refuses a payload whose package timestamps differ, which would let one replayed package deny the feed, so the round is decided by counting distinct signers instead -- the one tally appending cannot pad."
+note = "Both modes share one membership check in `verifier-core`. Every package carrying the requested feed is recovered and its signer must be in the configured set; the first unknown signer returns `UnauthorisedSigner` even when authorised packages already meet quorum. Packages for other feeds remain irrelevant and are skipped before recovery. ADR 15 records why this follows SEC1's literal contract and why a malicious submitter causing its own transaction to fail is not a feed-wide denial of service. Push and pull integration evidence remains M2-13 and M3-03, so the row stays partial."
 
 [[row]]
 id = "SEC2"

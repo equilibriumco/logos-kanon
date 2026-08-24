@@ -150,10 +150,9 @@ fn more_signers_than_the_threshold_all_count_toward_the_median() {
 }
 
 #[test]
-fn a_signer_that_sent_an_unusable_value_does_not_deny_the_feed_to_the_rest() {
-    // One configured signer reporting zero, three reporting a price. The
-    // threshold is still met, which is the whole point of M-of-N: no single
-    // member of the set can take the feed down.
+fn one_unusable_value_rejects_even_when_the_other_signers_reach_threshold() {
+    // F4 rejects the package itself; reaching quorum with the remaining
+    // packages must not turn that rejection into acceptance.
     let keys = keys(4);
     let set = addresses(&keys);
     let mut builder = PayloadBuilder::default();
@@ -162,9 +161,10 @@ fn a_signer_that_sent_an_unusable_value_does_not_deny_the_feed_to_the_rest() {
         builder = builder.signed_package(key, &[(FEED, HUNDRED)], NOW_MS);
     }
 
-    let verified = verify(&builder.build(), &config(&set, 3)).expect("verifies");
-
-    assert_eq!(verified.signers, 3);
+    assert_eq!(
+        verify(&builder.build(), &config(&set, 3)),
+        Err(VerifyError::ValueOutOfRange)
+    );
 }
 
 #[test]
@@ -194,10 +194,9 @@ fn a_package_duplicated_by_anyone_does_not_deny_the_feed_to_the_rest() {
 }
 
 #[test]
-fn a_stranger_in_the_payload_is_ignored_when_the_configured_signers_suffice() {
-    // The reason unknown signers are skipped rather than fatal: one published
-    // payload serves consumers whose signer sets differ, and anyone able to
-    // append a package would otherwise hold a denial-of-service primitive.
+fn one_stranger_rejects_even_when_the_authorised_signers_reach_threshold() {
+    // SEC1 rejects every package signed outside the configured set; an
+    // otherwise sufficient quorum does not make the package authorised.
     let keys = keys(3);
     let set = addresses(&keys);
     let stranger = signing_key(0x9E);
@@ -207,13 +206,10 @@ fn a_stranger_in_the_payload_is_ignored_when_the_configured_signers_suffice() {
     }
     builder = builder.signed_package(&stranger, &[(FEED, &[0, 0, 0, 200])], NOW_MS);
 
-    let verified = verify(&builder.build(), &config(&set, 3)).expect("verifies");
-
     assert_eq!(
-        verified.signers, 3,
-        "the stranger's 200 must not be in the median"
+        verify(&builder.build(), &config(&set, 3)),
+        Err(VerifyError::UnauthorisedSigner)
     );
-    assert_eq!(verified.value, Value::from_be_slice(&[100]).expect("fits"));
 }
 
 #[test]
@@ -353,10 +349,8 @@ fn a_payload_dated_ahead_of_the_clock_is_its_own_failure_not_a_stale_one() {
 }
 
 #[test]
-fn prices_nobody_can_use_are_reported_once_enough_of_them_would_have_counted() {
-    // U6's "zero or negative price". Per signer they are skipped, so one signer
-    // cannot deny the feed; collectively, once the skips are what cost the
-    // threshold, that is the cause worth naming.
+fn zero_and_negative_prices_are_rejected_directly() {
+    // F4 and U6 require the package to be rejected, independently of threshold.
     let keys = keys(3);
     let set = addresses(&keys);
 
@@ -399,7 +393,7 @@ fn values_from_different_rounds_are_not_made_into_one_price() {
     // median across them is an observation RedStone never published. RedStone's
     // own SDK requires a common timestamp and refuses the payload without one;
     // this refuses the splice without handing anyone a way to deny the feed by
-    // appending to it (ADR 28).
+    // appending to it (ADR 27).
     let keys = keys(3);
     let set = addresses(&keys);
     let bytes = PayloadBuilder::default()
@@ -423,7 +417,7 @@ fn more_packages_for_this_feed_than_verification_will_pay_for_is_refused() {
     // signature, so without a ceiling the payload decides how much of the
     // transaction's cycle budget verification spends -- and past about 56
     // packages it spends all of it and the transaction aborts, which is not a
-    // failure a caller can act on because it never gets to see one (ADR 26).
+    // failure a caller can act on because it never gets to see one (ADR 25).
     let keys = keys(3);
     let set = addresses(&keys);
     let mut builder = PayloadBuilder::default();
@@ -508,16 +502,9 @@ fn an_unusable_configuration_is_refused_before_a_payload_is_ever_seen() {
 }
 
 #[test]
-fn signatures_that_recover_to_nobody_are_a_threshold_failure_not_a_signature_one() {
-    // U6 names "invalid signature", and this crate does not report one. An
-    // unrecoverable signature needs no key and no valid signature to produce,
-    // so failing the payload on one would be the cheapest denial-of-service
-    // primitive in the design; it is skipped instead, exactly as RedStone skips
-    // it (ADR 15). What a caller sees is the threshold coming up short.
-    //
-    // `VerifyError::InvalidSignature` exists for a future single-package API,
-    // where a caller names one package and expects it to verify. Nothing
-    // constructs it today, and this test is what says so out loud.
+fn a_signature_that_recovers_to_nobody_is_reported_directly() {
+    // U6 promises a signature-specific error. It must remain distinct from a
+    // well-signed payload that simply falls short of the threshold.
     let keys = keys(3);
     let set = addresses(&keys);
     let bytes = PayloadBuilder::default()
@@ -528,10 +515,9 @@ fn signatures_that_recover_to_nobody_are_a_threshold_failure_not_a_signature_one
 
     assert_eq!(
         verify(&bytes, &config(&set, 3)),
-        Err(VerifyError::ThresholdNotMet {
-            met: 0,
-            required: 3
-        })
+        Err(VerifyError::InvalidSignature(
+            crate::backend::BackendError::InvalidRecoveryId
+        ))
     );
 }
 
@@ -552,9 +538,16 @@ fn no_two_failure_modes_answer_with_the_same_variant() {
     let elsewhere = AssetPair::new([0x11; AssetPair::ID_LEN], [0x05; AssetPair::ID_LEN]);
     let mut trailing = std::vec![0xDEu8; 16];
     trailing.extend_from_slice(&agreed(&keys, HUNDRED, NOW_MS));
+    let garbage_signature = PayloadBuilder::default()
+        .opaque_package(&[(FEED, HUNDRED)], NOW_MS, 0xFF)
+        .build();
 
     let observed = [
         ("malformed", verify(&trailing, &config(&set, 1))),
+        (
+            "invalid signature",
+            verify(&garbage_signature, &config(&set, 1)),
+        ),
         (
             "too few signers",
             verify(&agreed(&keys[..1], HUNDRED, NOW_MS), &config(&set, 3)),

@@ -64,25 +64,20 @@ The convention should have one definition and it should not be ours.
 `aggregator-program/src/publish.rs`: `price_account` builds the account for a first write,
 `publish` updates one that exists.
 
-### `timestamp` is the oldest package behind the median
+### `timestamp` is the selected RedStone round
 
-`VerifiedFeed` gains `timestamp_ms`, the smallest timestamp among the packages whose values
-reached the median.
+`VerifiedFeed` carries `timestamp_ms`, the timestamp shared by every package in the
+selected round. ADR 27 defines selection as the timestamp the most distinct configured
+signers agree on, ties to the newer round.
 
-A median over N signers is only as current as the stalest report that shaped it. Publishing
-the newest would let one prompt signer speak for the ones beside it, so a consumer applying
-its own `maxAge` to this field is never told a price is fresher than every signer behind it
-supports. The alternatives are worse in specific ways: the write time says nothing about
-when anybody observed anything, and the median value's own timestamp is arbitrary, because
-which value lands in the middle has no relationship to when it was signed.
+A median assembled from different observation times is not a RedStone price at all.
+Selecting one round makes the account timestamp unambiguous: it is the observation time
+every counted signer attested to, not the write time and not the timestamp attached to
+whichever value happens to land in the middle.
 
-Packages that did not count do not age it. A skipped value costs its own signer's slot and
-nothing more (ADR 15), and letting its timestamp through would date the price by a report
-that is not behind it.
-
-It is tracked as a running minimum rather than a timestamp per slot: slots are only ever
-filled, never cleared, so every update is a package that ends up behind the median, and the
-array would cost 256 bytes of a guest frame that already holds about 2.7 KB.
+Only packages that pass ADR 15's strict checks can reach round selection. Rejected input
+writes nothing, while duplicate and off-round packages that do not count cannot date the
+published result.
 
 ### `source_id` is a constant naming RedStone
 
@@ -162,11 +157,9 @@ too — the same observation twice is not an update.
 - **`AssetPair` is now re-exported from `verifier-core`'s root.** It was reachable only as
   `verifier_core::feed::AssetPair`, which was an oversight rather than a decision —
   `FeedConfig::try_new` takes one.
-- **The timestamp costs no cycles.** `per_component_cycles_are_unchanged` asserts the
-  published figures to the cycle and still passes, which was surprising enough to check
-  against a deliberate probe: a `black_box` loop in the same place moves the 1-signer
-  remainder from 25,323 to 25,324, so the harness does rebuild the guest and does see one
-  cycle. The running minimum folds into the branch already there. `COSTS.md` is unchanged.
+- **Timestamp and round-selection costs remain measured.** ADR 20's product-guest
+  harness includes the complete `verify_feed` path and asserts the published figures to
+  the cycle. `COSTS.md` is regenerated whenever that path changes.
 - **The guards were checked by breaking them.** Each of the four — the oldest-package
   minimum, the pair check, the source check, and strict newness — was inverted or removed in
   turn, and each time a test that claims to cover it failed. The habit is ADR 21's.

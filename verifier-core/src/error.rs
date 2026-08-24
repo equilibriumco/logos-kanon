@@ -3,11 +3,9 @@
 //! Every failure mode gets its own variant, because a caller that cannot tell
 //! them apart cannot act on any of them. A value out of scale is separate from a
 //! value that is zero or negative, since they point at different faults upstream.
-//! Two variants have no producer, and for the same reason: `InvalidSignature`
-//! and `ReoccurringSigner` both describe one package rather than the payload,
-//! and failing a whole payload over one package hands an attacker a denial of
-//! service that costs nothing to mount. Both are kept for the single-package
-//! API where a caller names one package and expects it to verify.
+//! Every variant has a producer. A repeated package is not a failure: one signer
+//! can fill only one threshold slot, so duplicates remain non-counting without
+//! adding an unreachable error to the public API.
 //!
 //! [`DecodeError`] and [`BackendError`] are wrapped rather than flattened.
 //! `decode` exists to keep "not well formed" and "not authorised" apart, and
@@ -21,32 +19,12 @@ pub enum VerifyError {
     /// The payload is not well formed. Carries the decoder's reason.
     Malformed(DecodeError),
     /// A signature was malformed, malleable, or yielded no key.
-    /// Nothing constructs this today: an unrecoverable signature is skipped
-    /// rather than rejected (ADR 15), so one malformed package — needing no
-    /// key and no valid signature — cannot deny the feed to everyone else it
-    /// serves. A future single-package API, where the caller names one
-    /// package and expects it to verify, is where this becomes reportable.
     InvalidSignature(BackendError),
-    /// No configured signer signed, and the packages that were skipped as
-    /// unauthorised would have been enough to reach the threshold.
-    ///
-    /// The distinction from [`Self::ThresholdNotMet`] is the actionable part: this
-    /// says the configured signer set is wrong for this payload, rather than that
-    /// too few signers signed at all.
+    /// A package for the requested feed was signed by an address outside the
+    /// configured signer set.
     UnauthorisedSigner,
-    /// Fewer distinct authorised signers than the feed requires, and authorising
-    /// the skipped ones would not have changed that.
+    /// Fewer distinct authorised signers than the feed requires.
     ThresholdNotMet { met: u8, required: u8 },
-    /// One signer supplied the requested feed twice.
-    ///
-    /// Nothing constructs this today: the second package is skipped, because a
-    /// duplicate needs no key to produce -- copying a package already in the
-    /// payload, or replaying an older one still inside `maxAge`, would
-    /// otherwise deny the feed to everyone (ADR 24). One signer still counts
-    /// once, which is what the anti-inflation rule needs; the per-signer slot
-    /// is what enforces it. A future single-package API is where this becomes
-    /// reportable.
-    ReoccurringSigner,
     /// The packages are from more than one RedStone round, and no single round
     /// carried enough signers.
     ///
@@ -63,9 +41,7 @@ pub enum VerifyError {
     /// of a signer's packages counts, by placing the ones it wants inside the
     /// ceiling and the rest outside it.
     TooManyPackages { max: usize },
-    /// Enough authorised signers reported for this feed that the threshold
-    /// would have been met, but their packages were older than the feed's
-    /// `maxAge`.
+    /// A package for this feed is older than the feed's `maxAge`.
     ///
     /// The one failure in this enum that resolves on its own: a fresher payload
     /// fixes it, where every other cause needs someone to change something.
@@ -84,14 +60,8 @@ pub enum VerifyError {
     /// a property of the payload: a RedStone package names a feed and nothing
     /// else, so no signer attests to which assets that feed prices.
     AssetMismatch,
-    /// Enough authorised signers reported for this feed that the threshold
-    /// would have been met, but every value they supplied was unusable — zero,
-    /// negative, or wider than a price can represent.
-    ///
-    /// Distinct from [`Self::ThresholdNotMet`] for the same reason
-    /// [`Self::UnauthorisedSigner`] is: signers that did report and signers
-    /// that never signed call for different responses. A single signer cannot
-    /// force this, since it can only spoil its own slot.
+    /// A package carries an unusable value for this feed — zero, negative, or
+    /// wider than a price can represent.
     ValueOutOfRange,
     /// The agreed price cannot be represented on the scale the price account
     /// uses.

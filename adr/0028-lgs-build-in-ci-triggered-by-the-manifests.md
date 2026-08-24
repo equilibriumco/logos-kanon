@@ -1,4 +1,4 @@
-# 29. `lgs build` runs in CI, triggered by the manifests rather than by every push
+# 28. `lgs build` runs in CI, triggered by the manifests rather than by every push
 
 - **Status**: accepted
 - **Milestone**: M1 (`M1-03`)

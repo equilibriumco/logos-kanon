@@ -1,4 +1,4 @@
-# 26. A payload cannot choose how much of the budget verification spends
+# 25. A payload cannot choose how much of the budget verification spends
 
 - **Status**: accepted
 - **Milestone**: M1 (`M1-13`, `M1-18`)
@@ -18,13 +18,13 @@ Measured in the guest rather than extrapolated from the table: an 8 KB payload o
 repeated packages came to **34,746,599 cycles, 103.6% of the budget**, and a
 transaction that reaches the limit aborts instead of publishing.
 
-**ADR 24 is what made that cheap.** Before it, a repeated package returned
-`ReoccurringSigner` from the point loop as soon as a signer's slot was already
-filled, so a flood aborted the walk after a handful of recoveries — the same 56
-packages measured 4,545,420 cycles, 13.6%. Skipping the duplicate instead was
-right for the reason ADR 24 gives, and it turned a denial that cost one package
-into a denial that costs a whole transaction. Trading one for the other was not
-the intention and is not a defensible resting place.
+**ADR 24 is what made that cheap.** Before it, a repeated package returned a
+duplicate-package error from the point loop as soon as a signer's slot was
+already filled, so a flood aborted the walk after a handful of recoveries — the
+same 56 packages measured 4,545,420 cycles, 13.6%. Skipping the duplicate
+instead was right for the reason ADR 24 gives, and it turned a denial that cost
+one package into a denial that costs a whole transaction. Trading one for the
+other was not the intention and is not a defensible resting place.
 
 The second half is not an attack at all. **RedStone payloads carry several feeds
 at once**, and every package was recovered whatever feed it named. Verifying one
@@ -39,8 +39,7 @@ be about the feed being verified, not about how many feeds the relayer bundled.
 **A package carrying no data point for the requested feed is skipped before it is
 hashed.** It is the one test cheap enough to run before recovery and the only one
 that does not need the signer. Nothing is lost: such a package cannot fill a
-slot, cannot be counted as an unknown signer, and cannot set an age flag — the
-three tallies ADR 25 pinned all require the feed to be present.
+slot or change this feed's error result.
 
 **`MAX_RECOVERIES` packages for the requested feed, then `TooManyPackages`.** Its
 own variant, because it is its own failure: the payload is well formed, its
@@ -74,11 +73,8 @@ twenty.
 - **An honest update costs 851 cycles more**, at three signers: the feed scan
   runs on every package before the hash. 0.05%, against a five-feed payload
   getting three times cheaper.
-- **The unknown-signer buffer can no longer be pushed past its size.** It holds
-  `MAX_SIGNERS` and the ceiling admits `MAX_RECOVERIES`, which are the same
-  number, so the overrun guard is now unreachable by construction rather than by
-  argument. `a_full_buffer_of_unknown_signers_neither_panics_nor_overruns` fills
-  it to the brim instead of overflowing it.
+- **Unknown signers no longer need a buffer.** ADR 15 returns
+  `UnauthorisedSigner` at the first relevant package outside the configured set.
 - **Four mutations, four catches**, one of which the tests missed first time:
   counting every package toward the ceiling rather than only this feed's passed,
   because the payload put the feed's packages where the tail-first walk reached
@@ -87,19 +83,11 @@ twenty.
   bounded, not free: the ceiling is reached before it is reported. What it buys
   is that the number is fixed and under the budget, where before it was the
   payload's to choose.
-- **The keyless denial ADR 24 closed is reopened above the ceiling, and that is
-  deliberate.** `recovered` counts before the recovery, which it has to: a
-  signature signed by nobody is indistinguishable from a valid one until 585,274
-  cycles have been spent finding out. So 33 packages naming this feed, signed by
-  nobody and costing nothing to produce, refuse it with `TooManyPackages`. ADR
-  24's principle — a package that costs nothing to produce must not fail the
-  payload for everyone — does not survive intact here, and no arrangement of
-  bounded work plus refusal preserves it. What changes is the shape of the
-  denial rather than its existence: a typed error at a fixed, measured cost,
-  which a relayer sees and can act on, instead of a transaction that runs out of
-  cycles and reports nothing, or a price the attacker chose. Above the ceiling
-  the honest answer is that the payload is not one this verifier will pay to
-  read, and saying so is better than any of the ways of not saying it.
+- **Strict package failures can only reduce the work when encountered before
+  the limit.** The ceiling admission check still runs before each recovery;
+  within it, an invalid signature or unauthorised signer returns immediately.
+  The ceiling remains necessary for valid copied packages and valid packages
+  spread across rounds.
 
 ## Alternatives considered
 
@@ -109,10 +97,9 @@ twenty.
 - **Stop at the ceiling and answer from what was read.** Turns a denial into a
   wrong price chosen by the attacker. Rejected above.
 - **Check freshness before recovery too.** It would cut the cost of a stale
-  flood as well. Rejected for the reason `feed.rs` already records: an outsider
-  could then append unsigned stale packages and turn a threshold failure into a
-  staleness one. The feed check has no such effect, because a package for
-  another feed contributes to no tally either way.
+  flood, but it would report an unauthorised or invalidly signed package as a
+  clock problem. ADR 15 keeps the actionable error order: signature, authority,
+  then age.
 - **Leave it to the caller.** The aggregator could bound the payload before
   calling. It would work for push and do nothing for pull, where the payload is
   the caller's argument and `verify_feed` is the whole of what a consumer runs.

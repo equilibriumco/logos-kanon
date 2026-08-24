@@ -88,7 +88,7 @@ pub const EMPTY_ENVELOPE_BYTES: usize =
 /// by the time this check runs the cycles are already spent. What the limit is
 /// for is the caller: a payload above it is one Kanon will not verify, which is
 /// what lets a relayer, an aggregator or a sequencer refuse it earlier, where
-/// refusing is still free. See ADR 27.
+/// refusing is still free. See ADR 26.
 pub const MAX_PAYLOAD_BYTES: usize = 32 * 1024;
 
 /// Why a payload could not be decoded.

@@ -8,9 +8,11 @@ These are records, not documentation. For *what* the code does, the crate doc co
 and `TRACEABILITY.md` are the sources. An ADR answers **why**, and is the thing to read
 before undoing one.
 
-An ADR is not amended once it is accepted, except to change its status. If a decision is
-reversed, the new ADR supersedes it and says so, and the old one stays where it is —
-a record of a decision that was later reversed is more useful than no record of it.
+Once an ADR is part of a merged milestone, it is not amended except to change its status.
+If a merged decision is reversed, the new ADR supersedes it and the old one stays where
+it is — a record of a decision that was later reversed is more useful than no record of
+it. ADRs still under review in an unmerged milestone are edited with that milestone so
+they describe the design being proposed for acceptance.
 
 | | decision | status |
 | --- | --- | --- |
@@ -28,21 +30,20 @@ a record of a decision that was later reversed is more useful than no record of 
 | [12](0012-a-standalone-lez-sequencer-without-lgs-run-from-a-prebuilt-image.md) | A standalone LEZ sequencer without `lgs`, run in CI from a prebuilt image | accepted |
 | [13](0013-staleness-is-measured-against-the-lez-clock-program.md) | Staleness measured against the LEZ clock program's every-block account | accepted |
 | [14](0014-build-admin-gating-against-the-unmerged-spel-admin-authority.md) | Admin gating built against the unmerged SPEL admin-authority, shim in reserve | accepted, contingency live |
-| [15](0015-redstone-parity-verification-semantics.md) | Verification semantics follow RedStone's Rust SDK, with two divergences | accepted |
+| [15](0015-redstone-parity-verification-semantics.md) | Packages for the requested feed are rejected strictly | accepted |
 | [16](0016-the-asset-pair-is-a-registration-claim.md) | The asset pair is a registration claim, checked against the caller's expectation | accepted |
-| [17](0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md) | Value sanity is two-level, and prices convert to the account's Q64.64 scale | accepted |
-| [18](0018-timestamp-validity-is-two-sided-and-costs-one-signer.md) | Timestamp validity is two-sided, and a bad timestamp costs one signer | accepted |
+| [17](0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md) | Invalid values are rejected, and prices convert to the account's Q64.64 scale | accepted |
+| [18](0018-timestamp-validity-is-two-sided-and-costs-one-signer.md) | Timestamp validity is two-sided and rejects the package | accepted |
 | [19](0019-conformance-against-captured-redstone-payloads.md) | Conformance is asserted against captured RedStone payloads, with the signature as the oracle | accepted |
 | [20](0020-per-component-costs-are-measured-in-the-product-guest.md) | Per-component costs are measured in the product guest, by differencing pipeline prefixes | accepted |
 | [21](0021-property-tests-for-the-invariants-examples-cannot-reach.md) | Property tests for the invariants examples cannot reach, inside the crate under test | accepted |
 | [22](0022-the-price-account-write-and-its-three-undecided-fields.md) | The price-account write, and the three fields nothing had decided | accepted |
 | [23](0023-the-accept-and-reject-suite-is-shaped-by-the-contract.md) | The accept and reject suite is shaped by the contract, and asserts that the taxonomy discriminates | accepted |
 | [24](0024-a-duplicate-package-is-skipped.md) | A duplicate package is skipped | accepted |
-| [25](0025-present-but-blocked-requires-a-package-that-could-have-counted.md) | "Present but blocked" requires a package that could have counted | accepted |
-| [26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
-| [27](0027-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
-| [28](0028-one-price-comes-from-one-round-chosen-by-consensus.md) | One price comes from one round, and the round is chosen by consensus | accepted |
-| [29](0029-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
+| [25](0025-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
+| [26](0026-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
+| [27](0027-one-price-comes-from-one-round-chosen-by-consensus.md) | One price comes from one round, and the round is chosen by consensus | accepted |
+| [28](0028-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
 
 ## How they fit together
 
@@ -59,22 +60,24 @@ path, and both are decided the same way — take the untrusted thing, bound it, 
 to let a caller choose it.
 
 Four describe what the verifier decides once a payload is in front of it, and they read
-in order: ADR 15 settles who counts and what a skip costs, ADR 16 settles what the feed is
-about, ADR 17 settles what the agreed number means, and ADR 18 settles when it stops being
-true. ADR 18 also completes ADR 13, which chose the clock long before anything read it. The last two both turn on the same
-observation — that the canonical price account says less than it appears to, carrying
-neither the asset semantics of a feed id nor the exponent of a price — so both decisions
-are about supplying, and documenting, what the format leaves out.
+in order: ADR 15 settles strict package rejection and distinct-signer counting, ADR 16
+settles what the feed is about, ADR 17 settles what the agreed number means, and ADR 18
+settles the clock and timestamp window. ADR 18 also completes ADR 13, which chose the
+clock long before anything read it. ADRs 16 and 17 both turn on the same observation —
+that the canonical price account says less than it appears to, carrying neither the
+asset semantics of a feed id nor the exponent of a price — so both decisions are about
+supplying, and documenting, what the format leaves out.
 
 ADR 22 is where those four stop being decisions about a verification and become the six
 fields of an account. It answers what none of them had to: which of several package
 timestamps a median is dated by, what a source identifier is when the source is off chain,
 and what stops a replayed payload moving a published price backwards.
 
-ADR 23 closes that group from the other side. ADR 15 through ADR 18 each decided a
-failure mode and tested it where it was introduced; ADR 23 is the one place those
-decisions are read back as a contract, and the one assertion none of them could make
-alone — that no two of the causes they settled answer with the same variant.
+ADR 23 closes that group from the other side. The package and feed decisions test each
+failure where it is introduced; ADR 23 is the one place they are read back as a contract,
+and the one assertion none of them could make alone — that no two causes answer with the
+same variant. `InvalidSignature` is observable in that suite rather than reserved for a
+future API.
 
 The remaining seven exist to keep claims verifiable: the licence gate (1), the guardrails
 (10), the traceability checker (11), a sequencer that cannot drift from the code it tests
@@ -91,21 +94,12 @@ opposite of what ADR 10 argues for everywhere else, and the reason is that the d
 it covers -- the threshold in ADR 15, the scale in ADR 17, the framing in ADR 5 -- are
 statements about all inputs, where a cycle count is a statement about one.
 
-ADR 24 is a third axis of the same rule. ADR 15's argument -- a package an attacker can
-produce for free must not be able to fail the payload for everyone -- reaches a signer's
-second package too, because a duplicate needs no key: copy one already in the payload, or
-replay an older one still inside `maxAge`. The rejection that the anti-inflation rule
-appears to need was doing no work the per-signer slot was not already doing.
+ADR 24 is the narrow exception to ADR 15's strict package rule. A duplicate needs no key: copy one already
+in the payload, or replay an older one still inside `maxAge`. Rejecting it does no work
+the per-signer slot is not already doing, because the duplicate cannot occupy another
+slot or increase the threshold count.
 
-ADR 25 is a correction of the same kind one layer up. ADR 18 decided that a package outside the
-window costs its signer, and ADR 15 decided when a signer set is named as the fault.
-Each was tested where it was introduced, and between them the two age tallies ended up
-holding nothing constant: a configured signer's stale package about another feed counted
-as present-but-blocked, so a threshold failure reported as staleness. Each tally now
-varies exactly the thing it names, which is the question the unknown-signer tally had
-been asking all along.
-
-ADR 26 is the one that had to correct an earlier decision rather than an earlier
+ADR 25 is the one that had to correct an earlier decision rather than an earlier
 omission. ADR 24 stopped a duplicate package failing a payload, and in doing so removed
 the thing that had been aborting a flood of duplicates after a handful of signature
 recoveries: the denial it closed cost one package, and the denial it opened cost a whole
@@ -113,19 +107,19 @@ transaction's cycle budget. Bounding the work before the cryptography closes bot
 it also fixes something that was never an attack -- verifying one feed of a multi-feed
 payload was paying to recover every other feed's packages.
 
-ADR 27 finishes what ADR 26 started, and finds the boundary of what this repository
-can decide. ADR 26 bounded the work a payload buys; ADR 27 bounds the payload itself,
+ADR 26 finishes what ADR 25 started, and finds the boundary of what this repository
+can decide. ADR 25 bounded the work a payload buys; ADR 26 bounds the payload itself,
 because reading one costs cycles before any code here runs. That last part is not ours
 to fix: LEZ reads a program's whole instruction data before the program's first
 instruction, so the limit is a number to publish and for callers to enforce rather than
 a check that can save the transaction it refuses.
 
-ADR 28 is the one that found a divergence nobody had decided on. ADR 15 and ADR 18 both
+ADR 27 is the one that found a divergence nobody had decided on. ADR 15 and ADR 18 both
 worked from RedStone's Rust SDK and both named the places Kanon departs from it; neither
 opened `protocol/payload.rs`, where the SDK requires every package in a payload to carry
 one timestamp. Kanon did not, which let a payload's assembler build a median out of three
 different moments. The correction cannot be the SDK's own -- refusing a payload whose
-timestamps differ is the free denial ADR 24 and ADR 26 spent two decisions closing -- so
+timestamps differ is the free denial ADR 24 and ADR 25 spent two decisions closing -- so
 the round is settled by counting distinct signers instead, which is the one tally an
 attacker cannot pad.
 

@@ -1,4 +1,4 @@
-# 18. Timestamp validity is two-sided, and a bad timestamp costs one signer
+# 18. Timestamp validity is two-sided and rejects the package
 
 - **Status**: accepted
 - **Milestone**: M1 (`M1-14`, `M1-15`)
@@ -76,74 +76,27 @@ timestamp — upstream's "no valid time" sentinel — is reported rather than be
 believing it would date every package impossibly far in the future and fail a feed for a
 reason unrelated to the feed.
 
-### A bad timestamp costs its own signer
+### A bad timestamp rejects the payload
 
-Skipped per package, reported on the aggregate. This is the third time the question has
-arisen and the answer has not changed: a payload is published once and serves many
-consumers, so letting one appended stale package fail it is a denial-of-service primitive,
-and a threshold exists to survive one bad signer.
+F4 requires an out-of-window package to be rejected. `StalePackage` and
+`FuturePackage` therefore return immediately for any authorised package carrying the
+requested feed, even if other packages already meet the threshold. Age is not a
+post-threshold tally and is not ranked against other package failures.
 
-**A third divergence from RedStone**, which propagates `TimestampTooOld` out of the walk.
-The same divergence ADR 15 recorded for an unrecoverable signature and for an oversized
-value, made for the same reason and named here rather than left to be inferred from a
-pattern.
+### Authority is checked before age
 
-The aggregate rule extends M1-17's ladder rather than adding a second one, but the shape
-changed while implementing it. Asking each cause in isolation —
+Timestamp checks follow signature recovery and signer-set membership. That order makes
+the error actionable: an unauthorised stale package is `UnauthorisedSigner`, not evidence
+that the configured relayer is behind. Within an authorised package, age precedes value;
+there is no reason to parse and classify a value from a package already known to be stale.
 
-```
-met + stale >= threshold   -> StalePackage
-met + future >= threshold  -> FuturePackage
-met + spoiled >= threshold -> ValueOutOfRange
-```
-
-— answers `ThresholdNotMet { met: 0 }` when two signers reported and *different* things
-were wrong with each: one package too old, one value zero, threshold two. Both signers are
-in the payload, fixing either would have met the threshold, and no single cause reaches it
-alone. That is the same misdirection the ladder was built to remove, arriving through a
-mix of causes rather than one.
-
-So the question is asked once, over signers rather than over reasons:
-
-```
-met >= threshold                     -> a price
-met + present >= threshold           -> the largest cause among stale, future, spoiled
-met + distinct_unknowns >= threshold -> UnauthorisedSigner
-otherwise                            -> ThresholdNotMet
-```
-
-where `present` counts configured signers whose slot stayed empty for any of the three
-reasons, each counted once — a signer arriving stale in one package and useless in another
-must not close two gaps by itself.
-
-The largest cause is named because it is the one whose fixing moves the count furthest.
-Ties go to age, then to skew, then to values: that is the order in which a cause resolves
-without anybody acting, and a fresher payload fixes staleness where a bad value needs
-someone to change something. Sending an operator to reconfigure a feed that will be fine
-in thirty seconds is the wrong answer even when it is also a true one.
-
-Single-cause payloads answer exactly as the sequential form did, which is what the
-existing tests continue to assert.
-
-### The timestamp is checked after recovery, not before
-
-Checking it first is cheaper — two `u64` comparisons against 565,497 cycles — and it is
-wrong. Recovery is skipped for a package that fails the window, so a stale package needs
-no key and no valid signature: an outsider can append three of them and turn
-`ThresholdNotMet` into `StalePackage`, telling an operator to refetch a payload when the
-signer set is what does not match. That is a misdirection primitive rather than a denial
-of service, but it costs an attacker nothing, and an error nobody can trust is worth less
-than no error.
-
-The saving was never real. A fresh payload has no stale packages, so nothing is skipped in
-the ordinary case; the optimisation pays only in the replay and attack cases, which are
-the two where naming the right cause matters most.
-`strangers_sending_stale_packages_cannot_rename_a_threshold_failure` pins it.
+Packages that do not carry the requested feed are skipped before recovery under ADR 25,
+so a configured signer's stale package about another feed does not affect this one.
 
 ## Consequences
 
-- `StalePackage` gains a producer, leaving `InvalidSignature` as the only `VerifyError`
-  variant without one — and that one is deliberate rather than pending (ADR 15).
+- `StalePackage` and `FuturePackage` are direct package errors. `InvalidSignature` is
+  direct too, under ADR 15.
 - `verify_feed` takes a fifth argument. Every caller now supplies a clock, which is what
   makes the check unforgettable rather than conventional.
 - `kanon-clock` is a fourth guest-reachable crate under ADR 4's `no_std` rule, and is
