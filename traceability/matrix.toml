@@ -100,6 +100,7 @@ verified_by = [
   "test:a_replayed_payload_is_refused_however_well_signed_it_is",
   "test:any_other_account_is_refused_before_its_contents_are_read",
   "test:every_published_signature_recovers_to_the_signer_redstone_named",
+  "test:an_envelope_redstone_published_decodes_and_every_package_in_it_recovers",
   "test:a_published_payload_verifies_end_to_end",
   "test:a_wrong_signed_span_recovers_to_nobody",
 ]
@@ -362,6 +363,7 @@ implemented_in = ["traceability", "verifier-core", "verifier-core/src/properties
 verified_by = [
   "ci:traceability",
   "test:every_published_signature_recovers_to_the_signer_redstone_named",
+  "test:an_envelope_redstone_published_decodes_and_every_package_in_it_recovers",
   "test:a_garbage_signature_rejects_even_when_quorum_is_present",
   "test:a_signer_set_that_is_not_the_published_one_reaches_no_threshold",
   "test:lowering_the_threshold_never_changes_the_price_and_never_loses_it",
