@@ -169,28 +169,47 @@ fn one_unusable_value_rejects_even_when_the_other_signers_reach_threshold() {
 
 #[test]
 fn a_package_duplicated_by_anyone_does_not_deny_the_feed_to_the_rest() {
-    // Appending a package needs no key: copy one already in the payload, or
-    // replay an older one still inside `maxAge`. Both are skipped, so neither
-    // is a way to deny a verified price to every consumer of that payload
-    // (ADR 24).
+    // Copying a package needs no key, so a copy must not be able to deny a
+    // verified price to every consumer of that payload (ADR 24). A copy carries
+    // the moment it was copied from, so it fills no second slot and moves
+    // nothing. Its value is chosen so that admitting it would move the median.
     let keys = keys(3);
     let set = addresses(&keys);
     let bytes = PayloadBuilder::default()
         .signed_package(&keys[0], &[(FEED, &[0, 0, 0, 10])], NOW_MS)
         .signed_package(&keys[1], &[(FEED, &[0, 0, 0, 20])], NOW_MS)
         .signed_package(&keys[2], &[(FEED, &[0, 0, 0, 30])], NOW_MS)
-        // A byte-for-byte copy of the first, and a replay of the second from a
-        // round still inside the window. Values chosen so that admitting
-        // either would move the median.
         .signed_package(&keys[0], &[(FEED, &[0, 0, 0, 10])], NOW_MS)
-        .signed_package(&keys[1], &[(FEED, &[0, 0, 0, 200])], NOW_MS - MAX_AGE_MS)
         .build();
 
     let verified = verify(&bytes, &config(&set, 3)).expect("verifies");
 
-    assert_eq!(verified.signers, 3, "neither appended package fills a slot");
+    assert_eq!(verified.signers, 3, "the copy fills no slot of its own");
     assert_eq!(verified.value, Value::from_be_slice(&[20]).expect("fits"));
     assert_eq!(verified.timestamp_ms, NOW_MS);
+}
+
+#[test]
+fn a_package_replayed_from_an_older_round_refuses_the_payload() {
+    // The other half of the same attack, and the one this contract answers
+    // differently: a package from a round still inside `maxAge` is validly
+    // signed but describes another moment, so the payload no longer describes
+    // one. Refused rather than skipped -- which is a denial available to anyone
+    // who can add bytes to a payload, and the reason a submitter must own what
+    // it submits (ADR 27).
+    let keys = keys(3);
+    let set = addresses(&keys);
+    let bytes = PayloadBuilder::default()
+        .signed_package(&keys[0], &[(FEED, &[0, 0, 0, 10])], NOW_MS)
+        .signed_package(&keys[1], &[(FEED, &[0, 0, 0, 20])], NOW_MS)
+        .signed_package(&keys[2], &[(FEED, &[0, 0, 0, 30])], NOW_MS)
+        .signed_package(&keys[1], &[(FEED, &[0, 0, 0, 200])], NOW_MS - MAX_AGE_MS)
+        .build();
+
+    assert!(matches!(
+        verify(&bytes, &config(&set, 3)),
+        Err(VerifyError::TimestampMismatch { .. })
+    ));
 }
 
 #[test]
@@ -390,10 +409,8 @@ fn one_signer_supplying_the_feed_twice_counts_once_and_is_short_of_the_threshold
 fn values_from_different_rounds_are_not_made_into_one_price() {
     // Not named by U6. Each package is validly signed and inside the window;
     // what is wrong is that they describe three moments rather than one, and a
-    // median across them is an observation RedStone never published. RedStone's
-    // own SDK requires a common timestamp and refuses the payload without one;
-    // this refuses the splice without handing anyone a way to deny the feed by
-    // appending to it (ADR 27).
+    // median across them is an observation nobody published. Refused rather
+    // than answered from part of the payload (ADR 27).
     let keys = keys(3);
     let set = addresses(&keys);
     let bytes = PayloadBuilder::default()
@@ -404,9 +421,9 @@ fn values_from_different_rounds_are_not_made_into_one_price() {
 
     assert_eq!(
         verify(&bytes, &config(&set, 3)),
-        Err(VerifyError::MixedRounds {
-            largest: 1,
-            required: 3
+        Err(VerifyError::TimestampMismatch {
+            expected: NOW_MS - 20_000,
+            found: NOW_MS - 10_000
         })
     );
 }

@@ -64,14 +64,15 @@ The convention should have one definition and it should not be ours.
 `aggregator-program/src/publish.rs`: `price_account` builds the account for a first write,
 `publish` updates one that exists.
 
-### `timestamp` is the selected RedStone round
+### `timestamp` is the round every counted package shares
 
-`VerifiedFeed` carries `timestamp_ms`, the timestamp shared by every package in the
-selected round. ADR 27 defines selection as the timestamp the most distinct configured
-signers agree on, ties to the newer round.
+`VerifiedFeed` carries `timestamp_ms`, the timestamp shared by every package behind the
+price. ADR 27 requires that sharing rather than choosing among candidates: a payload whose
+packages for this feed describe more than one moment is refused, so there is one moment to
+report and no rule needed to pick it.
 
-A median assembled from different observation times is not a RedStone price at all.
-Selecting one round makes the account timestamp unambiguous: it is the observation time
+A median assembled from different observation times is not a RedStone price at all. One
+moment per payload makes the account timestamp unambiguous: it is the observation time
 every counted signer attested to, not the write time and not the timestamp attached to
 whichever value happens to land in the middle.
 

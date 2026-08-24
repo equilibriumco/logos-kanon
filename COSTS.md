@@ -21,20 +21,20 @@ data point each; the 1- and 3-signer columns are the same payload cut short.
 | component | 1 signer | 3 signers | 5 signers |
 | --- | ---: | ---: | ---: |
 | decode | 587 | 1,506 | 2,425 |
-| keccak256 | 17,479 | 52,437 | 87,395 |
-| recovery | 585,277 | 1,755,583 | 2,922,895 |
-| signer-set membership | 162 | 537 | 980 |
-| the rest of `verify_feed` | 18,141 | 22,348 | 27,247 |
-| **whole update** | **621,646** | **1,832,411** | **3,040,942** |
-| _harness floor, subtracted out_ | 25,327 | 62,299 | 99,499 |
+| keccak256 | 17,476 | 52,428 | 87,380 |
+| recovery | 585,276 | 1,755,580 | 2,922,890 |
+| signer-set membership | 160 | 528 | 960 |
+| the rest of `verify_feed` | 17,783 | 21,629 | 26,188 |
+| **whole update** | **621,282** | **1,831,671** | **3,039,843** |
+| _harness floor, subtracted out_ | 25,315 | 62,283 | 99,482 |
 
 At three signers, which is RFP-020's default threshold:
 
 | component | share |
 | --- | ---: |
-| recovery | 95.81% |
+| recovery | 95.85% |
 | keccak256 | 2.86% |
-| the rest of `verify_feed` | 1.22% |
+| the rest of `verify_feed` | 1.18% |
 | decode | 0.08% |
 | signer-set membership | 0.03% |
 
@@ -81,8 +81,8 @@ account rather than from the guest input stream pays something different for it.
 
 ## What the numbers say
 
-**Recovery is the whole cost.** At three signers it is 95.81% of an update, and
-the four other components together are 4.19%. No arrangement of the remaining
+**Recovery is the whole cost.** At three signers it is 95.85% of an update, and
+the four other components together are 4.15%. No arrangement of the remaining
 code matters next to it. If LEZ ever offers a secp256k1 precompile, that is the
 one lever worth pulling, and `VerifierBackend` exists so that pulling it is one
 new implementor and one type parameter
@@ -106,10 +106,10 @@ that does not change the decision.
 an update. The wire format is a backwards walk over fixed-width fields with no
 allocation, and the membership check is a linear scan of at most 32 addresses.
 That scan is quadratic in the signer count — every package scans the whole set —
-which the numbers show and which is still not worth acting on: 980 cycles at five
+which the numbers show and which is still not worth acting on: 960 cycles at five
 signers.
 
-**Converting to the account's scale costs 11,307 cycles**, about 65% of one
+**Converting to the account's scale costs 11,263 cycles**, about 65% of one
 keccak256 and most of the remainder row at one signer. It is a
 16-byte long division with 128-bit intermediates
 (`adr/0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md`), and it
@@ -167,15 +167,15 @@ workload, calling `k256` and `tiny-keccak` directly. This measures them inside
 
 | | M0, in isolation | here, in `verify_feed` |
 | --- | ---: | ---: |
-| software keccak256 over 77 bytes | 17,498 | 17,479 |
-| accelerated recovery, per signer | 565,551 | 585,277 |
+| software keccak256 over 77 bytes | 17,498 | 17,476 |
+| accelerated recovery, per signer | 565,551 | 585,276 |
 
 The 77 bytes are not a coincidence: a RedStone package carrying one data point
 signs `1 * (32 + 32) + 4 + 6 + 3` bytes, and every captured package carries one.
 
-The recovery gap is 19,726 cycles, and it is the address derivation the M0
-harness did not include: one keccak256 over 64 bytes accounts for 17,479 of it,
-leaving 2,247 for parsing and normalising the 65-byte signature.
+The recovery gap is 19,725 cycles, and it is the address derivation the M0
+harness did not include: one keccak256 over 64 bytes accounts for 17,476 of it,
+leaving 2,249 for parsing and normalising the 65-byte signature.
 
 ## Reproducing
 

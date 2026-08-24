@@ -269,19 +269,6 @@ fn usable(value: &Value) -> bool {
     !value.is_zero() && !value.is_negative()
 }
 
-/// One usable report: which configured signer sent it, when the package it came
-/// from was signed, and what it said.
-///
-/// Kept per package rather than folded into a per-signer slot, because which
-/// package wins a slot cannot be decided until the round is known, and the round
-/// is a property of the whole set.
-#[derive(Clone, Copy)]
-struct Report {
-    signer: u8,
-    at: u64,
-    value: Value,
-}
-
 /// Whether this package says anything at all about the requested feed.
 ///
 /// The one test cheap enough to run before recovery, and the one that decides
@@ -336,15 +323,18 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     // packages of the same age fall on opposite sides of the same window.
     let now_ms = clock.now_ms()?;
 
-    // Every usable report, in the order the walk found them. Bounded by
-    // `MAX_RECOVERIES`, which is also what bounds the recoveries that produce
-    // them (ADR 25).
-    let mut reports: [Option<Report>; MAX_RECOVERIES] = [None; MAX_RECOVERIES];
-    let mut report_count = 0usize;
-    // Packages recovered so far. RedStone payloads are multi-feed and
-    // multi-consumer, so most of what arrives is somebody else's; this counts
-    // only what was worth paying for.
+    // One slot per configured signer, filled as the walk reaches it. A signer
+    // that reports twice fills one slot: the first value the walk sees holds it,
+    // and a second package needs the same key to exist at all, so no ordering
+    // rule could make one of two equally attested values the right one (ADR 24).
+    let mut reported: [Option<Value>; MAX_SIGNERS] = [None; MAX_SIGNERS];
+    // Packages recovered so far. Payloads are multi-feed and multi-consumer, so
+    // most of what arrives is somebody else's; this counts only what was worth
+    // paying for.
     let mut recovered = 0usize;
+    // The one observation this payload describes for the requested feed, taken
+    // from the first package carrying it and required of every one after.
+    let mut payload_ms: Option<u64> = None;
 
     let walked = payload.for_each_package(|package| {
         // Before the hash, and the only thing that is. Everything else the walk
@@ -352,6 +342,23 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
         if !carries_feed(&package, config) {
             return Ok(());
         }
+
+        // A price is a statement about one moment, and a payload carrying two
+        // moments for this feed is one whose author picked which moment answers.
+        // Scoped to the requested feed, because SEC1 and Reliability 3 are both
+        // written per feed: another feed's trouble must not reach this one. A
+        // field comparison, so a mismatch is refused without paying a recovery.
+        match payload_ms {
+            None => payload_ms = Some(package.timestamp_ms),
+            Some(expected) if expected != package.timestamp_ms => {
+                return Err(VerifyError::TimestampMismatch {
+                    expected,
+                    found: package.timestamp_ms,
+                })
+            }
+            Some(_) => {}
+        }
+
         recovered += 1;
         if recovered > MAX_RECOVERIES {
             return Err(VerifyError::TooManyPackages {
@@ -387,27 +394,16 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
             }
         }
 
+        // One report per package, whatever the package repeats. Every repeated
+        // point was still validated above; only the first valid value is filed.
         if let Some(value) = package_value {
-            // Recorded, not yet counted. Which of a signer's packages fills its
-            // slot depends on which round the payload settles on, and that is
-            // not knowable until every package has been read. Duplicates,
-            // replays and packages from other rounds all land here and are
-            // sorted out afterwards -- none of them is fatal, for ADR 24's
-            // reason: producing one needs no key.
-            if let Some(entry) = reports.get_mut(report_count) {
-                *entry = Some(Report {
-                    signer: u8::try_from(index).unwrap_or(u8::MAX),
-                    at: package.timestamp_ms,
-                    value,
-                });
-                report_count += 1;
+            if let Some(slot) =
+                reported.get_mut(usize::from(u8::try_from(index).unwrap_or(u8::MAX)))
+            {
+                if slot.is_none() {
+                    *slot = Some(value);
+                }
             }
-            // One report per package, whatever the package repeats. Every
-            // repeated point was still validated above; only the first valid
-            // value is filed. The buffer holds `MAX_RECOVERIES` because that is
-            // how many recoveries are paid for, and a package that could file
-            // more than one report would let a single signature crowd every
-            // other signer out.
         }
 
         Ok(())
@@ -417,89 +413,6 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
         Err(err) => return Err(VerifyError::Malformed(err)),
         Ok(Err(err)) => return Err(err),
         Ok(Ok(())) => {}
-    }
-
-    // Which round the payload settles on: the timestamp the most distinct
-    // configured signers agree on, ties to the newer.
-    //
-    // RedStone requires every package in a payload to carry one timestamp
-    // (`Payload::get_validated_timestamp`), and refuses the payload when they
-    // differ. Refusing is not available here for ADR 24's reason -- one replayed
-    // package, needing no key, would deny the feed to everyone -- so the round
-    // is chosen by consensus instead. Counted over distinct signers rather than
-    // over packages, because packages can be copied for free and signatures
-    // cannot: appending can only add to some round's tally, never take from the
-    // one the honest signers already agree on. See ADR 27.
-    let mut round_at = 0u64;
-    let mut round_signers = 0usize;
-    for i in 0..report_count {
-        let Some(candidate) = reports.get(i).copied().flatten() else {
-            continue;
-        };
-        // Score each distinct timestamp once.
-        let mut already_scored = false;
-        for j in 0..i {
-            if reports
-                .get(j)
-                .copied()
-                .flatten()
-                .is_some_and(|r| r.at == candidate.at)
-            {
-                already_scored = true;
-                break;
-            }
-        }
-        if already_scored {
-            continue;
-        }
-
-        let mut counted = [false; MAX_SIGNERS];
-        let mut signers = 0usize;
-        for j in 0..report_count {
-            let Some(report) = reports.get(j).copied().flatten() else {
-                continue;
-            };
-            if report.at != candidate.at {
-                continue;
-            }
-            if let Some(seen) = counted.get_mut(usize::from(report.signer)) {
-                if !*seen {
-                    *seen = true;
-                    signers += 1;
-                }
-            }
-        }
-
-        if signers > round_signers || (signers == round_signers && candidate.at > round_at) {
-            round_signers = signers;
-            round_at = candidate.at;
-        }
-    }
-
-    // One slot per configured signer, filled only from the round that won.
-    // A signer that sent two values under the same timestamp signed both, which
-    // needs its key: the first the walk reaches holds the slot, and no ordering
-    // rule can make one of two equally-attested values the right one.
-    let mut reported: [Option<Value>; MAX_SIGNERS] = [None; MAX_SIGNERS];
-    // Signers that reported something usable, but not in the winning round.
-    let mut off_round = [false; MAX_SIGNERS];
-    for i in 0..report_count {
-        let Some(report) = reports.get(i).copied().flatten() else {
-            continue;
-        };
-        let target = if report.at == round_at {
-            reported.get_mut(usize::from(report.signer))
-        } else {
-            if let Some(flag) = off_round.get_mut(usize::from(report.signer)) {
-                *flag = true;
-            }
-            continue;
-        };
-        if let Some(slot) = target {
-            if slot.is_none() {
-                *slot = Some(report.value);
-            }
-        }
     }
 
     let mut collected = [Value::default(); MAX_SIGNERS];
@@ -513,20 +426,6 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
 
     let met_count = u8::try_from(met).unwrap_or(u8::MAX);
     if met_count < config.threshold() {
-        let required = usize::from(config.threshold());
-        // Were enough authorised, valid packages present, but split across
-        // rounds? That remains distinct from a genuinely missing threshold.
-        let mixed = off_round
-            .iter()
-            .zip(reported.iter())
-            .filter(|(flagged, slot)| **flagged && slot.is_none())
-            .count();
-        if met.saturating_add(mixed) >= required {
-            return Err(VerifyError::MixedRounds {
-                largest: met_count,
-                required: config.threshold(),
-            });
-        }
         return Err(VerifyError::ThresholdNotMet {
             met: met_count,
             required: config.threshold(),
@@ -553,7 +452,8 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
         value,
         price,
         signers: met_count,
-        timestamp_ms: round_at,
+        // Every counted package carried it; the walk refused the payload otherwise.
+        timestamp_ms: payload_ms.unwrap_or_default(),
     })
 }
 
@@ -934,8 +834,8 @@ mod tests {
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
             .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 20])], 2)
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 30])], 3)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 30])], 1)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -975,14 +875,13 @@ mod tests {
     }
 
     #[test]
-    fn an_older_package_from_a_signer_that_already_reported_cannot_deny_the_feed() {
-        // The same attack with a package that is not a copy: every RedStone
-        // package inside `maxAge` is public and validly signed, so an attacker
-        // has around eighteen of each signer's to choose from. Erroring on
-        // disagreeing values rather than on duplicates would leave this open.
-        // Values spread so that admitting the replay would move the median,
-        // and it is dated behind the round so that admitting it would also drag
-        // the feed's own timestamp backwards.
+    fn an_older_package_from_a_signer_that_already_reported_refuses_the_payload() {
+        // The same attack with a package that is not a copy: every package
+        // inside `maxAge` is public and validly signed, so whoever adds bytes to
+        // a payload has around eighteen of each signer's to choose from. Any one
+        // of them describes another moment, so the payload stops describing one
+        // and is refused. That is a denial available without a key, which is why
+        // a submitter has to own the bytes it submits (ADR 27).
         //
         // Run at both ends of the package list, because `for_each_package`
         // walks from the tail: an attacker chooses where the bytes go, so the
@@ -1010,17 +909,13 @@ mod tests {
             let bytes = round(replay_first);
             let payload = Payload::decode(&bytes).expect("well formed");
             let config = feed_config(&set, 3);
-            let verified = verify(&payload, &config).expect("verifies");
 
-            assert_eq!(verified.signers, 3, "replay_first = {replay_first}");
-            assert_eq!(
-                verified.value,
-                Value::from_be_slice(&[20]).expect("fits"),
-                "the freshest package holds the slot, so the median does not move                  (replay_first = {replay_first})"
-            );
-            assert_eq!(
-                verified.timestamp_ms, NOW_MS,
-                "and the replay does not age the feed (replay_first = {replay_first})"
+            assert!(
+                matches!(
+                    verify(&payload, &config),
+                    Err(VerifyError::TimestampMismatch { .. })
+                ),
+                "replay_first = {replay_first}"
             );
         }
     }
@@ -1495,7 +1390,7 @@ mod tests {
         for (first, second) in [(good, useless), (useless, good)] {
             let bytes = PayloadBuilder::default()
                 .signed_package(&keys[0], &[first], 1)
-                .signed_package(&keys[0], &[second], 2)
+                .signed_package(&keys[0], &[second], 1)
                 .build();
 
             let payload = Payload::decode(&bytes).expect("well formed");
@@ -2062,10 +1957,10 @@ mod tests {
 
     #[test]
     fn values_spliced_from_three_rounds_do_not_become_a_price() {
-        // The reason the round is chosen rather than assumed. Each of these is
-        // validly signed and inside the window, so nothing but their
-        // disagreement about when marks them out -- and a median across them is
-        // an observation RedStone never made.
+        // Each of these is validly signed and inside the window, so nothing but
+        // their disagreement about when marks them out -- and a median across
+        // them is an observation nobody made. The payload is refused rather
+        // than answered from part of itself.
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
@@ -2079,21 +1974,19 @@ mod tests {
 
         assert_eq!(
             verify(&payload, &config),
-            Err(VerifyError::MixedRounds {
-                largest: 1,
-                required: 3
+            Err(VerifyError::TimestampMismatch {
+                expected: 7_000,
+                found: 5_000
             }),
-            "three signers, three rounds, and no round with three signers"
+            "three signers describing three moments is not one observation"
         );
     }
 
     #[test]
-    fn a_package_from_another_round_cannot_take_the_round_from_the_signers() {
-        // The half RedStone's rule cannot have. Refusing a payload whose
-        // timestamps differ would make one replayed package -- older or newer,
-        // needing no key either way -- a denial of the feed for everyone. The
-        // round the signers agree on wins instead, and one appended package is
-        // one signer against three.
+    fn a_package_from_another_round_refuses_the_payload() {
+        // One package describing another moment is enough, in either direction:
+        // the payload no longer describes one observation, and which of the two
+        // answers is not the caller's to be handed silently.
         let keys = keys(3);
         let set = signer_set(&keys);
         for (label, appended_at) in [("older", 5_000u64), ("newer", 9_000)] {
@@ -2107,26 +2000,23 @@ mod tests {
 
             let payload = Payload::decode(&bytes).expect("well formed");
             let config = feed_config(&set, 3);
-            let verified = verify(&payload, &config).expect("verifies");
 
-            assert_eq!(verified.signers, 3, "{label}");
-            assert_eq!(
-                verified.value,
-                Value::from_be_slice(&[60]).expect("fits"),
-                "{label}"
+            assert!(
+                matches!(
+                    verify(&payload, &config),
+                    Err(VerifyError::TimestampMismatch { .. })
+                ),
+                "{label} package from another round should refuse the payload"
             );
-            assert_eq!(verified.timestamp_ms, 7_000, "{label}");
         }
     }
 
     #[test]
-    fn one_package_cannot_crowd_the_other_signers_out_of_the_report_buffer() {
-        // The buffer holds `MAX_RECOVERIES` reports because that is how many
-        // recoveries are paid for, so a package must not be able to file more
-        // than one of them. Packing a whole buffer's worth of data points into
-        // one signature costs one recovery and would otherwise leave no room
-        // for anybody else -- and the walk runs from the tail, so placing it
-        // last is what an attacker would do.
+    fn one_package_cannot_crowd_the_other_signers_out() {
+        // A package files one value however many times it repeats the feed, so
+        // packing data points into one signature buys nothing. Worth asserting
+        // because the alternative -- one report per point -- costs one recovery
+        // and would let a single signature answer for everybody.
         let keys = keys(3);
         let set = signer_set(&keys);
         let crowd: std::vec::Vec<(&[u8], &[u8])> = (0..MAX_RECOVERIES)
@@ -2152,11 +2042,10 @@ mod tests {
     }
 
     #[test]
-    fn copies_of_one_package_cannot_outvote_the_round_the_signers_agree_on() {
-        // Why the round is counted over distinct signers and not over packages.
-        // Copying a package needs no key, so counting packages would let five
-        // copies of one signer's older report outnumber three signers' current
-        // ones and carry the round with it.
+    fn copies_of_a_package_from_another_round_refuse_the_payload() {
+        // Copying a package needs no key, so the copies cannot be allowed to
+        // decide anything. They do not: the payload describes two moments and
+        // is refused, whatever the tally would have been.
         let keys = keys(3);
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
@@ -2170,22 +2059,19 @@ mod tests {
 
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
-        let verified = verify(&payload, &config).expect("verifies");
 
-        assert_eq!(
-            verified.signers, 3,
-            "three signers outvote five copies of one"
-        );
-        assert_eq!(verified.value, Value::from_be_slice(&[60]).expect("fits"));
-        assert_eq!(verified.timestamp_ms, 7_000);
+        assert!(matches!(
+            verify(&payload, &config),
+            Err(VerifyError::TimestampMismatch { .. })
+        ));
     }
 
     #[test]
-    fn two_rounds_with_equal_support_are_settled_by_the_newer() {
-        // A tie is a payload carrying two whole rounds, which is what a relayer
-        // bundling two fetches produces. The newer one is the price a consumer
-        // would have got by asking again, and the older is one it has already
-        // had the chance to read.
+    fn a_payload_carrying_two_whole_rounds_is_refused() {
+        // What a relayer bundling two fetches produces. Both rounds are
+        // complete and either would verify alone, which is exactly why picking
+        // one here would be this code choosing the price on the caller's
+        // behalf. The relayer submits one round or the other.
         let keys = keys(4);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
@@ -2197,20 +2083,21 @@ mod tests {
 
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 2);
-        let verified = verify(&payload, &config).expect("verifies");
 
-        assert_eq!(verified.timestamp_ms, 7_000, "two signers each, newer wins");
-        assert_eq!(verified.value, Value::from_be_slice(&[30]).expect("fits"));
+        assert!(matches!(
+            verify(&payload, &config),
+            Err(VerifyError::TimestampMismatch { .. })
+        ));
     }
 
     #[test]
-    fn a_bad_value_rejects_before_round_selection() {
+    fn a_bad_value_rejects_before_the_threshold_is_evaluated() {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
             .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 6_000)
             .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 6_000)
-            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], 1_000)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], 6_000)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
