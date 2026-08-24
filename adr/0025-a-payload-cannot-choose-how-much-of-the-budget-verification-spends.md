@@ -1,4 +1,4 @@
-# 26. A payload cannot choose how much of the budget verification spends
+# 25. A payload cannot choose how much of the budget verification spends
 
 - **Status**: accepted
 - **Milestone**: M1 (`M1-13`, `M1-18`)

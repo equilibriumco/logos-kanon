@@ -1,9 +1,9 @@
 # 24. A duplicate package is skipped
 
 - **Status**: accepted; the cost of
-  skipping is bounded by [ADR 26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md),
+  skipping is bounded by [ADR 25](0025-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md),
   and which of a signer's packages counts is decided by
-  [ADR 28](0028-one-price-comes-from-one-round-chosen-by-consensus.md)
+  [ADR 27](0027-one-price-comes-from-one-round-chosen-by-consensus.md)
 - **Milestone**: M1 (`M1-13`)
 - **Requirements**: F3, SEC1
 - **Artefacts**: `verifier-core/src/feed.rs`, `verifier-core/src/error.rs`, `COSTS.md`
@@ -46,7 +46,7 @@ supplies.
 
 **After ADR 15's strict checks, a second valid package from one signer cannot
 fill another signer slot and is not an error.** Reports are retained long enough
-for ADR 28 to select a round, then the per-signer slot enforces the
+for ADR 27 to select a round, then the per-signer slot enforces the
 anti-inflation property. The public error enum has no duplicate-specific
 variant because callers can never observe one.
 
@@ -56,7 +56,7 @@ would mean "whichever an attacker appended last", and the verified price would
 depend on where in the payload the bytes sit. Skipping the duplicate is what
 makes that question askable at all — until it stops being fatal there is nothing
 to choose between — and
-[ADR 28](0028-one-price-comes-from-one-round-chosen-by-consensus.md) answers it,
+[ADR 27](0027-one-price-comes-from-one-round-chosen-by-consensus.md) answers it,
 by settling the round the payload speaks for and taking each signer's package
 from that round. What matters here is the property the answer has to preserve:
 the price is a function of the set of packages, not of their order.

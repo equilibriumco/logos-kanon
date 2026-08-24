@@ -67,7 +67,7 @@ The convention should have one definition and it should not be ours.
 ### `timestamp` is the selected RedStone round
 
 `VerifiedFeed` carries `timestamp_ms`, the timestamp shared by every package in the
-selected round. ADR 28 defines selection as the timestamp the most distinct configured
+selected round. ADR 27 defines selection as the timestamp the most distinct configured
 signers agree on, ties to the newer round.
 
 A median assembled from different observation times is not a RedStone price at all.

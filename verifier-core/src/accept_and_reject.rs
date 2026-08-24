@@ -393,7 +393,7 @@ fn values_from_different_rounds_are_not_made_into_one_price() {
     // median across them is an observation RedStone never published. RedStone's
     // own SDK requires a common timestamp and refuses the payload without one;
     // this refuses the splice without handing anyone a way to deny the feed by
-    // appending to it (ADR 28).
+    // appending to it (ADR 27).
     let keys = keys(3);
     let set = addresses(&keys);
     let bytes = PayloadBuilder::default()
@@ -417,7 +417,7 @@ fn more_packages_for_this_feed_than_verification_will_pay_for_is_refused() {
     // signature, so without a ceiling the payload decides how much of the
     // transaction's cycle budget verification spends -- and past about 56
     // packages it spends all of it and the transaction aborts, which is not a
-    // failure a caller can act on because it never gets to see one (ADR 26).
+    // failure a caller can act on because it never gets to see one (ADR 25).
     let keys = keys(3);
     let set = addresses(&keys);
     let mut builder = PayloadBuilder::default();

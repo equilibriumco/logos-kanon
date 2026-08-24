@@ -458,7 +458,7 @@ fn payload_repeating(vector: &Vector, n: usize) -> Vec<u8> {
 /// P1's ceiling, not its typical case.
 ///
 /// The package count lives in the envelope, outside every signature, so anyone
-/// handling a payload can raise it. Before ADR 26 that decided how much of the
+/// handling a payload can raise it. Before ADR 25 that decided how much of the
 /// transaction's budget verification spent: 56 repeated packages, an 8 KB
 /// payload, measured 34,746,599 cycles and overran the budget, so the
 /// transaction aborted rather than publishing. `MAX_RECOVERIES` is what bounds

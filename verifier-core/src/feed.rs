@@ -338,7 +338,7 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
 
     // Every usable report, in the order the walk found them. Bounded by
     // `MAX_RECOVERIES`, which is also what bounds the recoveries that produce
-    // them (ADR 26).
+    // them (ADR 25).
     let mut reports: [Option<Report>; MAX_RECOVERIES] = [None; MAX_RECOVERIES];
     let mut report_count = 0usize;
     // Packages recovered so far. RedStone payloads are multi-feed and
@@ -429,7 +429,7 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     // is chosen by consensus instead. Counted over distinct signers rather than
     // over packages, because packages can be copied for free and signatures
     // cannot: appending can only add to some round's tally, never take from the
-    // one the honest signers already agree on. See ADR 28.
+    // one the honest signers already agree on. See ADR 27.
     let mut round_at = 0u64;
     let mut round_signers = 0usize;
     for i in 0..report_count {

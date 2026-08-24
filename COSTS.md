@@ -140,7 +140,7 @@ Two things bound it, both in `verify_feed`:
   budget, and past it the work stops growing.
 
 `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts both, and
-`adr/0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md`
+`adr/0025-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md`
 records why the ceiling refuses rather than truncates.
 
 Neither bounds what a payload costs to *read*. LEZ reads a program's whole
@@ -156,7 +156,7 @@ doing the verifying. `the_largest_payload_the_decoder_accepts_is_read_and_verifi
 asserts it. The limit is a cost rule rather than a framing one, and refusing at
 this point does not refund the read; what it does is state the size above which a
 caller must not submit, so a relayer or a sequencer can refuse it where refusing
-is still free. `adr/0027-a-maximum-payload-size-and-where-it-has-to-be-enforced.md`
+is still free. `adr/0026-a-maximum-payload-size-and-where-it-has-to-be-enforced.md`
 records the derivation.
 
 ## Agreement with the M0 baseline

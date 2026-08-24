@@ -1,4 +1,4 @@
-# 28. One price comes from one round, and the round is chosen by consensus
+# 27. One price comes from one round, and the round is chosen by consensus
 
 - **Status**: accepted
 - **Milestone**: M1 (`M1-13`, `M1-15`)
@@ -65,7 +65,7 @@ knowable until every package has been read, so the walk records
 
 **One report per package, whatever the package repeats.** The list is sized at
 `MAX_RECOVERIES` because that is what bounds the recoveries paying for it (ADR
-26), and the bound only holds if a package cannot file more than one. A package
+25), and the bound only holds if a package cannot file more than one. A package
 may carry many data points for one feed, so without the rule a single signature
 could fill the list on its own and crowd every other signer out — and since the
 walk runs from the tail, an attacker would place it last and the honest packages

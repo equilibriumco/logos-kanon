@@ -1,4 +1,4 @@
-# 27. A maximum payload size, and where it has to be enforced
+# 26. A maximum payload size, and where it has to be enforced
 
 - **Status**: accepted
 - **Milestone**: M1 (`M1-12`)
@@ -7,13 +7,13 @@
 
 ## Context
 
-ADR 26 bounded what verification spends on a payload. It did not bound what the
+ADR 25 bounded what verification spends on a payload. It did not bound what the
 payload costs to *read*, and that turns out to be the larger half.
 
 Getting bytes into guest memory costs about 113 cycles each. A payload of 900
-repeated packages — 127,814 bytes, well formed, and correctly refused by ADR 26's
+repeated packages — 127,814 bytes, well formed, and correctly refused by ADR 25's
 recovery ceiling — measured **33,792,622 cycles against a 33,554,432 budget**.
-Verification behaved exactly as ADR 26 says it does: flat at 19.3M whatever the
+Verification behaved exactly as ADR 25 says it does: flat at 19.3M whatever the
 package count. The other 14.5M was the read, and the transaction ran out of
 cycles before anything could report `TooManyPackages`.
 
@@ -33,7 +33,7 @@ this repository can do is state the number.
 **`MAX_PAYLOAD_BYTES = 32 KiB`, checked first in `Payload::decode`.**
 
 The derivation, from measurements rather than from the wire format: the budget is
-33,554,432 cycles, ADR 26's ceiling puts verification at about 19.4M of them, and
+33,554,432 cycles, ADR 25's ceiling puts verification at about 19.4M of them, and
 the read costs 113 a byte. That leaves room for roughly 125 KB of payload before
 the two together exhaust the budget — with nothing at all left for the program
 doing the verifying. 32 KiB is a third of that. The largest payload the decoder
@@ -65,7 +65,7 @@ admitted.
   `the_largest_payload_the_decoder_accepts_is_read_and_verified_inside_the_budget`
   builds a payload at the limit and requires read plus verification under the
   budget, with more than a quarter of it left over. P1's row carries it. Together
-  with ADR 26's test, the two cover both halves of what a payload can spend.
+  with ADR 25's test, the two cover both halves of what a payload can spend.
 - **An honest update costs 42 cycles more**, from one length comparison. The
   published figures moved with it, as they do for any change to the walk.
 - **The residual is upstream and named.** A caller that submits a 127 KB payload

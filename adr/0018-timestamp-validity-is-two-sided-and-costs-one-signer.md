@@ -90,7 +90,7 @@ the error actionable: an unauthorised stale package is `UnauthorisedSigner`, not
 that the configured relayer is behind. Within an authorised package, age precedes value;
 there is no reason to parse and classify a value from a package already known to be stale.
 
-Packages that do not carry the requested feed are skipped before recovery under ADR 26,
+Packages that do not carry the requested feed are skipped before recovery under ADR 25,
 so a configured signer's stale package about another feed does not affect this one.
 
 ## Consequences

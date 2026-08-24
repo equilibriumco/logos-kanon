@@ -40,10 +40,10 @@ they describe the design being proposed for acceptance.
 | [22](0022-the-price-account-write-and-its-three-undecided-fields.md) | The price-account write, and the three fields nothing had decided | accepted |
 | [23](0023-the-accept-and-reject-suite-is-shaped-by-the-contract.md) | The accept and reject suite is shaped by the contract, and asserts that the taxonomy discriminates | accepted |
 | [24](0024-a-duplicate-package-is-skipped.md) | A duplicate package is skipped | accepted |
-| [26](0026-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
-| [27](0027-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
-| [28](0028-one-price-comes-from-one-round-chosen-by-consensus.md) | One price comes from one round, and the round is chosen by consensus | accepted |
-| [29](0029-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
+| [25](0025-a-payload-cannot-choose-how-much-of-the-budget-verification-spends.md) | A payload cannot choose how much of the budget verification spends | accepted |
+| [26](0026-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
+| [27](0027-one-price-comes-from-one-round-chosen-by-consensus.md) | One price comes from one round, and the round is chosen by consensus | accepted |
+| [28](0028-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
 
 ## How they fit together
 
@@ -99,7 +99,7 @@ in the payload, or replay an older one still inside `maxAge`. Rejecting it does 
 the per-signer slot is not already doing, because the duplicate cannot occupy another
 slot or increase the threshold count.
 
-ADR 26 is the one that had to correct an earlier decision rather than an earlier
+ADR 25 is the one that had to correct an earlier decision rather than an earlier
 omission. ADR 24 stopped a duplicate package failing a payload, and in doing so removed
 the thing that had been aborting a flood of duplicates after a handful of signature
 recoveries: the denial it closed cost one package, and the denial it opened cost a whole
@@ -107,19 +107,19 @@ transaction's cycle budget. Bounding the work before the cryptography closes bot
 it also fixes something that was never an attack -- verifying one feed of a multi-feed
 payload was paying to recover every other feed's packages.
 
-ADR 27 finishes what ADR 26 started, and finds the boundary of what this repository
-can decide. ADR 26 bounded the work a payload buys; ADR 27 bounds the payload itself,
+ADR 26 finishes what ADR 25 started, and finds the boundary of what this repository
+can decide. ADR 25 bounded the work a payload buys; ADR 26 bounds the payload itself,
 because reading one costs cycles before any code here runs. That last part is not ours
 to fix: LEZ reads a program's whole instruction data before the program's first
 instruction, so the limit is a number to publish and for callers to enforce rather than
 a check that can save the transaction it refuses.
 
-ADR 28 is the one that found a divergence nobody had decided on. ADR 15 and ADR 18 both
+ADR 27 is the one that found a divergence nobody had decided on. ADR 15 and ADR 18 both
 worked from RedStone's Rust SDK and both named the places Kanon departs from it; neither
 opened `protocol/payload.rs`, where the SDK requires every package in a payload to carry
 one timestamp. Kanon did not, which let a payload's assembler build a median out of three
 different moments. The correction cannot be the SDK's own -- refusing a payload whose
-timestamps differ is the free denial ADR 24 and ADR 26 spent two decisions closing -- so
+timestamps differ is the free denial ADR 24 and ADR 25 spent two decisions closing -- so
 the round is settled by counting distinct signers instead, which is the one tally an
 attacker cannot pad.
 

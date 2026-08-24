@@ -55,12 +55,12 @@ single-package API or a diagnostic side channel.
 
 **Packages that do not carry the requested feed are irrelevant.** They are
 skipped before hashing, because they cannot fill a slot or change this feed's
-answer and recovery is the dominant cost. ADR 26 bounds how many relevant
+answer and recovery is the dominant cost. ADR 25 bounds how many relevant
 packages verification will recover.
 
 **M-of-N counts distinct valid signers.** One slot is reserved per configured
 signer. A repeated package cannot fill another slot, so it cannot inflate the
-threshold; ADR 24 records why duplicates remain non-fatal. ADR 28 decides which
+threshold; ADR 24 records why duplicates remain non-fatal. ADR 27 decides which
 single round supplies the result when individually valid packages carry more
 than one in-window timestamp.
 
