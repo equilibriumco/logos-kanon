@@ -39,29 +39,33 @@ ported; `NOTICE` records that boundary.
 ## Decision
 
 **The rule the rest of this follows: a package that makes a claim about the
-requested feed is either accepted or refuses the payload; a package that makes no
-new claim is ignored.** Every check below is that rule applied to one property,
-and so is the single exception. A bad signature, an unauthorised signer, a
-timestamp outside the window, an unusable value and a moment other than the
-payload's are each a claim this verifier will not silently drop, because dropping
-one means answering from a subset the payload's author chose. A repeated
-package is the other case: same signer, same moment, same value is the same
-statement said twice, so ignoring it cannot change the answer, and making it
-fatal would hand anyone a denial for the price of a copy (ADR 24).
+requested feed is either accepted or refuses the payload; a package that cannot
+change the answer is ignored.** Every check below is that rule applied to one
+property, and so is the single exception. A bad signature, an unauthorised
+signer, a moment other than the payload's, a timestamp outside the window and an
+unusable value are each a claim this verifier will not silently drop, because
+dropping one means answering from a subset the payload's author chose. The
+exception is a signer whose slot is already filled: one slot per configured
+signer means a second package from that signer cannot fill another or move the
+threshold, so refusing it would buy nothing and would hand anyone a denial for
+the price of a copy (ADR 24). Which of two same-moment packages from one signer
+holds the slot is settled by position, and reaching that at all needs the
+signer's key.
 
-**Every package carrying the requested feed is checked strictly.** After the
-`MAX_RECOVERIES` admission check, verification in decoder walk order:
+**Every package carrying the requested feed is checked strictly**, in decoder
+walk order:
 
-1. hashes the signed span and returns `InvalidSignature` if recovery fails;
-2. returns `UnauthorisedSigner` if the recovered address is outside the feed's
+1. returns `TimestampMismatch` when the package describes a different moment
+   than the first package carrying this feed (ADR 27) — first, because it needs
+   no signer and so costs no recovery;
+2. returns `TooManyPackages` when the count passes `MAX_RECOVERIES` (ADR 25);
+3. hashes the signed span and returns `InvalidSignature` if recovery fails;
+4. returns `UnauthorisedSigner` if the recovered address is outside the feed's
    configured signer set;
-3. returns `StalePackage` or `FuturePackage` when the timestamp is outside the
+5. returns `StalePackage` or `FuturePackage` when the timestamp is outside the
    two-sided window; and
-4. returns `ValueOutOfRange` when the requested data point is zero, negative,
-   or too wide to represent; and
-5. returns `TimestampMismatch` when the package describes a different moment
-   than the first package carrying this feed (ADR 27), which is checked before
-   the hash because it needs no signer.
+6. returns `ValueOutOfRange` when the requested data point is zero, negative,
+   or too wide to represent.
 
 The first package failure encountered is returned before threshold evaluation.
 This preserves the proposed typed-error interface without adding a second
@@ -89,8 +93,8 @@ using the overflow-safe midpoint.
 - A payload with three good packages and one bad package is rejected. A relayer
   receiving aggregates wider than the configured signer set must validate and
   select the packages it submits.
-- Error precedence is deterministic in decoder walk order: moment, signature,
-  authority, age, then value within one package. The verifier reports the first
+- Error precedence is deterministic in decoder walk order: moment, admission,
+  signature, authority, age, then value within one package. The verifier reports the first
   defect it encounters rather than inventorying every defect in rejected input.
 - `MAX_SIGNERS = 32` remains the fixed signer-set and median-buffer limit.
   `MAX_RECOVERIES` separately bounds the transaction cost of duplicate and

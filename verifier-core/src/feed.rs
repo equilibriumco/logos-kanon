@@ -289,10 +289,10 @@ fn carries_feed(package: &DataPackage<'_>, config: &FeedConfig<'_>) -> bool {
 /// and the price account's, once the threshold is met.
 ///
 /// Packages that do not carry the requested feed are irrelevant and skipped
-/// before recovery. Every package that does carry it is verified strictly: an
-/// invalid signature, an unauthorised signer, an out-of-window timestamp, or an
-/// unusable value rejects the payload. This is the contract promised by F4, U6,
-/// and SEC1.
+/// before recovery. Every package that does carry it is verified strictly: a
+/// moment other than the payload's, an invalid signature, an unauthorised
+/// signer, an out-of-window timestamp, or an unusable value rejects the payload.
+/// This is the contract promised by F4, U6, and SEC1.
 ///
 /// `expected` is the asset pair the caller believes this feed prices, compared
 /// against the pair the feed was registered with. It is a parameter rather than
@@ -301,11 +301,13 @@ fn carries_feed(package: &DataPackage<'_>, config: &FeedConfig<'_>) -> bool {
 ///
 /// # Errors
 ///
-/// [`VerifyError`] for a malformed payload, an invalid signature, an
-/// unauthorised signer, a package outside the timestamp window, an asset pair
-/// that is not the caller's, a threshold that was not reached, an unusable
-/// value, or a price the account's scale cannot hold. A second valid package
-/// from one signer remains non-counting rather than fatal; ADR 24 records why.
+/// [`VerifyError`] for a malformed payload, packages describing more than one
+/// moment, more packages for this feed than verification will pay to recover, an
+/// invalid signature, an unauthorised signer, a package outside the timestamp
+/// window, an asset pair that is not the caller's, a threshold that was not
+/// reached, an unusable value, or a price the account's scale cannot hold. A
+/// second package from a signer whose slot is filled remains non-counting rather
+/// than fatal; ADR 24 records why.
 pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     payload: &Payload<'_>,
     config: &FeedConfig<'_>,

@@ -94,10 +94,11 @@ opposite of what ADR 10 argues for everywhere else, and the reason is that the d
 it covers -- the threshold in ADR 15, the scale in ADR 17, the framing in ADR 5 -- are
 statements about all inputs, where a cycle count is a statement about one.
 
-ADR 24 is the narrow exception to ADR 15's strict package rule. A duplicate needs no key: copy one already
-in the payload, or replay an older one still inside `maxAge`. Rejecting it does no work
-the per-signer slot is not already doing, because the duplicate cannot occupy another
-slot or increase the threshold count.
+ADR 24 is the narrow exception to ADR 15's strict package rule, and copying a package needs
+no key. Rejecting a second package from a signer whose slot is filled does no work the slot
+is not already doing, because it cannot occupy another slot or increase the threshold count.
+A package replayed from an older round is not that case -- it describes another moment, and
+ADR 27 refuses it.
 
 ADR 25 is the one that had to correct an earlier decision rather than an earlier
 omission. ADR 24 stopped a duplicate package failing a payload, and in doing so removed
