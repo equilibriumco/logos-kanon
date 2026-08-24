@@ -399,9 +399,7 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
         // One report per package, whatever the package repeats. Every repeated
         // point was still validated above; only the first valid value is filed.
         if let Some(value) = package_value {
-            if let Some(slot) =
-                reported.get_mut(index)
-            {
+            if let Some(slot) = reported.get_mut(index) {
                 if slot.is_none() {
                     *slot = Some(value);
                 }
