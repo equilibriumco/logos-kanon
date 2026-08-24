@@ -20,25 +20,25 @@ data point each; the 1- and 3-signer columns are the same payload cut short.
 
 | component | 1 signer | 3 signers | 5 signers |
 | --- | ---: | ---: | ---: |
-| decode | 586 | 1,501 | 2,416 |
-| keccak256 | 17,484 | 52,452 | 87,420 |
-| recovery | 585,278 | 1,755,586 | 2,922,900 |
-| signer-set membership | 162 | 540 | 990 |
-| the rest of `verify_feed` | 18,392 | 22,414 | 27,124 |
-| **whole update** | **621,902** | **1,832,493** | **3,040,850** |
-| _harness floor, subtracted out_ | 25,324 | 62,294 | 99,494 |
+| decode | 587 | 1,506 | 2,425 |
+| keccak256 | 17,479 | 52,437 | 87,395 |
+| recovery | 585,277 | 1,755,583 | 2,922,895 |
+| signer-set membership | 162 | 537 | 980 |
+| the rest of `verify_feed` | 18,141 | 22,348 | 27,247 |
+| **whole update** | **621,646** | **1,832,411** | **3,040,942** |
+| _harness floor, subtracted out_ | 25,327 | 62,299 | 99,499 |
 
 At three signers, which is RFP-020's default threshold:
 
 | component | share |
 | --- | ---: |
-| recovery | 95.80% |
+| recovery | 95.81% |
 | keccak256 | 2.86% |
 | the rest of `verify_feed` | 1.22% |
 | decode | 0.08% |
 | signer-set membership | 0.03% |
 
-One more signer costs about 604,000 cycles, whatever the signer count already is.
+One more signer costs about 605,000 cycles, whatever the signer count already is.
 
 ## How it is measured
 
@@ -81,8 +81,8 @@ account rather than from the guest input stream pays something different for it.
 
 ## What the numbers say
 
-**Recovery is the whole cost.** At three signers it is 95.80% of an update, and
-the four other components together are 4.20%. No arrangement of the remaining
+**Recovery is the whole cost.** At three signers it is 95.81% of an update, and
+the four other components together are 4.19%. No arrangement of the remaining
 code matters next to it. If LEZ ever offers a secp256k1 precompile, that is the
 one lever worth pulling, and `VerifierBackend` exists so that pulling it is one
 new implementor and one type parameter
@@ -106,10 +106,10 @@ that does not change the decision.
 an update. The wire format is a backwards walk over fixed-width fields with no
 allocation, and the membership check is a linear scan of at most 32 addresses.
 That scan is quadratic in the signer count — every package scans the whole set —
-which the numbers show and which is still not worth acting on: 990 cycles at five
+which the numbers show and which is still not worth acting on: 980 cycles at five
 signers.
 
-**Converting to the account's scale costs 11,330 cycles**, about 64% of one
+**Converting to the account's scale costs 11,307 cycles**, about 65% of one
 keccak256 and most of the remainder row at one signer. It is a
 16-byte long division with 128-bit intermediates
 (`adr/0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md`), and it
@@ -123,7 +123,7 @@ The rows above are one update's cost. They are not the most an update can cost,
 because the number of packages is the payload's to choose: the count sits in the
 envelope, outside every signature, and a package can be copied without a key.
 
-At 602,749 cycles for a hash and a recovery, 56 packages exhaust LEZ's
+At about 602,700 cycles for a hash and a recovery, 56 packages exhaust LEZ's
 33,554,432-cycle public budget. Measured rather than extrapolated: an 8 KB
 payload of repeated packages came to 34,746,599 cycles, and a transaction that
 reaches the limit aborts instead of publishing.
@@ -167,15 +167,15 @@ workload, calling `k256` and `tiny-keccak` directly. This measures them inside
 
 | | M0, in isolation | here, in `verify_feed` |
 | --- | ---: | ---: |
-| software keccak256 over 77 bytes | 17,498 | 17,475 |
-| accelerated recovery, per signer | 565,551 | 585,274 |
+| software keccak256 over 77 bytes | 17,498 | 17,479 |
+| accelerated recovery, per signer | 565,551 | 585,277 |
 
 The 77 bytes are not a coincidence: a RedStone package carrying one data point
 signs `1 * (32 + 32) + 4 + 6 + 3` bytes, and every captured package carries one.
 
-The recovery gap is 19,723 cycles, and it is the address derivation the M0
-harness did not include: one keccak256 over 64 bytes accounts for 17,475 of it,
-leaving 2,248 for parsing and normalising the 65-byte signature.
+The recovery gap is 19,726 cycles, and it is the address derivation the M0
+harness did not include: one keccak256 over 64 bytes accounts for 17,479 of it,
+leaving 2,247 for parsing and normalising the 65-byte signature.
 
 ## Reproducing
 

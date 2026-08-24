@@ -10,16 +10,10 @@
 
 ## Context
 
-ADR 15 decided count-and-ignore on two axes — an unrequested feed is skipped, an
-unauthorised signer is skipped — and gave the reason: a package that costs an
-attacker nothing to produce must not be able to fail the payload for everyone.
-An unrecoverable signature is the clearest case. It needs no key and no valid
-signature, so rejecting on it would be the cheapest denial of service in the
-design.
-
-A signer's second package for the same feed is a third axis, and the obvious
-answer there is the opposite one: reject, because a signer occupying two slots
-reaches any threshold alone.
+ADR 15 rejects signatures, signers, ages, and values strictly according to the
+accepted contract. A signer's second otherwise-valid package is different: none
+of those checks failed, and the security property is only that one signer must
+not occupy two threshold slots.
 
 The argument is right and the rejection does no work for it. `reported[index]`
 is one cell per configured signer and `met` counts filled cells, so a signer
@@ -38,9 +32,10 @@ routes, neither of which involves signing anything:
   is three minutes, so roughly eighteen validly-signed packages per signer are
   available at any moment.
 
-Either one denies the feed to every consumer of that payload. This is precisely
-the attacker ADR 15 built the rest of its semantics against, arriving through the
-one door left open.
+Rejecting on either one would poison that exact payload without strengthening
+the threshold: the duplicate still cannot fill another slot. This is the narrow
+case where ignoring a package has a direct security argument independent of the
+strict rejection contract.
 
 The second route also settles what the fix cannot be. Skipping only when the
 values agree, and erroring when they disagree, closes the copy and leaves the
@@ -49,12 +44,11 @@ supplies.
 
 ## Decision
 
-**A second package from a signer that already filled its slot is skipped, and
-`ReoccurringSigner` is never constructed.** It stays in the enum, documented as
-having no producer, alongside `InvalidSignature` and for the same reason: both
-name a fault in one package, and failing a payload over one package is a free
-denial of service. Both become reportable in a single-package API, where the
-caller names one package and expects that package to verify.
+**After ADR 15's strict checks, a second valid package from one signer cannot
+fill another signer slot, and `ReoccurringSigner` is never constructed.** It
+stays in the enum as the one variant without a producer. Reports are retained
+long enough for ADR 28 to select a round, then the per-signer slot rather than
+an error enforces the anti-inflation property.
 
 **Which of a signer's packages then counts is not decided here.**
 `for_each_package` walks the payload from the tail, so "whichever arrived first"
@@ -77,14 +71,11 @@ the price is a function of the set of packages, not of their order.
   threshold failure it is. They are the same payloads asserting the same
   property — one signer counts once — which is the point: the property never
   depended on the error.
-- **`no_two_failure_modes_answer_with_the_same_variant` compares nine causes
-  rather than ten.** "One signer twice" is no longer a distinct failure mode,
-  because it is no longer a failure.
-- **One `[u64; MAX_SIGNERS]` more guest frame, and the published figures moved.**
-  The floor grows by 5 cycles at every signer count; a whole update costs 122
-  more at one signer and 132 *fewer* at five, as the remainder's codegen
-  shuffled. Under 0.02% either way, against 585,274 cycles per recovery.
-  `COSTS.md` and `methods/tests/cost.rs` carry the new numbers.
+- **`no_two_failure_modes_answer_with_the_same_variant` omits
+  `ReoccurringSigner`.** "One signer twice" is no longer a distinct failure
+  mode, because it is no longer a failure.
+- **The extra report bookkeeping is included in the product measurements.**
+  `COSTS.md` and `methods/tests/cost.rs` carry the current exact numbers.
 - **A signer that signs two different values under one timestamp is still
   resolved by position.** Reaching that needs the signer's key, so it is
   misbehaviour rather than an attack, and no ordering rule can make one of two
@@ -100,6 +91,6 @@ the price is a function of the set of packages, not of their order.
   in-window prices counts. Whether that matters depends on how `submit_price`
   gates submission, which M2-02 has not decided — and a security fix should not
   rest on an assumption about a component that does not exist yet.
-- **Keep the rejection and rely on the relayer to send clean payloads.** The
-  relayer is not the threat model. Any party that can put bytes in front of the
-  verifier can append a package.
+- **Reject duplicates and rely on relayers to send clean payloads.** Feasible,
+  but it adds a failure mode without adding anti-inflation: the slot already
+  makes the duplicate inert.

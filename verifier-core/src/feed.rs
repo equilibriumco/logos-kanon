@@ -44,9 +44,9 @@ impl AssetPair {
 /// The most signers one feed may configure.
 ///
 /// A real limit rather than a guard: it sizes three fixed stack buffers
-/// `verify_feed` walks with — `reported` (`[Option<Value>; 32]`, 1,056 bytes),
-/// `unknown` (`[SignerAddress; 32]`, 640 bytes) and `collected` (`[Value; 32]`,
-/// 1,024 bytes), about 2.7 KB in one frame — which is how the threshold runs
+/// `verify_feed` walks with — `reported` (`[Option<Value>; 32]`, 1,056 bytes)
+/// and `collected` (`[Value; 32]`, 1,024 bytes), about 2 KB in one frame — which
+/// is how the threshold runs
 /// without an allocator. `collected` exists only because `median` takes
 /// `&mut [Value]` while `reported` holds `Option<Value>`; sorting `reported` in
 /// place would remove it and save a kilobyte of guest stack, and is deliberately
@@ -60,7 +60,7 @@ pub const MAX_SIGNERS: usize = 32;
 ///
 /// Separate from [`MAX_SIGNERS`] because it is bounded by a different thing.
 /// `MAX_SIGNERS` costs guest stack; this costs the transaction. A recovery is
-/// 585,274 cycles and LEZ allows 33,554,432 in a public transaction
+/// about 585,000 cycles and LEZ allows 33,554,432 in a public transaction
 /// (`COSTS.md`), so without a ceiling the payload decides how much of the budget
 /// verification spends -- and the package count sits in the envelope, outside
 /// every signature, where anyone handling the payload can raise it.
@@ -285,28 +285,13 @@ struct Report {
 /// Whether this package says anything at all about the requested feed.
 ///
 /// The one test cheap enough to run before recovery, and the one that decides
-/// whether recovery is worth 585,274 cycles. A package carrying no data point
-/// for this feed cannot fill a slot, cannot be counted as an unknown signer and
-/// cannot set an age flag, so nothing about it changes the answer.
+/// whether recovery is worth about 585,000 cycles. A package carrying no data
+/// point for this feed cannot fill a slot or affect this feed's package checks,
+/// so nothing about it changes the answer.
 fn carries_feed(package: &DataPackage<'_>, config: &FeedConfig<'_>) -> bool {
     package
         .data_points()
         .any(|point| point.feed_id == config.feed_id())
-}
-
-/// Whether this package would have counted toward the threshold, on everything
-/// except the one thing being tested.
-///
-/// Both "present but blocked" tallies need it. A package that carries nothing
-/// this feed can use could not have reached the threshold at any age and under
-/// any signer set, so neither its signer's absence from the configured set nor
-/// its timestamp is the reason a slot stayed empty. Saying otherwise sends an
-/// operator to fix something that was never in the way.
-fn carries_usable_value(package: &DataPackage<'_>, config: &FeedConfig<'_>) -> bool {
-    package.data_points().any(|point| {
-        point.feed_id == config.feed_id()
-            && Value::from_be_slice(point.value).is_some_and(|value| usable(&value))
-    })
 }
 
 /// Verifies one feed out of a payload.
@@ -316,11 +301,11 @@ fn carries_usable_value(package: &DataPackage<'_>, config: &FeedConfig<'_>) -> b
 /// `config.feed_id()`. Returns the median across them, on both RedStone's scale
 /// and the price account's, once the threshold is met.
 ///
-/// Unknown signers and unrequested feeds are **skipped, not fatal**. That is
-/// RedStone's own rule, and it is what lets one published payload serve consumers
-/// whose signer sets and feed interests differ. Failing the payload on any
-/// unknown signer would hand a denial-of-service primitive to anyone able to
-/// append a package.
+/// Packages that do not carry the requested feed are irrelevant and skipped
+/// before recovery. Every package that does carry it is verified strictly: an
+/// invalid signature, an unauthorised signer, an out-of-window timestamp, or an
+/// unusable value rejects the payload. This is the contract promised by F4, U6,
+/// and SEC1.
 ///
 /// `expected` is the asset pair the caller believes this feed prices, compared
 /// against the pair the feed was registered with. It is a parameter rather than
@@ -329,12 +314,12 @@ fn carries_usable_value(package: &DataPackage<'_>, config: &FeedConfig<'_>) -> b
 ///
 /// # Errors
 ///
-/// [`VerifyError`] for a malformed payload, an asset pair that is not the
-/// caller's, a threshold that was not reached, values that were unusable, or a
-/// price the account's scale cannot hold. An unrecoverable signature, and a
-/// second package from a signer that already filled its slot, are skipped
-/// rather than reported; see [`VerifyError::InvalidSignature`] and
-/// [`VerifyError::ReoccurringSigner`].
+/// [`VerifyError`] for a malformed payload, an invalid signature, an
+/// unauthorised signer, a package outside the timestamp window, an asset pair
+/// that is not the caller's, a threshold that was not reached, an unusable
+/// value, or a price the account's scale cannot hold. A second package from a
+/// signer that already filled its slot remains non-counting rather than fatal;
+/// see [`VerifyError::ReoccurringSigner`].
 pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     payload: &Payload<'_>,
     config: &FeedConfig<'_>,
@@ -357,21 +342,6 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
     // them (ADR 26).
     let mut reports: [Option<Report>; MAX_RECOVERIES] = [None; MAX_RECOVERIES];
     let mut report_count = 0usize;
-    // Distinct unknown signers. Counting packages instead would let three
-    // packages from one unknown address read as three missing signers.
-    let mut unknown: [SignerAddress; MAX_SIGNERS] =
-        [SignerAddress([0; SignerAddress::LEN]); MAX_SIGNERS];
-    let mut unknown_count = 0usize;
-    // Configured signers that supplied this feed at all, usable value or not.
-    // Whether that cost anything is decided against `reported` after the walk,
-    // because a signer can send one package this reads and another it does not,
-    // in either order.
-    let mut supplied_feed = [false; MAX_SIGNERS];
-    // Why a slot stayed empty, when the reason was the package's age. Resolved
-    // against `reported` after the walk, like `supplied_feed`.
-    let mut stale = [false; MAX_SIGNERS];
-    let mut future = [false; MAX_SIGNERS];
-
     // Packages recovered so far. RedStone payloads are multi-feed and
     // multi-consumer, so most of what arrives is somebody else's; this counts
     // only what was worth paying for.
@@ -391,92 +361,37 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
         }
 
         let digest = backend.keccak256(package.signable());
-        // An unrecoverable signature (bad recovery id, r/s outside the curve
-        // order, a malleable high-s) is skipped, not fatal: it needs no key and
-        // no valid signature to produce, which makes propagating it the
-        // cheapest denial-of-service primitive in this design. RedStone skips
-        // it the same way (`Some(address) => address, _ => continue`).
-        let Ok(signer) = backend.recover_signer(&digest, &package.signature) else {
-            return Ok(());
-        };
+        let signer = backend
+            .recover_signer(&digest, &package.signature)
+            .map_err(VerifyError::InvalidSignature)?;
 
         let Some(index) = config.signers().iter().position(|s| *s == signer) else {
-            // Recorded only if the package actually carries a usable data
-            // point for the requested feed: an unknown signer that reported
-            // nothing for this feed could not have moved the threshold even
-            // if it had been authorised.
-            // Also requires the package to be in the window: authorising a
-            // stranger whose package is stale would not have produced a price
-            // either, so it is not a signer set the caller should be told to fix.
-            let contributes = freshness(package.timestamp_ms, now_ms, config.max_age_ms())
-                == Freshness::Current
-                && carries_usable_value(&package, config);
-            if contributes
-                && unknown_count < MAX_SIGNERS
-                && !unknown
-                    .get(..unknown_count)
-                    .is_some_and(|seen| seen.contains(&signer))
-            {
-                if let Some(slot) = unknown.get_mut(unknown_count) {
-                    *slot = signer;
-                    unknown_count += 1;
-                }
-            }
-            return Ok(());
+            return Err(VerifyError::UnauthorisedSigner);
         };
 
-        // After recovery, so the package is known to be a configured signer's.
-        // Checking it first would be cheaper -- two comparisons against 565,497
-        // cycles -- but recovery would then be skipped for a package outside the
-        // window, and an outsider could append three unsigned stale packages to
-        // turn a threshold failure into a staleness one. A fresh payload has
-        // nothing to skip, so the saving only ever arrived in the two cases
-        // where naming the right cause matters most.
-        //
-        // Gated on the package carrying something this feed could have used, the
-        // same test the unknown-signer branch above applies. Signers subscribe
-        // to different feeds on `redstone-primary-prod` (ADR 19), so a
-        // configured signer's stale package about another feed is an ordinary
-        // production shape -- and without the gate it turns an honest
-        // `ThresholdNotMet` into `StalePackage`, naming a failure the payload
-        // never had.
         match freshness(package.timestamp_ms, now_ms, config.max_age_ms()) {
-            Freshness::Stale => {
-                if carries_usable_value(&package, config) {
-                    if let Some(flag) = stale.get_mut(index) {
-                        *flag = true;
-                    }
-                }
-                return Ok(());
-            }
-            Freshness::Future => {
-                if carries_usable_value(&package, config) {
-                    if let Some(flag) = future.get_mut(index) {
-                        *flag = true;
-                    }
-                }
-                return Ok(());
-            }
+            Freshness::Stale => return Err(VerifyError::StalePackage),
+            Freshness::Future => return Err(VerifyError::FuturePackage),
             Freshness::Current => {}
         }
 
-        let mut supplied = false;
+        let mut package_value = None;
         for point in package.data_points() {
             if point.feed_id != config.feed_id() {
                 continue;
             }
-            supplied = true;
-            // Zero, negative and unrepresentable values are skipped, not fatal.
-            // Erroring here would let one configured signer deny the feed,
-            // which is the thing M-of-N exists to prevent. RedStone sanitises
-            // instead of rejecting, so this also keeps us aligned with it. What
-            // the skips cost collectively is answered after the walk.
-            let Some(value) = Value::from_be_slice(point.value).filter(usable) else {
-                continue;
-            };
-            // Recorded, not yet counted. Which of a signer's packages fills
-            // its slot depends on which round the payload settles on, and that
-            // is not knowable until every package has been read. Duplicates,
+            let value = Value::from_be_slice(point.value)
+                .filter(usable)
+                .ok_or(VerifyError::ValueOutOfRange)?;
+            if package_value.is_none() {
+                package_value = Some(value);
+            }
+        }
+
+        if let Some(value) = package_value {
+            // Recorded, not yet counted. Which of a signer's packages fills its
+            // slot depends on which round the payload settles on, and that is
+            // not knowable until every package has been read. Duplicates,
             // replays and packages from other rounds all land here and are
             // sorted out afterwards -- none of them is fatal, for ADR 24's
             // reason: producing one needs no key.
@@ -488,21 +403,14 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
                 });
                 report_count += 1;
             }
-            // One report per package, whatever the package repeats. The buffer
-            // holds `MAX_RECOVERIES` because that is how many recoveries are
-            // paid for, and a package that could file more than one of them
-            // would let a single signature fill it and crowd every other signer
-            // out. It also keeps the count honest: `report_count` can never
-            // exceed `recovered`, so the write above never finds the buffer
-            // full.
-            break;
+            // One report per package, whatever the package repeats. Every
+            // repeated point was still validated above; only the first valid
+            // value is filed. The buffer holds `MAX_RECOVERIES` because that is
+            // how many recoveries are paid for, and a package that could file
+            // more than one report would let a single signature crowd every
+            // other signer out.
         }
 
-        if supplied {
-            if let Some(flag) = supplied_feed.get_mut(index) {
-                *flag = true;
-            }
-        }
         Ok(())
     });
 
@@ -606,26 +514,9 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
 
     let met_count = u8::try_from(met).unwrap_or(u8::MAX);
     if met_count < config.threshold() {
-        // Which of the skips cost the threshold? Each test asks whether undoing
-        // that one class of skip would have reached it; the first that would is
-        // the cause worth naming. Spoiled values come before unknown signers
-        // because a configured signer that did report is the nearer fault.
         let required = usize::from(config.threshold());
-        // Each tally counts only signers whose slot stayed empty. A signer that
-        // filled its slot is already in `met`, and counting it again would let
-        // its own second package close the gap a silent neighbour left.
-        let blocked = |flags: &[bool; MAX_SIGNERS]| {
-            flags
-                .iter()
-                .zip(reported.iter())
-                .filter(|(flagged, slot)| **flagged && slot.is_none())
-                .count()
-        };
-
-        // Before anything else: were they all here, but not in one round?
-        // Those signers are `supplied_feed` too, so the ladder below would
-        // otherwise name their values as the fault when the values were fine
-        // and the payload was spliced.
+        // Were enough authorised, valid packages present, but split across
+        // rounds? That remains distinct from a genuinely missing threshold.
         let mixed = off_round
             .iter()
             .zip(reported.iter())
@@ -636,47 +527,6 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
                 largest: met_count,
                 required: config.threshold(),
             });
-        }
-
-        // Were the configured signers there at all? A signer whose slot stayed
-        // empty for any of these reasons still signed, and answering "the
-        // threshold was not met" would send an operator looking for signers that
-        // are already in the payload. Counted over signers rather than over
-        // reasons, because one signer can arrive stale in one package and
-        // useless in another and must not close two gaps by itself.
-        let present = stale
-            .iter()
-            .zip(future.iter())
-            .zip(supplied_feed.iter())
-            .zip(reported.iter())
-            .filter(|(((s, f), v), slot)| (**s || **f || **v) && slot.is_none())
-            .count();
-
-        if met.saturating_add(present) >= required {
-            // Which reason to name, when the signers are present but several
-            // things are wrong. The largest cause, because it is the one whose
-            // fixing moves the count furthest; ties go to age, then to skew,
-            // then to values, which is the order in which a cause resolves
-            // without anybody acting. A fresher payload fixes staleness, where
-            // a bad value needs someone to change something, and sending an
-            // operator to reconfigure a feed that will be fine in thirty
-            // seconds is the wrong answer even when it is also a true one.
-            let stale_count = blocked(&stale);
-            let future_count = blocked(&future);
-            let spoiled_count = blocked(&supplied_feed);
-
-            return Err(
-                if stale_count >= future_count && stale_count >= spoiled_count {
-                    VerifyError::StalePackage
-                } else if future_count >= spoiled_count {
-                    VerifyError::FuturePackage
-                } else {
-                    VerifyError::ValueOutOfRange
-                },
-            );
-        }
-        if met.saturating_add(unknown_count) >= required {
-            return Err(VerifyError::UnauthorisedSigner);
         }
         return Err(VerifyError::ThresholdNotMet {
             met: met_count,
@@ -1053,10 +903,9 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_signer_is_skipped_and_the_payload_still_verifies() {
-        // Three authorised signers plus a stranger. RedStone publishes payloads
-        // carrying more signers than any one consumer configures, so this is the
-        // healthy case rather than an attack.
+    fn an_unknown_signer_rejects_the_payload_even_when_quorum_is_present() {
+        // SEC1 applies to every package for the requested feed, independently
+        // of whether the authorised packages already meet the threshold.
         let keys = keys(3);
         let set = signer_set(&keys);
         let stranger = signing_key(0x99);
@@ -1071,13 +920,9 @@ mod tests {
 
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
-        let verified = verify(&payload, &config).expect("verifies");
-
-        assert_eq!(verified.signers, 3, "the stranger is not counted");
         assert_eq!(
-            verified.value,
-            Value::from_be_slice(&[60]).expect("fits"),
-            "and cannot move the median"
+            verify(&payload, &config),
+            Err(VerifyError::UnauthorisedSigner)
         );
     }
 
@@ -1182,7 +1027,7 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_value_does_not_count_toward_the_threshold() {
+    fn a_zero_value_is_rejected_before_threshold_is_evaluated() {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
@@ -1194,9 +1039,8 @@ mod tests {
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
 
-        // The zero fills no slot, so two of three is short. All three signers
-        // did report, though, which is a different problem from one of them
-        // staying silent, and the caller gets told which.
+        // The package error is reported directly, even though the other two
+        // signers would leave the payload short of its threshold.
         assert_eq!(verify(&payload, &config), Err(VerifyError::ValueOutOfRange));
     }
 
@@ -1225,10 +1069,7 @@ mod tests {
     }
 
     #[test]
-    fn unauthorised_is_reported_when_the_skipped_signers_would_have_made_quorum() {
-        // met = 2, one distinct unknown, threshold 3. Authorising that signer
-        // would have reached quorum, so the signer set is what failed. Reporting
-        // "2 of 3" here would send an operator to look for missing data.
+    fn an_unauthorised_signer_is_reported_directly() {
         let configured = keys(3);
         let set = signer_set(&configured);
         let stranger = signing_key(0x99);
@@ -1249,11 +1090,7 @@ mod tests {
     }
 
     #[test]
-    fn a_threshold_that_was_unreachable_anyway_is_not_blamed_on_the_signer_set() {
-        // met = 0, one distinct unknown, threshold 3. Even authorising the
-        // stranger leaves one of three, so the honest answer is that too few
-        // signers signed. The naive "nothing matched, so blame the set" rule gets
-        // this wrong.
+    fn one_unknown_signer_is_rejected_before_threshold_is_evaluated() {
         let configured = keys(3);
         let set = signer_set(&configured);
         let stranger = signing_key(0x99);
@@ -1267,18 +1104,12 @@ mod tests {
 
         assert_eq!(
             verify(&payload, &config),
-            Err(VerifyError::ThresholdNotMet {
-                met: 0,
-                required: 3
-            })
+            Err(VerifyError::UnauthorisedSigner)
         );
     }
 
     #[test]
-    fn repeated_packages_from_one_unknown_signer_count_as_one() {
-        // met = 1, three packages from the *same* stranger, threshold 3.
-        // Counting packages would make this look reachable and report
-        // UnauthorisedSigner; counting distinct signers gets it right.
+    fn repeated_packages_from_one_unknown_signer_are_still_unauthorised() {
         let configured = keys(3);
         let set = signer_set(&configured);
         let stranger = signing_key(0x99);
@@ -1295,10 +1126,7 @@ mod tests {
 
         assert_eq!(
             verify(&payload, &config),
-            Err(VerifyError::ThresholdNotMet {
-                met: 1,
-                required: 3
-            })
+            Err(VerifyError::UnauthorisedSigner)
         );
     }
 
@@ -1326,11 +1154,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unrepresentable_value_costs_only_that_signer_not_the_whole_feed() {
-        // The reason this is a skip and not an error: erroring would let a single
-        // configured signer deny the feed to everyone, which is exactly what an
-        // M-of-N threshold exists to prevent. Three good signers plus one sending
-        // an unrepresentable width must still produce a price.
+    fn one_unrepresentable_value_rejects_even_when_quorum_is_present() {
         let keys = keys(4);
         let set = signer_set(&keys);
         let wide = [0x01u8; 33];
@@ -1343,17 +1167,11 @@ mod tests {
 
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
-        let verified = verify(&payload, &config).expect("verifies");
-
-        assert_eq!(verified.signers, 3, "the oversized signer is not counted");
-        assert_eq!(verified.value, Value::from_be_slice(&[20]).expect("fits"));
+        assert_eq!(verify(&payload, &config), Err(VerifyError::ValueOutOfRange));
     }
 
     #[test]
-    fn an_unrepresentable_value_can_still_leave_the_threshold_unmet() {
-        // Skipping is not silence: with too few good signers left, the caller
-        // still gets a rejection, just one that names the threshold rather than
-        // blaming the payload's shape.
+    fn an_unrepresentable_value_is_reported_before_threshold_failure() {
         let keys = keys(3);
         let set = signer_set(&keys);
         let wide = [0x01u8; 33];
@@ -1365,13 +1183,7 @@ mod tests {
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
 
-        assert_eq!(
-            verify(&payload, &config),
-            Err(VerifyError::ThresholdNotMet {
-                met: 1,
-                required: 3
-            })
-        );
+        assert_eq!(verify(&payload, &config), Err(VerifyError::ValueOutOfRange));
     }
 
     #[test]
@@ -1409,11 +1221,7 @@ mod tests {
     }
 
     #[test]
-    fn an_outsiders_garbage_signature_cannot_deny_the_feed() {
-        // Change 1's regression test, and the most important of the five: no
-        // key and no valid signature are needed to mount this, so if recovery
-        // failure ever propagates again this is the cheapest denial-of-service
-        // vector in the design.
+    fn a_garbage_signature_rejects_even_when_quorum_is_present() {
         let keys = keys(3);
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
@@ -1426,20 +1234,19 @@ mod tests {
 
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
-        let verified = verify(&payload, &config).expect("verifies");
-
         assert_eq!(
-            verified.signers, 3,
-            "the garbage package is skipped, not fatal"
+            verify(&payload, &config),
+            Err(VerifyError::InvalidSignature(
+                crate::backend::BackendError::InvalidRecoveryId
+            ))
         );
     }
 
     #[test]
     fn strangers_reporting_only_another_feed_do_not_report_unauthorised_signer() {
-        // Change 2's regression test. Recording these as unknown before
-        // checking they carried a usable BTC point would give met = 0,
-        // unknown = 3, and 0 + 3 >= 3 report UnauthorisedSigner — even though
-        // authorising all three would still have produced nothing.
+        // Strict package checks are scoped to the requested feed. Packages that
+        // only carry ETH are irrelevant to a BTC verification and are skipped
+        // before recovery, whatever signer produced them.
         let stranger_keys = [signing_key(0x99), signing_key(0x98), signing_key(0x97)];
         let configured = keys(3);
         let set = signer_set(&configured);
@@ -1487,6 +1294,27 @@ mod tests {
             }),
             "the second point does not fill a second slot"
         );
+    }
+
+    #[test]
+    fn every_repeated_point_for_the_requested_feed_is_validated() {
+        // Filing one report per signature must not mean stopping validation at
+        // the first usable point. Otherwise a valid point could hide a zero
+        // later in the same signed package.
+        let keys = keys(1);
+        let set = signer_set(&keys);
+        let valid = (b"BTC".as_slice(), [0, 0, 0, 10].as_slice());
+        let invalid = (b"BTC".as_slice(), [0, 0, 0, 0].as_slice());
+
+        for points in [[valid, invalid], [invalid, valid]] {
+            let bytes = PayloadBuilder::default()
+                .signed_package(&keys[0], &points, 1)
+                .build();
+            let payload = Payload::decode(&bytes).expect("well formed");
+            let config = feed_config(&set, 1);
+
+            assert_eq!(verify(&payload, &config), Err(VerifyError::ValueOutOfRange));
+        }
     }
 
     /// A payload three configured signers agree on, for the tests that only
@@ -1573,9 +1401,9 @@ mod tests {
     }
 
     #[test]
-    fn a_negative_value_costs_only_the_signer_that_sent_it() {
-        // The top half of the range read as int256. Skipped like a zero, for the
-        // same reason: one configured signer must not be able to deny a feed.
+    fn a_negative_value_rejects_even_when_quorum_is_present() {
+        // The top half of the range is interpreted as the negative half of an
+        // int256-like price field and rejected directly under F4.
         let keys = keys(4);
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
@@ -1588,10 +1416,7 @@ mod tests {
 
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
-        let verified = verify(&payload, &config).expect("three good signers still agree");
-
-        assert_eq!(verified.signers, 3);
-        assert_eq!(verified.value, Value::from_be_slice(&[100]).expect("fits"));
+        assert_eq!(verify(&payload, &config), Err(VerifyError::ValueOutOfRange));
     }
 
     #[test]
@@ -1609,10 +1434,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bad_value_that_could_not_have_met_the_threshold_anyway_is_not_blamed() {
-        // The counterfactual, the same shape ADR 15 applies to unknown signers:
-        // one spoiled report out of a threshold of three leaves the count short
-        // even if the value had been perfect, so the count is the honest answer.
+    fn one_bad_value_is_reported_before_threshold_is_evaluated() {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
@@ -1622,20 +1444,13 @@ mod tests {
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
 
-        assert_eq!(
-            verify(&payload, &config),
-            Err(VerifyError::ThresholdNotMet {
-                met: 0,
-                required: 3
-            })
-        );
+        assert_eq!(verify(&payload, &config), Err(VerifyError::ValueOutOfRange));
     }
 
     #[test]
-    fn a_configured_signers_bad_value_is_named_before_a_strangers_absence() {
-        // Both causal tests pass here: two good, one configured signer reporting
-        // zero, one stranger reporting a price. Either would close the gap, and
-        // the signer that is already authorised is the nearer thing to fix.
+    fn the_first_bad_package_in_the_wire_walk_is_reported() {
+        // Package iteration is tail-first. Both errors are strict; when a
+        // payload contains more than one, the first one encountered is returned.
         let keys = keys(4);
         let set = signer_set(&keys[..3]);
         let bytes = PayloadBuilder::default()
@@ -1648,7 +1463,10 @@ mod tests {
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
 
-        assert_eq!(verify(&payload, &config), Err(VerifyError::ValueOutOfRange));
+        assert_eq!(
+            verify(&payload, &config),
+            Err(VerifyError::UnauthorisedSigner)
+        );
     }
 
     #[test]
@@ -1669,11 +1487,7 @@ mod tests {
     }
 
     #[test]
-    fn a_signer_that_reported_is_not_also_counted_among_the_spoiled() {
-        // One signer sending a good package and a useless one must not close
-        // the gap its silent neighbour left. Both orderings, because packages
-        // are walked last-first and the answer must not depend on which of the
-        // two the walk reaches first.
+    fn one_bad_package_from_a_signer_rejects_in_either_order() {
         let keys = keys(2);
         let set = signer_set(&keys);
         let good = (b"BTC".as_slice(), [0, 0, 0, 10].as_slice());
@@ -1690,11 +1504,8 @@ mod tests {
 
             assert_eq!(
                 verify(&payload, &config),
-                Err(VerifyError::ThresholdNotMet {
-                    met: 1,
-                    required: 2
-                }),
-                "one of two signers signed, whichever package came first"
+                Err(VerifyError::ValueOutOfRange),
+                "the bad package is rejected whichever package is walked first"
             );
         }
     }
@@ -1737,39 +1548,6 @@ mod tests {
                 met: 4,
                 required: 5
             })
-        );
-    }
-
-    #[test]
-    fn a_full_buffer_of_unknown_signers_neither_panics_nor_overruns() {
-        // The buffer is sized for the configured signers, and the unknown ones
-        // are whoever else happens to be in a payload — a number no consumer
-        // controls. A panic here would abort the transaction rather than refuse
-        // the price.
-        //
-        // Exactly `MAX_RECOVERIES` of them, because that is now the most a
-        // payload can present: the recovery ceiling and the buffer are the same
-        // size, so the buffer fills to the brim and cannot be pushed past it.
-        let keys = keys(u8::try_from(MAX_RECOVERIES).expect("fits") + 3);
-        let set = signer_set(&keys[..3]);
-
-        let mut builder = PayloadBuilder::default();
-        for key in &keys[3..] {
-            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 50])], 1);
-        }
-        let bytes = builder.build();
-        let payload = Payload::decode(&bytes).expect("well formed");
-        let config = feed_config(&set, 3);
-
-        assert_eq!(
-            keys.len() - 3,
-            MAX_SIGNERS,
-            "the test is only meaningful if the buffer actually fills"
-        );
-        assert_eq!(
-            verify(&payload, &config),
-            Err(VerifyError::UnauthorisedSigner),
-            "a full buffer of strangers and none of the three configured signers"
         );
     }
 
@@ -1952,11 +1730,9 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_package_carrying_a_value_this_feed_cannot_use_is_not_staleness_either() {
-        // The same gate, reached the other way: the signer did report BTC, but
-        // a zero is RedStone's "no report". Fixing the age would not have
-        // produced a price and neither would fixing the value, so naming
-        // either one would point at a repair that does not work.
+    fn package_age_is_checked_before_its_value() {
+        // Both conditions reject. Age is checked first so the result is stable
+        // and no untrusted value is parsed from an already-stale package.
         let keys = keys(3);
         let set = signer_set(&keys);
         let now = NOW_MS;
@@ -1971,10 +1747,7 @@ mod tests {
 
         assert_eq!(
             verify_at(&payload, &config, now),
-            Err(VerifyError::ThresholdNotMet {
-                met: 2,
-                required: 3
-            })
+            Err(VerifyError::StalePackage)
         );
     }
 
@@ -2070,10 +1843,7 @@ mod tests {
     }
 
     #[test]
-    fn one_stale_package_costs_only_its_own_signer() {
-        // The rule that has held for every other bad package: a threshold
-        // exists to survive one signer, so one stale report must not deny the
-        // feed to the consumers the payload also serves.
+    fn one_stale_package_rejects_even_when_quorum_is_present() {
         let keys = keys(4);
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
@@ -2092,19 +1862,38 @@ mod tests {
         let config = timed_config(&set, 3, ONE_MINUTE);
 
         assert_eq!(
-            verify_at(&payload, &config, NOW_MS)
-                .expect("three fresh signers agree")
-                .signers,
-            3
+            verify_at(&payload, &config, NOW_MS),
+            Err(VerifyError::StalePackage)
         );
     }
 
     #[test]
-    fn strangers_sending_stale_packages_cannot_rename_a_threshold_failure() {
-        // The reason the timestamp is checked after recovery. If it were checked
-        // first, these packages would never be attributed to anyone and three of
-        // them would turn this into StalePackage -- telling an operator to
-        // refetch when the signer set is what does not match.
+    fn one_future_package_rejects_even_when_quorum_is_present() {
+        let keys = keys(4);
+        let set = signer_set(&keys);
+        let mut builder = PayloadBuilder::default();
+        for key in &keys[..3] {
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], NOW_MS);
+        }
+        let bytes = builder
+            .signed_package(
+                &keys[3],
+                &[(b"BTC", &[0, 0, 0, 100])],
+                NOW_MS + MAX_AHEAD_MS + 1,
+            )
+            .build();
+
+        let payload = Payload::decode(&bytes).expect("well formed");
+        let config = timed_config(&set, 3, ONE_MINUTE);
+
+        assert_eq!(
+            verify_at(&payload, &config, NOW_MS),
+            Err(VerifyError::FuturePackage)
+        );
+    }
+
+    #[test]
+    fn signer_authority_is_checked_before_package_age() {
         let keys = keys(6);
         let set = signer_set(&keys[..3]);
         let mut builder = PayloadBuilder::default();
@@ -2119,11 +1908,7 @@ mod tests {
 
         assert_eq!(
             verify_at(&payload, &config, NOW_MS),
-            Err(VerifyError::ThresholdNotMet {
-                met: 0,
-                required: 3
-            }),
-            "none of the configured signers signed, and no stranger's age changes that"
+            Err(VerifyError::UnauthorisedSigner)
         );
     }
 
@@ -2168,11 +1953,7 @@ mod tests {
     }
 
     #[test]
-    fn signers_blocked_for_different_reasons_still_count_as_present() {
-        // Two configured signers reported: one package too old, one carrying a
-        // zero. Neither cause reaches a threshold of two on its own, and
-        // checking them one at a time would answer "met: 0" -- sending an
-        // operator to look for signers that are both already in the payload.
+    fn the_first_strict_rejection_precedes_threshold_for_any_configuration() {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
@@ -2188,29 +1969,18 @@ mod tests {
         let config = timed_config(&set, 2, ONE_MINUTE);
         assert_eq!(
             verify_at(&payload, &config, NOW_MS),
-            Err(VerifyError::StalePackage),
-            "both signers are present; age is named because it resolves on its own"
+            Err(VerifyError::ValueOutOfRange)
         );
 
-        // At a threshold of three the two of them could not have been enough
-        // even if nothing were wrong with either, so the count is the honest
-        // answer after all.
         let strict = timed_config(&set, 3, ONE_MINUTE);
         assert_eq!(
             verify_at(&payload, &strict, NOW_MS),
-            Err(VerifyError::ThresholdNotMet {
-                met: 0,
-                required: 3
-            })
+            Err(VerifyError::ValueOutOfRange)
         );
     }
 
     #[test]
-    fn the_largest_cause_is_named_when_several_block_the_threshold() {
-        // Three signers report zeros and one is stale, against a threshold of
-        // four. Age wins ties but does not win outright: naming staleness here
-        // would have an operator refetch a payload whose real problem is that
-        // three of its signers sent nothing usable.
+    fn the_first_strict_rejection_is_not_ranked_against_later_failures() {
         let keys = keys(4);
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
@@ -2229,7 +1999,7 @@ mod tests {
 
         assert_eq!(
             verify_at(&payload, &config, NOW_MS),
-            Err(VerifyError::ValueOutOfRange)
+            Err(VerifyError::StalePackage)
         );
     }
 
@@ -2435,10 +2205,7 @@ mod tests {
     }
 
     #[test]
-    fn a_package_that_did_not_count_does_not_decide_the_round() {
-        // A skipped value costs its own signer's slot and nothing else. It has
-        // no vote on which round the price comes from either, since a value
-        // this feed cannot use could not have counted in any round.
+    fn a_bad_value_rejects_before_round_selection() {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
@@ -2449,9 +2216,6 @@ mod tests {
 
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 2);
-        let verified = verify(&payload, &config).expect("verifies");
-
-        assert_eq!(verified.signers, 2);
-        assert_eq!(verified.timestamp_ms, 6_000);
+        assert_eq!(verify(&payload, &config), Err(VerifyError::ValueOutOfRange));
     }
 }

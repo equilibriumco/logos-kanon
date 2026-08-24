@@ -38,13 +38,13 @@ callers earlier.
 ## Decision
 
 **One module organised by the contract, `verifier-core/src/accept_and_reject.rs`:
-six accept cases, thirteen reject cases, each named after the mode rather than
+five accept cases, seventeen reject cases, each named after the mode rather than
 the mechanism.** It calls nothing but the crate's public API. Where it overlaps
 an existing test — and it overlaps several — the overlap is the point: the value
 is a single place where a reviewer can check coverage against U6's list without
 reconstructing it from four modules.
 
-**A test that no two causes answer with the same variant.** Ten distinct
+**A test that no two causes answer with the same variant.** Twelve distinct
 failures, compared pairwise. Compared by `core::mem::discriminant` rather than by
 value, because `ThresholdNotMet { met: 0 }` and `ThresholdNotMet { met: 1 }` are
 different values and the same answer — comparing values lets exactly the collapse
@@ -68,11 +68,10 @@ feature, in the surface of a crate third-party programs link.
 
 ## Consequences
 
-- **`InvalidSignature` is now pinned as unreachable, by a test rather than only
-  by a doc comment.** An unrecoverable signature is skipped (ADR 15), so what a
-  caller sees is `ThresholdNotMet`, and `signatures_that_recover_to_nobody_are_a_threshold_failure_not_a_signature_one`
-  asserts that. The variant stays in the enum for a future single-package API,
-  where a caller names one package and expects it to verify.
+- **`InvalidSignature` is a directly tested payload error.** An unrecoverable
+  signature alongside an otherwise sufficient quorum still returns
+  `InvalidSignature`, so the variant cannot regress into a threshold failure or
+  an unobservable skip.
 - **`Payload::decode` is the second place a caller handles a malformed payload.**
   An envelope that does not decode never reaches `verify_feed`, so a caller that
   matches only on `VerifyError` misses it. Two tests, one per site.
@@ -83,12 +82,11 @@ feature, in the surface of a crate third-party programs link.
   because the next person to shorten it will shorten it back.
 - **Five mutations, five catches.** Collapsing `UnauthorisedSigner` into
   `ThresholdNotMet`, swapping the stale and future branches, making an
-  unrecoverable signature fatal, letting zero count as usable, and turning
-  `ReoccurringSigner` into a skip. Each was caught by the test that claims to
-  cover it, and the collapse was additionally caught by the discrimination test
-  once it compared variants.
-- **The suite runs in about ten milliseconds** and adds twenty tests, bringing
-  `verifier-core` to 142.
+  unrecoverable signature non-fatal, letting zero count as usable, and letting
+  a recurring signer fill two slots were each caught by the test that claims to
+  cover it. The collapse was additionally caught by the discrimination test.
+- **The contract module contains twenty-three tests**, including the taxonomy
+  assertion. The full `verifier-core` unit suite currently contains 159 tests.
 - **It tests the host build.** The cross-compile job and the cost harness are
   what say the same code runs under `riscv32im` — the same division ADR 3 and
   ADR 21 already draw.

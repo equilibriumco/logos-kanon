@@ -33,18 +33,18 @@ if let Some(outstanding_ts) = self
 
 ADR 18 read `core/validator.rs`, found the two-sided window, and recorded that
 faithfully. The equality rule lives one level up in `protocol/payload.rs`, which
-nobody opened. So this is a fourth divergence from the SDK, and unlike the three
-ADR 15 and ADR 18 named, it was never a decision.
+the SDK survey behind ADRs 15 and 18 did not inspect. The earlier
+implementation's divergence was accidental rather than a decision.
 
 The captured vectors say the premise holds upstream: all twenty-five packages
 across five feeds carry the identical timestamp `1786710590000`.
 
-**The SDK's remedy is one this crate cannot copy.** Refusing a payload whose
-timestamps differ hands anyone a denial that costs nothing: replay one older,
-validly-signed package into a payload and it dies for every consumer. That is
-ADR 24 and ADR 26's subject, and it rules out every rule whose reference
-timestamp an appender can move — newest-wins lets someone orphan the honest
-packages by appending a newer one, oldest-wins by appending an older one.
+**The SDK's remedy is not used here.** Refusing a payload whose timestamps
+differ would make a copied or replayed, otherwise valid package fatal even
+though ADR 24 deliberately keeps duplicates non-counting. That rules out every
+rule whose reference timestamp an appender can move — newest-wins lets someone
+orphan the honest packages by appending a newer one, oldest-wins by appending an
+older one.
 
 ## Decision
 
@@ -70,13 +70,15 @@ may carry many data points for one feed, so without the rule a single signature
 could fill the list on its own and crowd every other signer out — and since the
 walk runs from the tail, an attacker would place it last and the honest packages
 after it would be dropped in silence. That is the M-of-N denial this crate keeps
-closing, arriving through the buffer instead of through the error.
+closing, arriving through the buffer instead of through the error. Every
+repeated point is still validated under ADR 15; only the first valid value is
+filed as the package's single report.
 
 **`MixedRounds { largest, required }` when the signers were there but not
 together.** Distinct from `ThresholdNotMet` because the signers did report, and
 distinct from `ValueOutOfRange` because their values were fine: what is wrong is
-the payload, which points at whoever assembled it. Checked before the
-present-but-blocked ladder, which would otherwise blame the values.
+the payload, which points at whoever assembled it. Checked before the ordinary
+threshold failure, which would otherwise imply the signers never reported.
 
 ## Consequences
 
