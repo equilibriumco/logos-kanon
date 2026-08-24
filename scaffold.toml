@@ -7,7 +7,7 @@
 #
 # Only the two pinned repositories are set. Every other section -- wallet, framework,
 # localnet, circuits -- is left to the defaults, because `lgs build` is the only
-# command run against this file and it consults none of them. `adr/0029` has the
+# command run against this file and it consults none of them. `adr/0028` has the
 # reasoning, including why `lgs test-node` is still not used (`adr/0012`).
 #
 # The pins duplicate what `Cargo.lock` already resolves, which is the one hazard here:
