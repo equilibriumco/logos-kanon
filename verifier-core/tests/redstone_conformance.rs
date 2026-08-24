@@ -14,11 +14,13 @@
 //! asserts that span against a payload we built; this asserts it against one we
 //! did not.
 //!
-//! The envelope around the packages — count, unsigned metadata, size, marker —
-//! was assembled by `scripts/capture-redstone-vectors.py` per the wire format,
-//! because the gateway serves packages rather than a finished payload and
-//! RedStone's own SDK assembles it client-side the same way. So the honest claim
-//! is: the signed span is conformance-tested, and the envelope is built to spec.
+//! The envelope around the packages — count, unsigned metadata size, marker — is
+//! not covered by any signature, and in the captured vectors it was assembled by
+//! `scripts/capture-redstone-vectors.py`: the gateway serves per-signer JSON with
+//! decoded values, not a finished payload, so there is no served envelope to
+//! capture. That half is checked by
+//! `an_envelope_redstone_published_decodes_and_every_package_in_it_recovers`,
+//! against a payload RedStone serialised themselves.
 //!
 //! Vectors are committed and read from disk. A test that reached the network
 //! would fail on a bad day for reasons that have nothing to do with this code,
@@ -274,4 +276,72 @@ fn a_wrong_signed_span_recovers_to_nobody() {
             .expect("walks")
             .expect("no visitor error");
     }
+}
+
+/// RedStone's own sample payload, vendored from their SDK.
+///
+/// `verifier-core/tests/vectors/redstone-sdk-sample-payload.hex` is a byte-for-byte
+/// copy of `sample-data/payload.hex` in
+/// <https://github.com/redstone-finance/rust-sdk>, at commit
+/// `50cd703eb908d249d65f322192af1757e56afc97`. Boost Software License 1.0; `NOTICE`
+/// records it.
+const PUBLISHED_PAYLOAD: &str = include_str!("vectors/redstone-sdk-sample-payload.hex");
+
+/// The signer set RedStone publishes for this payload's data service, copied from
+/// `crates/samples/src/package_signers.rs` (`AVAX_SIGNERS`) at the same commit.
+const PUBLISHED_SIGNERS: [&str; 5] = [
+    "109b4a318a4f5ddcbca6349b45f881b4137deafb",
+    "12470f7aba85c8b81d63137dd5925d6ee114952b",
+    "1ea62d73edf8ac05dfcea1a34b9796e937a29eff",
+    "2c59617248994d12816ee1fa77ce0a64eeb456bf",
+    "83cba8c619fb629b81a65c2e67fe15cf3e3c9747",
+];
+
+#[test]
+fn an_envelope_redstone_published_decodes_and_every_package_in_it_recovers() {
+    // The one thing the rest of this file cannot check. Our other vectors carry
+    // RedStone's packages inside an envelope this repository assembled, so the
+    // marker, the package count and the metadata size are only ever read back by
+    // the code that wrote them. This payload was serialised by RedStone, so those
+    // three fields are checked against a producer nobody here controls.
+    //
+    // The two structural claims are the ones RedStone's own decoder test asserts
+    // over the same file: fifteen packages, and nothing left over. `Payload::decode`
+    // returns `TrailingBytes` rather than ignoring a remainder, so decoding at all
+    // is the second assertion.
+    let bytes = hex::decode(PUBLISHED_PAYLOAD.trim()).expect("vendored payload is hex");
+    let payload = Payload::decode(&bytes).expect("a payload RedStone serialised");
+
+    assert_eq!(
+        payload.package_count(),
+        15,
+        "fifteen packages, as their own test asserts"
+    );
+
+    // Three feeds of five signers, so a wrong envelope would still have to produce
+    // fifteen recoverable signatures over the right spans to get this far.
+    let backend = InProgramBackend::new();
+    let mut recovered = Vec::new();
+    payload
+        .for_each_package(|package| {
+            let digest = backend.keccak256(package.signable());
+            let signer = backend
+                .recover_signer(&digest, &package.signature)
+                .expect("every package in a published payload recovers");
+            recovered.push(hex::encode(signer.0));
+            Ok::<(), core::convert::Infallible>(())
+        })
+        .expect("the walk reaches the end")
+        .expect("no package is refused");
+
+    assert_eq!(recovered.len(), 15);
+    let mut distinct = recovered;
+    distinct.sort_unstable();
+    distinct.dedup();
+    let mut want: Vec<String> = PUBLISHED_SIGNERS.iter().map(|s| (*s).to_owned()).collect();
+    want.sort_unstable();
+    assert_eq!(
+        distinct, want,
+        "the fifteen signatures recover to the five signers RedStone publishes for this service"
+    );
 }
