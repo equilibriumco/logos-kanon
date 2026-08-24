@@ -38,6 +38,17 @@ ported; `NOTICE` records that boundary.
 
 ## Decision
 
+**The rule the rest of this follows: a package that makes a claim about the
+requested feed is either accepted or refuses the payload; a package that makes no
+new claim is ignored.** Every check below is that rule applied to one property,
+and so is the single exception. A bad signature, an unauthorised signer, a
+timestamp outside the window, an unusable value and a moment other than the
+payload's are each a claim this verifier will not silently drop, because dropping
+one means answering from a subset the payload's author chose. A repeated
+package is the other case: same signer, same moment, same value is the same
+statement said twice, so ignoring it cannot change the answer, and making it
+fatal would hand anyone a denial for the price of a copy (ADR 24).
+
 **Every package carrying the requested feed is checked strictly.** After the
 `MAX_RECOVERIES` admission check, verification in decoder walk order:
 
