@@ -10,10 +10,10 @@ The headline: a 3-of-N single-feed update costs **1,906,737 cycles**, 5.68% of L
 32M per-transaction budget, and secp256k1 recovery and signature parsing are 88.97%
 of it.
 
-M1 is in progress. Its foundations are in place: the crate layout, CI, the licence
-gate, the traceability matrix and a standalone LEZ sequencer. The verification core
-itself is not written yet, and every crate says so in its own documentation.
-`TRACEABILITY.md` records what is done and what is not.
+M1 is implemented: the crate layout, verification core, CI gates, conformance suite,
+traceability matrix and standalone LEZ sequencer are in place. Later milestones wire
+that core into the two shipping modes and add deployment and operator-facing pieces.
+`TRACEABILITY.md` records what is complete and what remains.
 
 ## Layout
 
@@ -115,7 +115,7 @@ every push.
 project. It runs `lgs build` and nothing else, and it is triggered by pushes that touch a
 manifest, the lockfile or `scaffold.toml` rather than by every push: layout compatibility
 can only break when one of those changes, and `lgs build` first builds LEZ's sequencer,
-wallet and SPEL from source, none of which it then uses. `adr/0029` has the reasoning.
+wallet and SPEL from source, none of which it then uses. `adr/0028` has the reasoning.
 
 `ci.yml` is everything else, and a failure there means the code is wrong:
 
@@ -211,5 +211,5 @@ it pins the LEZ its published figures were measured against, which is no longer 
 the product tracks. That is deliberate, and it is why the sequencer
 here is not `lgs test-node`: `lgs` pins its own LEZ version, and at the revision this
 repository is built against `test-node` will not start one. That is a limit of
-`test-node` alone -- `lgs build` runs green in CI, see `lgs-build.yml` and `adr/0029`. The script's header
+`test-node` alone -- `lgs build` runs green in CI, see `lgs-build.yml` and `adr/0028`. The script's header
 and `m0/versions.md` have the details.
