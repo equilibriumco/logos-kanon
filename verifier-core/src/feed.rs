@@ -400,7 +400,7 @@ pub fn verify_feed<B: VerifierBackend, T: TimeSource>(
         // point was still validated above; only the first valid value is filed.
         if let Some(value) = package_value {
             if let Some(slot) =
-                reported.get_mut(usize::from(u8::try_from(index).unwrap_or(u8::MAX)))
+                reported.get_mut(index)
             {
                 if slot.is_none() {
                     *slot = Some(value);
