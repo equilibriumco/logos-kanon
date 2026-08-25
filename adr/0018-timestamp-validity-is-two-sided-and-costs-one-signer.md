@@ -45,8 +45,8 @@ clock is wrong or this node's is.
 configurable at registration and SEC3 asks for a documented production minimum, so it is a
 knob. The forward bound is not: it is an allowance for skew between a RedStone signer's
 clock and the sequencer's, which no feed operator is better placed to judge. Fixed at
-RedStone's own three minutes, so a package RedStone would accept is never one Kanon
-rejects.
+RedStone's own three minutes, so Kanon is never stricter at this end than the upstream
+default.
 
 The window is inclusive at both edges, matching RedStone's `is_same_or_after` and
 `is_same_or_before`. An exclusive bound would reject, for one millisecond, a package the

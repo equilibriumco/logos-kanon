@@ -126,10 +126,9 @@ pub enum ConfigError {
     DecimalsOutOfRange { decimals: u8, max: u8 },
     /// A `maxAge` of zero, which no package can ever be young enough to satisfy.
     MaxAgeZero,
-    /// A `maxAge` past the bound RedStone itself enforces, which would accept a
-    /// package RedStone would refuse. At `u64::MAX` the lower edge of the window
-    /// saturates to zero and every past timestamp passes, so the check is gone
-    /// without anything saying so.
+    /// A `maxAge` past RedStone's own default staleness bound. At `u64::MAX` the
+    /// lower edge of the window saturates to zero and every past timestamp
+    /// passes, so the check is gone without anything saying so.
     MaxAgeTooLarge { max_age_ms: u64, max: u64 },
 }
 

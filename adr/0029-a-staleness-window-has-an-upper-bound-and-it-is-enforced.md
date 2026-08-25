@@ -30,9 +30,16 @@ check stops existing.
 ## Decision
 
 **`MAX_MAX_AGE_MS`, and `try_new` refuses anything above it.** The value is fifteen
-minutes, RedStone's own `MAX_TIMESTAMP_DELAY_MS`, so the widest window Kanon permits
-admits nothing RedStone would refuse. `ConfigError::MaxAgeTooLarge` carries both the
+minutes, RedStone's own `MAX_TIMESTAMP_DELAY_MS`, so the widest window Kanon permits is
+no looser than the upstream default. `ConfigError::MaxAgeTooLarge` carries both the
 offered value and the bound, so a caller learns what to change.
+
+**The value is borrowed, and the policy is ours.** `MAX_TIMESTAMP_DELAY_MS` is the
+default RedStone's own validator applies, not a bound every integration of theirs is
+held to, so adopting it is a choice this repository makes rather than a guarantee it
+inherits. The choice is easy to defend — being looser than the upstream default means
+accepting data the upstream's own default would drop — but it is a choice, and a later
+reader should not have to reconstruct that from the constant's provenance.
 
 **The bound is enforced rather than published**, which is the part worth recording,
 because ADR 18 published the forward tolerance and this record does something else.
@@ -69,7 +76,7 @@ running at fifteen minutes.
   saturation was traced: a ceiling that nothing enforces is indistinguishable from no
   ceiling, and the failure mode is a feed that looks configured.
 - **Reject only `u64::MAX` and values near it.** Draws a line with no meaning behind it.
-  Fifteen minutes has a reason: it is the bound the upstream applies to the same
+  Fifteen minutes has a reason: it is the default the upstream applies to the same
   packages.
 - **Clamp silently to the bound instead of refusing.** Rejected for ADR 15's reason. A
   caller that asked for something the system will not do learns about it, rather than

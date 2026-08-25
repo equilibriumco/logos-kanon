@@ -16,19 +16,19 @@ use crate::{
 ///
 /// Allowance for skew between a RedStone signer's clock and the sequencer's,
 /// not a policy knob: no feed operator knows that skew better than this crate
-/// does. RedStone's own `MAX_TIMESTAMP_AHEAD_MS`, so a package RedStone would
-/// accept is never one Kanon rejects.
+/// does. RedStone's own `MAX_TIMESTAMP_AHEAD_MS`, so Kanon is never stricter at
+/// this end than the upstream default.
 pub const MAX_AHEAD_MS: u64 = 3 * 60 * 1000;
 
 /// The oldest a package may be allowed to be, whatever a feed configures.
 ///
-/// RedStone's own `MAX_TIMESTAMP_DELAY_MS`. A feed is free to be stricter and
-/// most should be, but past this bound Kanon would accept a package RedStone
-/// itself refuses, and there is no reading of the data where that is the
-/// intended behaviour. The ceiling is enforced rather than recommended because
-/// the failure is silent: `freshness` saturates, so a `maxAge` near `u64::MAX`
-/// puts the lower edge of the window at zero and admits every past timestamp
-/// while still looking configured.
+/// RedStone's own `MAX_TIMESTAMP_DELAY_MS`, which is the default their validator
+/// applies rather than a bound every integration of theirs is held to. Kanon
+/// adopts it as policy: a feed is free to be stricter and most should be, and no
+/// feed may be looser than the upstream default. The ceiling is enforced rather
+/// than recommended because the failure is silent: `freshness` saturates, so a
+/// `maxAge` near `u64::MAX` puts the lower edge of the window at zero and admits
+/// every past timestamp while still looking configured.
 pub const MAX_MAX_AGE_MS: u64 = 15 * 60 * 1000;
 
 /// The two assets a price relates: how much quote one unit of base is worth.
