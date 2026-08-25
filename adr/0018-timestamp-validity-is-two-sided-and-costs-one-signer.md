@@ -103,7 +103,7 @@ so a configured signer's stale package about another feed does not affect this o
   built for `riscv32im-unknown-none-elf` in CI alongside `verifier-core` and `pull-lib`.
 - The production `maxAge` recommendation and SEC3's manipulation analysis are not here.
   This decision gives them their mechanism and RedStone's fifteen minutes as the reference
-  point; the recommendation itself is a document, in M5.
+  point; the recommendation itself is a document, in M2-17.
 - ADR 13's deferred question is untouched: whether an oracle should read the 10- or
   50-block clock account is still an M2 measurement. Only the *pinned-and-checked*
   property had to survive it, and it does — swapping the constant is the whole change.
