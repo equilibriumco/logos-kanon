@@ -57,17 +57,22 @@ holds — and `MixedRounds` no longer exists.
 
 ## Consequences
 
-- **A replayed package is now a refusal.** Every package inside `maxAge` is public and
-  validly signed, so whoever can add bytes to a payload has roughly eighteen rounds of each
-  signer's to choose from, and any one of them refuses it. This is ADR 15's accepted trade
-  with a lower effort bar: no key *and* no signing, just a copy of something public.
-  Neither shipping mode grants that position — a push submitter spends its own transaction,
-  a pull consumer owns the payload it passes — but anything that assembles payloads from a
-  shared or untrusted source becomes a denial point. **A submitter must own the bytes it
-  submits**, which is a constraint on M2's relayer.
-- **SEC3's manipulation analysis has a new entry.** It is asked to cover "replay of stale
-  packages", and the answer changed: a replay no longer moves a median, it refuses a
-  payload. Recorded here so that analysis inherits it rather than rediscovering it.
+- **Whoever can add bytes to a payload can refuse it, and needs nothing to do so.** The
+  moment check is first in walk order and compares a field, so it runs before recovery.
+  An appended package therefore needs to carry the requested feed and a different
+  timestamp, and nothing else: not a key, not a signature that recovers, not a timestamp
+  inside `maxAge`, not a package that any signer ever produced. This is ADR 15's accepted
+  trade at the lowest effort bar in the enum. Neither shipping mode grants that position —
+  a push submitter spends its own transaction, a pull consumer owns the payload it passes —
+  but anything that assembles payloads from a shared or untrusted source becomes a denial
+  point. **A submitter must own the bytes it submits**, which is a constraint on M2's
+  relayer, and one that a tighter `maxAge` does nothing to relax.
+- **What this changes about replay is the *mixed* case only.** A package replayed into a
+  payload built around another moment can no longer move a median, because it refuses the
+  payload. Replaying a whole round is untouched: its packages agree about the moment by
+  construction, so it verifies, and what bounds it is `maxAge` together with the
+  aggregator's refusal to write a timestamp no newer than the stored one. Stated because
+  the decision is easy to read as wider than it is.
 - **`VerifiedFeed::timestamp_ms` is the moment every counted package shares**, and now by
   construction rather than by selection.
 - **The real vectors verify unchanged.** The conformance suite passes without amendment,
