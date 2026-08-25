@@ -13,12 +13,19 @@ because RFP-020 makes it configurable at registration and SEC3 asks for a docume
 production minimum. Registration rejected only a `maxAge` of zero, on the reasoning
 that no package could ever be young enough to satisfy it.
 
-The other end went unbounded, and the gap is in the check itself. `freshness` compares against `now_ms.saturating_sub(max_age_ms)`, and the
-saturation is deliberate: a chain clock below the bound is possible on a fresh devnet,
-and a panic in a guest aborts the transaction. The consequence is that a `maxAge` near
-`u64::MAX` puts the window's lower edge at zero, so every timestamp in the past is
-current. Staleness stops being checked, and nothing in the configuration says so — the
-feed carries a `max_age_ms` like any other, and `verify_feed` still runs the comparison.
+The other end went unbounded, and the gap is in the check itself. `freshness` compares
+against `now_ms.saturating_sub(max_age_ms)`, and the saturation is deliberate: a chain
+clock below the bound is possible on a fresh devnet, and a panic in a guest aborts the
+transaction.
+
+The consequence is that the check decays as `maxAge` grows, and never visibly breaks.
+Saturation itself needs `max_age_ms` to reach the clock's own reading, about fifty-six
+years at a real epoch timestamp, and at that point the window's lower edge is zero and
+every past timestamp is current. But the check is useless long before that: at a `maxAge`
+of one year the lower edge is an ordinary timestamp, nothing saturates, and every package
+anyone would ever submit is inside the window. There is no value at which something goes
+wrong that an operator could notice. The feed carries a `max_age_ms` like any other, and
+`verify_feed` still runs the comparison.
 
 This repository was itself the demonstration. `NO_MAX_AGE` in the `feed` tests and
 `FOREVER` in the conformance suite were both `u64::MAX`, used to mean "this test is not
@@ -57,10 +64,17 @@ revisited.
 **The bound is enforced rather than published**, which is the part worth recording,
 because ADR 18 published the forward tolerance and this record does something else.
 A recommendation is enough when ignoring it produces a visibly worse system. It is not
-enough here, because the failure is silent in both directions: an operator who sets a
-huge `maxAge` sees a feed that still verifies, still refuses bad signatures, and still
-reports a threshold — and has no staleness check. The upper end of the range is where
-the check quietly stops existing, so the range is the wrong place to leave a choice.
+enough here, for the reason the Context gives: the check degrades continuously and there
+is no threshold at which it announces itself. An operator who sets a huge `maxAge` sees a
+feed that still verifies, still refuses bad signatures, still reports a threshold — and
+has no staleness check worth the name. A smooth decay with no failure signal is the
+wrong thing to leave to configuration.
+
+**These are two decisions, and they answer different questions.** That the range needs a
+ceiling at all follows from the decay above, and holds whatever value is chosen. That the
+ceiling is *fifteen minutes* follows from RedStone's default, and would change if their
+default changed. Keeping them apart matters because the first is not open to revisit and
+the second is.
 
 **A feed may still be as strict as it likes.** The ceiling constrains one direction
 only. A production feed belongs well under this bound, and nothing here argues for

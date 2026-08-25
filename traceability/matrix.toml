@@ -437,10 +437,10 @@ verified_by = [
   "test:any_other_account_is_refused_before_its_contents_are_read",
   "test:a_replayed_payload_is_refused_however_well_signed_it_is",
   "test:a_clock_that_cannot_be_read_refuses_rather_than_guesses",
-  "test:a_max_age_wider_than_redstones_own_bound_is_rejected",
-  "test:the_ceiling_admits_nothing_redstone_would_refuse",
+  "test:a_max_age_wider_than_redstones_own_default_is_rejected",
+  "test:the_ceiling_matches_redstones_own_default",
 ]
-note = "M2-17 is the document: the production `maxAge` minimum and the manipulation analysis. The mechanism it will describe exists now, and it now has an enforced ceiling: `MAX_MAX_AGE_MS` is RedStone's own fifteen minutes, above which `freshness` saturated and admitted every past timestamp (ADR 29). Replay is refused because the clock is the pinned every-block account and no caller may substitute another, and a clock that cannot be read refuses rather than guesses, since verifying without one accepts a package of any age. RedStone's own fifteen minutes is the reference point the `maxAge` recommendation starts from. This is also the one place pull's weaker position has to be stated plainly: a pull consumer keeps its own signer set fresh, because it bypasses the centrally administered one."
+note = "M2-17 is the document: the production `maxAge` minimum and the manipulation analysis. The mechanism it will describe exists now, and it now has an enforced ceiling. `MAX_MAX_AGE_MS` is fifteen minutes, the default RedStone's own validator falls back to, so no feed may be looser than the upstream fallback. It is enforced rather than published because a `maxAge` past it degrades the check smoothly and never visibly breaks: at a year the window admits every real package without saturating at all, and only at the extreme does `freshness` saturate outright (ADR 29). Replay is refused because the clock is the pinned every-block account and no caller may substitute another, and a clock that cannot be read refuses rather than guesses, since verifying without one accepts a package of any age. RedStone's own fifteen minutes is the reference point the `maxAge` recommendation starts from. This is also the one place pull's weaker position has to be stated plainly: a pull consumer keeps its own signer set fresh, because it bypasses the centrally administered one."
 
 # --------------------------------------------------------------------- Open source
 

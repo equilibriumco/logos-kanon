@@ -1872,11 +1872,13 @@ mod tests {
     }
 
     #[test]
-    fn a_max_age_wider_than_redstones_own_bound_is_rejected() {
-        // The reason the bound is enforced and not merely recommended: at the
-        // top of the range `freshness` saturates, so the window's lower edge
-        // sits at zero and every past timestamp is current. A feed configured
-        // that way looks configured and checks nothing.
+    fn a_max_age_wider_than_redstones_own_default_is_rejected() {
+        // Why the ceiling is enforced and not merely recommended: past it the
+        // check decays smoothly and never visibly breaks. At a `maxAge` of a
+        // year the window's lower edge is an ordinary timestamp and every real
+        // package is current; at the top of the range `freshness` saturates and
+        // the edge sits at zero. Neither is visible in a configuration, which
+        // carries a `max_age_ms` like any other.
         let signers = [signer(1)];
         let boundless =
             FeedConfig::try_new(b"BTC", pair(), DECIMALS, u64::MAX, &signers, 1).unwrap_err();
@@ -1899,11 +1901,14 @@ mod tests {
     }
 
     #[test]
-    fn the_ceiling_admits_nothing_redstone_would_refuse() {
-        // The bound is RedStone's `MAX_TIMESTAMP_DELAY_MS`, so a package Kanon
-        // accepts at the widest legal `maxAge` is one RedStone accepts too.
-        // Stated as an assertion, because the two constants drifting apart is
-        // exactly the change that would go unnoticed.
+    fn the_ceiling_matches_redstones_own_default() {
+        // Why *this* ceiling: the value is RedStone's `MAX_TIMESTAMP_DELAY_MS`,
+        // the default their own validator falls back to, so Kanon is never
+        // looser than the upstream fallback. It says nothing about what a
+        // RedStone integration accepts, because that integration picks its own
+        // bounds (ADR 29). Asserted rather than commented, because the two
+        // constants drifting apart is exactly the change that would go
+        // unnoticed.
         assert_eq!(MAX_MAX_AGE_MS, 15 * 60 * 1000);
 
         let signers = [signer(1)];

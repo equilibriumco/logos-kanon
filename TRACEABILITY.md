@@ -202,7 +202,7 @@ A deliverable in its own right, and a prerequisite for U2 rather than a by-produ
 | --- | --- | --- | --- | --- |
 | **SEC1** | partial | `M1‑13`, `M1‑22`, `M2‑13`, `M3‑03` | `verifier‑core` | `an_unknown_signer_rejects_the_payload_even_when_quorum_is_present`, `an_unauthorised_signer_is_reported_directly` |
 | **SEC2** | planned | `M1‑07`, `M2‑08`, `M2‑14`, `M3‑03` | `aggregator‑program`, `pull‑lib` | — |
-| **SEC3** | partial | `M1‑14`, `M1‑15`, `M2‑17` | `kanon‑clock`, `verifier‑core` | `any_other_account_is_refused_before_its_contents_are_read`, `a_replayed_payload_is_refused_however_well_signed_it_is`, `a_clock_that_cannot_be_read_refuses_rather_than_guesses`, `a_max_age_wider_than_redstones_own_bound_is_rejected`, `the_ceiling_admits_nothing_redstone_would_refuse` |
+| **SEC3** | partial | `M1‑14`, `M1‑15`, `M2‑17` | `kanon‑clock`, `verifier‑core` | `any_other_account_is_refused_before_its_contents_are_read`, `a_replayed_payload_is_refused_however_well_signed_it_is`, `a_clock_that_cannot_be_read_refuses_rather_than_guesses`, `a_max_age_wider_than_redstones_own_default_is_rejected`, `the_ceiling_matches_redstones_own_default` |
 
 **SEC1** — Reject any package whose signer is not in the authorised signer set for the requested feed, in both modes
 
@@ -214,7 +214,7 @@ Two distinct obligations. Push: only the admin authority may update the stored s
 
 **SEC3** — Minimum recommended `maxAge` documented for both modes, with a manipulation analysis covering signer compromise, replay of stale packages and signer-set update delays
 
-M2-17 is the document: the production `maxAge` minimum and the manipulation analysis. The mechanism it will describe exists now, and it now has an enforced ceiling: `MAX_MAX_AGE_MS` is RedStone's own fifteen minutes, above which `freshness` saturated and admitted every past timestamp (ADR 29). Replay is refused because the clock is the pinned every-block account and no caller may substitute another, and a clock that cannot be read refuses rather than guesses, since verifying without one accepts a package of any age. RedStone's own fifteen minutes is the reference point the `maxAge` recommendation starts from. This is also the one place pull's weaker position has to be stated plainly: a pull consumer keeps its own signer set fresh, because it bypasses the centrally administered one.
+M2-17 is the document: the production `maxAge` minimum and the manipulation analysis. The mechanism it will describe exists now, and it now has an enforced ceiling. `MAX_MAX_AGE_MS` is fifteen minutes, the default RedStone's own validator falls back to, so no feed may be looser than the upstream fallback. It is enforced rather than published because a `maxAge` past it degrades the check smoothly and never visibly breaks: at a year the window admits every real package without saturating at all, and only at the extreme does `freshness` saturate outright (ADR 29). Replay is refused because the clock is the pinned every-block account and no caller may substitute another, and a clock that cannot be read refuses rather than guesses, since verifying without one accepts a package of any age. RedStone's own fifteen minutes is the reference point the `maxAge` recommendation starts from. This is also the one place pull's weaker position has to be stated plainly: a pull consumer keeps its own signer set fresh, because it bypasses the centrally administered one.
 
 ## Open source
 
