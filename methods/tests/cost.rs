@@ -63,6 +63,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use verifier_core::decode::{EMPTY_ENVELOPE_BYTES, MAX_PAYLOAD_BYTES, REDSTONE_MARKER};
+use verifier_core::feed::MAX_MAX_AGE_MS;
 use verifier_core::feed::MAX_RECOVERIES;
 
 /// The M1-21 capture. Real packages, real signatures, one data point each, so a
@@ -111,22 +112,22 @@ mod expected {
     /// It is the harness's cost, not the verifier's: it is subtracted out of
     /// every component, and a program reading a payload from an account rather
     /// than from the guest's input stream would pay something different.
-    pub const FLOOR: [(usize, u64); 3] = [(1, 25_315), (3, 62_283), (5, 99_482)];
+    pub const FLOOR: [(usize, u64); 3] = [(1, 25_324), (3, 62_295), (5, 99_491)];
 
     /// Per signer count: decode, keccak256, recovery, membership, then
     /// everything else `verify_feed` does.
     pub const COMPONENTS: [(usize, [u64; 5]); 3] = [
-        (1, [587, 17_476, 585_276, 160, 17_783]),
-        (3, [1_506, 52_428, 1_755_580, 528, 21_629]),
-        (5, [2_425, 87_380, 2_922_890, 960, 26_188]),
+        (1, [582, 17_476, 585_276, 162, 17_773]),
+        (3, [1_495, 52_428, 1_755_580, 534, 21_601]),
+        (5, [2_408, 87_380, 2_922_890, 970, 26_142]),
     ];
 
     /// The whole update, floor subtracted.
-    pub const TOTAL: [(usize, u64); 3] = [(1, 621_282), (3, 1_831_671), (5, 3_039_843)];
+    pub const TOTAL: [(usize, u64); 3] = [(1, 621_269), (3, 1_831_638), (5, 3_039_790)];
 
     /// One Q64.64 conversion: the largest single item in the remainder, and the
     /// only one worth naming separately.
-    pub const SCALING: u64 = 11_263;
+    pub const SCALING: u64 = 11_294;
 
     /// `MAX_NUM_CYCLES_PUBLIC_EXECUTION`, the cycles a LEZ public transaction
     /// gets. Recorded in `m0/lez-probe/README.md` and the figure P1 is measured
@@ -204,9 +205,10 @@ fn execute(vector: &Vector, stage: u8, n: usize) -> (u64, u32) {
         n as u8,
         DECIMALS,
         vector.timestamp_ms,
-        // The vectors age from the moment they were captured, and what is under
-        // measurement is the work, not the clock.
-        u64::MAX,
+        // The clock above is the vector's own timestamp, so every package is
+        // current whatever the bound. The widest legal one, because what is
+        // under measurement is the work and not the clock.
+        MAX_MAX_AGE_MS,
     );
 
     let env = ExecutorEnv::builder()
@@ -521,7 +523,7 @@ fn raw_cycles(vector: &Vector, stage: u8, payload: Vec<u8>, signer_bytes: &[u8])
         3u8,
         DECIMALS,
         vector.timestamp_ms,
-        u64::MAX,
+        MAX_MAX_AGE_MS,
     );
     let env = ExecutorEnv::builder()
         .write(&input)

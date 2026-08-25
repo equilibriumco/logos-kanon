@@ -20,13 +20,13 @@ data point each; the 1- and 3-signer columns are the same payload cut short.
 
 | component | 1 signer | 3 signers | 5 signers |
 | --- | ---: | ---: | ---: |
-| decode | 587 | 1,506 | 2,425 |
+| decode | 582 | 1,495 | 2,408 |
 | keccak256 | 17,476 | 52,428 | 87,380 |
 | recovery | 585,276 | 1,755,580 | 2,922,890 |
-| signer-set membership | 160 | 528 | 960 |
-| the rest of `verify_feed` | 17,783 | 21,629 | 26,188 |
-| **whole update** | **621,282** | **1,831,671** | **3,039,843** |
-| _harness floor, subtracted out_ | 25,315 | 62,283 | 99,482 |
+| signer-set membership | 162 | 534 | 970 |
+| the rest of `verify_feed` | 17,773 | 21,601 | 26,142 |
+| **whole update** | **621,269** | **1,831,638** | **3,039,790** |
+| _harness floor, subtracted out_ | 25,324 | 62,295 | 99,491 |
 
 At three signers, which is RFP-020's default threshold:
 
@@ -106,10 +106,10 @@ that does not change the decision.
 an update. The wire format is a backwards walk over fixed-width fields with no
 allocation, and the membership check is a linear scan of at most 32 addresses.
 That scan is quadratic in the signer count — every package scans the whole set —
-which the numbers show and which is still not worth acting on: 960 cycles at five
+which the numbers show and which is still not worth acting on: 970 cycles at five
 signers.
 
-**Converting to the account's scale costs 11,263 cycles**, about 65% of one
+**Converting to the account's scale costs 11,294 cycles**, about 65% of one
 keccak256 and most of the remainder row at one signer. It is a
 16-byte long division with 128-bit intermediates
 (`adr/0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md`), and it
