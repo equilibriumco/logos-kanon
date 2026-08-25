@@ -8,28 +8,38 @@
 ## Context
 
 M1-21 asks for "decode conformance tests against published RedStone wire-format test
-vectors, using the EVM connector only as a black-box oracle". Two of those three things
-turned out not to exist.
+vectors, using the EVM connector only as a black-box oracle". One of those three things
+does not exist, and the vectors that do exist do not cover what this milestone needs on
+their own.
 
-**There are no published vectors.** `redstone-finance/rust-sdk` has no captured payloads:
-`crates/redstone/src/core/test_helpers.rs` builds `DataPackage` values programmatically
-from feed-id strings and signer addresses, and the serialised bytes only ever exist at
-runtime. There is no fixture directory, no `.hex`, no sample payload anywhere in the crate.
+**One published payload exists, and it is worth having.** `sample-data/payload.hex` in
+`redstone-finance/rust-sdk` is a serialised payload RedStone assembled: three feeds, five
+signers, fifteen packages, envelope included. It is the only thing that puts the envelope
+under test, because an envelope carries no signature and so nothing else can check it.
+What it is not is broad. It is one payload, at one moment, for three feeds that are not
+F7's five, signed by a roster that has since moved.
+
+**The gateway does not serve payloads.** RedStone's Data Distribution Layer serves
+per-signer JSON with values already decoded to floats, so live conformance means
+reassembling the envelope here and taking the packages as the part that came from them.
 
 **The EVM connector cannot be the oracle.** It is BUSL-1.1, `deny.toml` denies that
 licence outright, and `NOTICE` states no part of it is read for this decoder. Reading its
 fixtures would falsify a claim this repository ships.
 
-That left the decoder's evidence at: the wire-format specification, our own
-`PayloadBuilder` round-tripping — which proves only that the builder and the decoder agree
-with each other — and a constant-by-constant comparison against RedStone's
-`protocol/constants.rs`. None of that is a real signed payload, and everything in
-`m1-part2` rests on the decoder being right.
+So the two available sources answer different questions. The published payload is narrow
+and covers the envelope. The gateway is broad, current, and covers packages only. Without
+both, the decoder's remaining evidence is the specification, our own `PayloadBuilder`
+round-tripping — which proves the builder and the decoder agree with each other and
+nothing more — and a constant-by-constant comparison against RedStone's
+`protocol/constants.rs`.
 
 ## Decision
 
 Capture live packages from RedStone's public Data Distribution Layer gateway, freeze them
-as committed vectors, and **use RedStone's own signature as the oracle**.
+as committed vectors, and **use RedStone's own signature as the oracle**. Alongside them,
+vendor `sample-data/payload.hex` and assert that it decodes and that every package in it
+recovers, which is the envelope's only external check.
 
 The signature is computed by a RedStone signer over RedStone's serialisation of the
 package. It therefore recovers to the address they publish only if this decoder's view of
@@ -82,6 +92,9 @@ gap between everything and nothing is what makes the positive assertion worth ma
 - The decoder is conformant against a system this repository does not control, which is
   what F4 and S3 needed and what neither the specification nor a self-built payload could
   give.
+- **The envelope is checked too, and only by the vendored payload.** The gateway cannot
+  supply one, so `an_envelope_redstone_published_decodes_and_every_package_in_it_recovers`
+  is the whole of that evidence. `NOTICE` records the file's origin and commit.
 - The repository now carries third-party captured data: 12 KB of public market data, with
   the gateway, data service and capture time recorded alongside it. RedStone publish these
   payloads for on-chain redistribution, so holding twenty-five of them in a test fixture
