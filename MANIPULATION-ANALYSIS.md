@@ -27,10 +27,10 @@ the whole analysis. Most of what follows is a consequence of these seven.
 
 RedStone's own defaults are `MAX_TIMESTAMP_DELAY_MS = 900_000` and
 `MAX_TIMESTAMP_AHEAD_MS = 180_000`, from
-`crates/redstone/src/protocol/constants.rs`. Kanon matches both.
-RedStone's validator applies these values by default. An integration built on
-their SDK is not obliged to hold to
-them, so nothing here rests on what RedStone rejects in general.
+`crates/redstone/src/protocol/constants.rs`. Kanon matches both. They are
+defaults and not rules: `Config::try_new` takes each limit as an option and falls
+back to the constant, so a RedStone caller picks its own bounds. Nothing in this
+document rests on what RedStone rejects in general.
 
 ## The recommended minimum `maxAge`
 
