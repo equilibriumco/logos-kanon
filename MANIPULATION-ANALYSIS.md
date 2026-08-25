@@ -63,11 +63,18 @@ lower edge of the window, and a package then looks younger. Block lag pushes
 toward `FuturePackage` and away from `StalePackage`, so it belongs to the forward
 tolerance and not to this floor.
 
-Two of the three terms have no measurement today. Relayer latency needs a relayer,
-and the relayer arrives in M4. M2-19 exercises the push path end to end, and it is
-the first point where a submission figure becomes visible. M4-04 and M4-05 set the
-cadence and the retry policy of the relayer. The publish interval for each feed is
-RedStone's, and M2-00 is the task that captures it.
+**No term of the three has a measurement today.** Submission latency needs a
+relayer, and the relayer arrives in M4. M2-19 exercises the push path end to end,
+and it is the first point where a submission figure becomes visible. M4-04 and
+M4-05 set the cadence and the retry policy of the relayer. The publish interval for
+each feed is RedStone's, and M2-00 is the task that captures it.
+
+Clock skew has no measurement and no bound either. The three-minute forward
+tolerance is RedStone's own default for the other side of the window. It records
+what they judged adequate for skew. It is not a limit anyone enforces on a signer.
+It is a starting point for the same reason fifteen minutes is: someone who works
+with these signers picked it. Treating it as a bound repeats the mistake this
+document corrects about the fifteen minutes.
 
 > **Provisional recommendation: a minimum of 120,000 ms (two minutes) for push.**
 > This figure is a starting point and not a derivation. Two of the three terms are
@@ -314,9 +321,10 @@ packet, and not only here.
 
 ## What this document does not cover
 
-- The measured value of the three floor terms. The recommendation in this document
-  stays provisional until M2-00 captures the publish intervals and a relayer exists
-  to time.
+- The measured value of any of the three floor terms. The recommendation stays
+  provisional until three things happen: M2-00 captures the publish intervals, a
+  relayer exists to time, and someone measures the skew between a RedStone signer's
+  clock and the sequencer's.
 - One question that [ADR 13][adr13] deferred to M2: does an oracle read the
   every-block clock account, or the 10-block or 50-block variant? No M2 task owns
   this question.
