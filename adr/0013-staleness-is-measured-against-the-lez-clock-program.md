@@ -3,7 +3,10 @@
 - **Status**: accepted
 - **Milestone**: M1 (`M1-08` answered; implemented by `M1-14`, `M1-15`)
 - **Requirements**: F4, SEC3
-- **Artefacts**: `verifier-core/`, and `logos-blockchain/lez-programs` `programs/clock` upstream
+- **Artefacts**: `verifier-core/`, and two upstreams: the clock program at
+  `lez/programs/clock` in `logos-blockchain/logos-execution-zone` `a58fbce2`, the revision
+  the product's lockfiles resolve, and `programs/twap_oracle` in
+  `logos-blockchain/lez-programs` `4363f139` for the precedent cited below
 
 ## Context
 

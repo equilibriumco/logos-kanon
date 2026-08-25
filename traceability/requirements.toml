@@ -7,7 +7,15 @@
 # `title` is a one-line paraphrase for reading the matrix, not a substitute for
 # the requirement: RFP-020 is the authority and the wording there governs. What
 # this file exists to do is make the inventory countable, so a requirement
-# cannot go missing from `matrix.toml` without CI noticing. `tests/matrix.rs`
+# cannot go missing from `matrix.toml` without CI noticing.
+#
+# A paraphrase may shorten a requirement and may not drop a clause that
+# constrains the implementation. F5's "source identifier" once stood here for
+# "source identifier (a constant identifying RedStone)", and the design question
+# the parenthetical answers was then decided the other way, from this file. No
+# test can catch that -- nothing here can compare itself against a document it
+# does not have -- so the rule is the only defence: if a clause narrows what may
+# be built, quote it. `tests/matrix.rs`
 # asserts the count per category against the RFP's taxonomy, so adding or
 # removing an entry here is a deliberate act that fails until the expected
 # counts are changed with it.
@@ -23,7 +31,7 @@
 id = "F1"
 category = "Functionality"
 kind = "hard"
-title = "Public-mode push aggregator accepting signed RedStone data packages, with the signature path structured so swapping in a host precompile stays a localised change"
+title = "Public-mode push aggregator accepting signed RedStone data packages, with the signature path structured so swapping in a future host primitive (precompile or syscall) stays a localised change"
 
 [[requirement]]
 id = "F2"
@@ -41,13 +49,13 @@ title = "M-of-N signer threshold per feed, configurable at registration, default
 id = "F4"
 category = "Functionality"
 kind = "hard"
-title = "Decode the RedStone data-package format and reject stale (`maxAge`), zero, negative or otherwise invalid values, and asset identifiers that do not match the registered feed"
+title = "Decode the RedStone data-package format (asset identifier, value, timestamp, signer set) and reject any package whose timestamp is older than a configurable `maxAge`, whose value is zero, negative or otherwise invalid, or whose asset identifier does not match the registered feed"
 
 [[requirement]]
 id = "F5"
 category = "Functionality"
 kind = "hard"
-title = "Publish the verified price into a canonical RFP-019 price account, populating base and quote asset, price, timestamp, source identifier and a zero confidence interval"
+title = "Publish the verified price into a canonical RFP-019 price account, populating base and quote asset, price, timestamp, source identifier (a constant identifying RedStone) and a zero confidence interval (RedStone publishes none)"
 
 [[requirement]]
 id = "F6"

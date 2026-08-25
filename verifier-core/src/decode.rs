@@ -58,6 +58,39 @@ const VALUE_SIZE_BYTES: usize = 4;
 const TIMESTAMP_BYTES: usize = 6;
 const SIGNATURE_BYTES: usize = Signature::LEN;
 
+/// Bytes after the last package, when there is no unsigned metadata: the
+/// package count, the metadata section's own length, and the marker.
+///
+/// Public because assembling or trimming a payload needs it, and every place
+/// that restated the sum was a place it could drift from the decoder.
+pub const EMPTY_ENVELOPE_BYTES: usize =
+    PACKAGE_COUNT_BYTES + UNSIGNED_METADATA_SIZE_BYTES + MARKER_BYTES;
+
+/// The longest payload this decoder will read.
+///
+/// Not a framing rule: a longer payload can be perfectly well formed. It is a
+/// cost rule, and the only one this crate is in a position to state.
+///
+/// Getting a payload into guest memory costs about 113 cycles per byte, before
+/// any verification and before this function is called. LEZ allows 33,554,432
+/// cycles in a public transaction and `MAX_RECOVERIES` bounds verification at
+/// about 19.4M of them, which leaves roughly 125 KB of payload before the two
+/// together exhaust the budget -- with nothing left for the program doing the
+/// verifying. 32 KiB is a third of that: the read costs about 3.7M cycles, the
+/// pair comes to 69% of the budget, and the remaining 31% belongs to the caller.
+///
+/// It is not a tight fit for anything real. RedStone's own payloads run to
+/// hundreds of bytes per feed, so this admits a bundle of ten feeds at twenty
+/// signers each and then some.
+///
+/// **The read is not refundable.** LEZ reads a program's whole instruction data
+/// before the program's first instruction (`lee_core`'s `read_lee_inputs`), so
+/// by the time this check runs the cycles are already spent. What the limit is
+/// for is the caller: a payload above it is one Kanon will not verify, which is
+/// what lets a relayer, an aggregator or a sequencer refuse it earlier, where
+/// refusing is still free. See ADR 26.
+pub const MAX_PAYLOAD_BYTES: usize = 32 * 1024;
+
 /// Why a payload could not be decoded.
 ///
 /// Every variant means "this payload is not well formed". None of them means
@@ -78,6 +111,12 @@ pub enum DecodeError {
     /// fire today. It exists so that a future field wider than `u64` fails
     /// closed here rather than wrapping silently.
     NumberOverflow,
+    /// The payload is longer than [`MAX_PAYLOAD_BYTES`].
+    ///
+    /// The only variant here that is not about framing. A payload this long can
+    /// be well formed; it is refused because reading it and verifying it will
+    /// not both fit in a transaction.
+    TooLong { len: usize, max: usize },
     /// The payload declares no data packages.
     ///
     /// Rejected rather than returned as an empty set, because an empty payload
@@ -248,10 +287,20 @@ impl<'a> Payload<'a> {
     ///
     /// # Errors
     ///
-    /// [`DecodeError`] for any malformed input. Never panics, which matters
+    /// [`DecodeError`] for any malformed input, and [`DecodeError::TooLong`]
+    /// for a payload past [`MAX_PAYLOAD_BYTES`]. Never panics, which matters
     /// because this runs in a guest where a panic aborts the transaction rather
     /// than rejecting the package.
     pub fn decode(bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        // First, and before the marker: everything below is proportional to the
+        // payload, and this is the one check that is not.
+        if bytes.len() > MAX_PAYLOAD_BYTES {
+            return Err(DecodeError::TooLong {
+                len: bytes.len(),
+                max: MAX_PAYLOAD_BYTES,
+            });
+        }
+
         let mut cursor = Cursor::new(bytes);
 
         let marker = cursor.take(MARKER_BYTES)?;
@@ -375,50 +424,7 @@ mod tests {
     use std::vec::Vec;
 
     use super::*;
-
-    /// Builds a payload the way a signer would, so the decoder is tested against
-    /// the layout rather than against itself.
-    #[derive(Default)]
-    struct PayloadBuilder {
-        packages: Vec<Vec<u8>>,
-        metadata: Vec<u8>,
-    }
-
-    impl PayloadBuilder {
-        fn package(mut self, points: &[(&[u8], &[u8])], timestamp_ms: u64, sig: u8) -> Self {
-            let value_size = points[0].1.len();
-            let mut out = Vec::new();
-            for (feed, value) in points {
-                let mut id = [0u8; FEED_ID_BYTES];
-                id[..feed.len()].copy_from_slice(feed);
-                out.extend_from_slice(&id);
-                out.extend_from_slice(value);
-            }
-            out.extend_from_slice(&timestamp_ms.to_be_bytes()[2..]); // 6 bytes
-            out.extend_from_slice(&(value_size as u32).to_be_bytes()); // 4 bytes
-            out.extend_from_slice(&(points.len() as u32).to_be_bytes()[1..]); // 3 bytes
-            out.extend_from_slice(&[sig; SIGNATURE_BYTES]);
-            self.packages.push(out);
-            self
-        }
-
-        fn metadata(mut self, bytes: &[u8]) -> Self {
-            self.metadata = bytes.to_vec();
-            self
-        }
-
-        fn build(self) -> Vec<u8> {
-            let mut out = Vec::new();
-            for package in &self.packages {
-                out.extend_from_slice(package);
-            }
-            out.extend_from_slice(&(self.packages.len() as u16).to_be_bytes());
-            out.extend_from_slice(&self.metadata);
-            out.extend_from_slice(&(self.metadata.len() as u32).to_be_bytes()[1..]);
-            out.extend_from_slice(&REDSTONE_MARKER);
-            out
-        }
-    }
+    use crate::test_support::PayloadBuilder;
 
     /// `(timestamp, [(feed id, value)])` per package, in visit order.
     type Decoded = Vec<(u64, Vec<(Vec<u8>, Vec<u8>)>)>;
@@ -442,7 +448,7 @@ mod tests {
     #[test]
     fn a_single_package_round_trips() {
         let bytes = PayloadBuilder::default()
-            .package(&[(b"BTC", &[0, 0, 0, 1])], 1_770_000_000_000, 0xAA)
+            .opaque_package(&[(b"BTC", &[0, 0, 0, 1])], 1_770_000_000_000, 0xAA)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -458,12 +464,12 @@ mod tests {
     #[test]
     fn several_packages_and_several_points_each() {
         let bytes = PayloadBuilder::default()
-            .package(
+            .opaque_package(
                 &[(b"BTC", &[1, 2, 3, 4]), (b"ETH", &[5, 6, 7, 8])],
                 111,
                 0x01,
             )
-            .package(&[(b"SOL", &[9, 9, 9, 9])], 222, 0x02)
+            .opaque_package(&[(b"SOL", &[9, 9, 9, 9])], 222, 0x02)
             .metadata(b"ignored entirely")
             .build();
 
@@ -490,7 +496,7 @@ mod tests {
         // the signature.
         let value = [7u8; 4];
         let bytes = PayloadBuilder::default()
-            .package(&[(b"BTC", &value)], 1_234_567, 0xAB)
+            .opaque_package(&[(b"BTC", &value)], 1_234_567, 0xAB)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -520,10 +526,10 @@ mod tests {
     #[test]
     fn unsigned_metadata_is_skipped_and_changes_nothing() {
         let without = PayloadBuilder::default()
-            .package(&[(b"BTC", &[1, 1, 1, 1])], 500, 0x11)
+            .opaque_package(&[(b"BTC", &[1, 1, 1, 1])], 500, 0x11)
             .build();
         let with = PayloadBuilder::default()
-            .package(&[(b"BTC", &[1, 1, 1, 1])], 500, 0x11)
+            .opaque_package(&[(b"BTC", &[1, 1, 1, 1])], 500, 0x11)
             .metadata(b"a much longer unsigned metadata block")
             .build();
 
@@ -537,7 +543,7 @@ mod tests {
     #[test]
     fn a_payload_without_the_marker_is_rejected() {
         let mut bytes = PayloadBuilder::default()
-            .package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
+            .opaque_package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
             .build();
         let last = bytes.len() - 1;
         bytes[last] ^= 0xFF;
@@ -562,13 +568,13 @@ mod tests {
         // the slicing is ever refactored, because a dropped point would let a
         // threshold check downstream pass on less data than the package claims.
         let bytes = PayloadBuilder::default()
-            .package(
+            .opaque_package(
                 &[(b"BTC", &[1, 2, 3, 4]), (b"ETH", &[5, 6, 7, 8])],
                 111,
                 0x01,
             )
-            .package(&[(b"SOL", &[9; 32])], 222, 0x02)
-            .package(
+            .opaque_package(&[(b"SOL", &[9; 32])], 222, 0x02)
+            .opaque_package(
                 &[(b"XMR", &[7, 7]), (b"ZEC", &[8, 8]), (b"DOT", &[9, 9])],
                 333,
                 0x03,
@@ -600,7 +606,7 @@ mod tests {
         // panic. A panic in a guest aborts the transaction instead of rejecting
         // the package.
         let bytes = PayloadBuilder::default()
-            .package(
+            .opaque_package(
                 &[(b"BTC", &[1, 2, 3, 4]), (b"ETH", &[5, 6, 7, 8])],
                 999,
                 0x22,
@@ -624,14 +630,37 @@ mod tests {
     }
 
     #[test]
+    fn a_payload_past_the_size_limit_is_refused_before_it_is_parsed() {
+        // The limit is a cost rule, not a framing one, so the payload it
+        // refuses is otherwise perfectly good: the same bytes under the limit
+        // decode. Checked before the marker, because every other check is
+        // proportional to the payload and this one is not.
+        let mut bytes = std::vec![0u8; MAX_PAYLOAD_BYTES + 1];
+        assert_eq!(
+            Payload::decode(&bytes),
+            Err(DecodeError::TooLong {
+                len: MAX_PAYLOAD_BYTES + 1,
+                max: MAX_PAYLOAD_BYTES,
+            }),
+            "and not MissingMarker, which these bytes also are"
+        );
+
+        bytes.truncate(MAX_PAYLOAD_BYTES);
+        assert_eq!(
+            Payload::decode(&bytes),
+            Err(DecodeError::MissingMarker),
+            "one byte shorter and the size is no longer what is wrong with it"
+        );
+    }
+
+    #[test]
     fn a_declared_package_count_larger_than_the_body_is_rejected() {
         let mut bytes = PayloadBuilder::default()
-            .package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
+            .opaque_package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
             .build();
 
         // The package count sits just before the metadata size and marker.
-        let count_at =
-            bytes.len() - MARKER_BYTES - UNSIGNED_METADATA_SIZE_BYTES - PACKAGE_COUNT_BYTES;
+        let count_at = bytes.len() - EMPTY_ENVELOPE_BYTES;
         bytes[count_at] = 0xFF;
         bytes[count_at + 1] = 0xFF;
 
@@ -645,10 +674,9 @@ mod tests {
     #[test]
     fn zero_packages_is_rejected() {
         let mut bytes = PayloadBuilder::default()
-            .package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
+            .opaque_package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
             .build();
-        let count_at =
-            bytes.len() - MARKER_BYTES - UNSIGNED_METADATA_SIZE_BYTES - PACKAGE_COUNT_BYTES;
+        let count_at = bytes.len() - EMPTY_ENVELOPE_BYTES;
         bytes[count_at] = 0;
         bytes[count_at + 1] = 0;
 
@@ -658,7 +686,7 @@ mod tests {
     #[test]
     fn trailing_bytes_before_the_packages_are_rejected() {
         let valid = PayloadBuilder::default()
-            .package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
+            .opaque_package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
             .build();
         let mut bytes = std::vec![0xDEu8; 16];
         bytes.extend_from_slice(&valid);
@@ -674,7 +702,7 @@ mod tests {
     #[test]
     fn a_visitor_rejection_is_not_a_decode_error() {
         let bytes = PayloadBuilder::default()
-            .package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
+            .opaque_package(&[(b"BTC", &[1, 1, 1, 1])], 1, 0x01)
             .build();
         let payload = Payload::decode(&bytes).unwrap();
 

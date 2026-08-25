@@ -41,7 +41,15 @@ repository. Two boundaries are deliberate and are the reason this section exists
 
   * The RedStone Rust SDK (Boost Software License 1.0) may be consumed as a
     declared dependency where it is guest-compatible. Boost is permissive and
-    compatible with both licenses above. It is not vendored.
+    compatible with both licenses above. None of its code is vendored.
+
+  * One test fixture from it is vendored:
+    `verifier-core/tests/vectors/redstone-sdk-sample-payload.hex` is a
+    byte-for-byte copy of `sample-data/payload.hex` from
+    https://github.com/redstone-finance/rust-sdk at commit
+    50cd703eb908d249d65f322192af1757e56afc97, under the same Boost licence. It is
+    a payload RedStone serialised, which is what makes it worth having: it is the
+    only envelope in the test suite this repository did not assemble.
 
   * RedStone's EVM connector is partly BUSL-1.1 and cannot ship in an
     open-source deliverable. No part of it is copied, ported or read for the

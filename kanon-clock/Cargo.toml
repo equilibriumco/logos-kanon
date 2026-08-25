@@ -1,0 +1,24 @@
+# The LEZ clock, behind `verifier-core`'s `TimeSource`.
+#
+# A crate rather than a module in either mode's crate, because both modes need
+# it and F9 forbids the pull library depending on the aggregator. It is the only
+# thing standing between a caller and choosing its own clock, so it exists once.
+#
+# `clock_core` and `lee_core` are std crates and `pull-lib` is `no_std`, so they
+# are dev-dependencies only: the account id and the account layout are declared
+# here and the conformance test asserts they still match upstream. Same shape as
+# `kanon-idl`'s vendored IDL (ADR 9).
+[package]
+name = "kanon-clock"
+description = "Reads the pinned LEZ clock account as a verifier-core TimeSource"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+verifier-core.workspace = true
+
+[dev-dependencies]
+clock_core.workspace = true
+lee_core.workspace = true
+borsh.workspace = true

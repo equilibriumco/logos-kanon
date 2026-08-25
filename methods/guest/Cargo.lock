@@ -1606,6 +1606,7 @@ dependencies = [
 name = "kanon-idl"
 version = "0.1.0"
 dependencies = [
+ "lee_core",
  "twap_oracle_core",
 ]
 

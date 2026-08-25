@@ -57,7 +57,7 @@ design, which is why RFP-019 chose this shape.
 
 What it cost to take the dependency is recorded in `adr/0009-re-export-the-canonical-price-account-and-vendor-its-idl.md`
 and `adr/0008-exact-pins-and-tracking-the-estate.md`: the product moved to risc0 3.0.5
-and LEZ v0.2.0 to match, both measured rather than assumed.
+and LEZ v0.2.0 to match, and the cycle counts on both were re-measured there.
 
 ### Refreshing it
 

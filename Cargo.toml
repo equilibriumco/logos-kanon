@@ -30,6 +30,7 @@ members = [
   "methods",
   "pull-lib",
   "aggregator-program",
+  "kanon-clock",
   "kanon-idl",
   "kanon-sdk",
   "kanon-relayer",
@@ -60,6 +61,7 @@ license = "MIT OR Apache-2.0"
 # anything published resolves to whatever exists at build time.
 verifier-core = { path = "verifier-core", version = "0.1.0" }
 pull-lib = { path = "pull-lib", version = "0.1.0" }
+kanon-clock = { path = "kanon-clock", version = "0.1.0" }
 kanon-idl = { path = "kanon-idl", version = "0.1.0" }
 kanon-sdk = { path = "kanon-sdk", version = "0.1.0" }
 
@@ -74,6 +76,12 @@ kanon-sdk = { path = "kanon-sdk", version = "0.1.0" }
 # tracks the LEZ its published figures were measured against. The workspace split is
 # what lets those be different answers.
 lee_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+clock_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+
+# Only for `kanon-clock`'s conformance test, which encodes a clock account the
+# way upstream does and checks that the declared layout reads it. Pinned to what
+# the LEZ graph already resolves, so it adds no new version to the tree.
+borsh = "1.8.0"
 twap_oracle_core = { git = "https://github.com/logos-blockchain/lez-programs", rev = "4363f13912e0ba8627e70575161862ab337c1169" }
 
 # Exact, not a caret range, and deliberately 3.0.5 where `m0/Cargo.toml` says 3.0.6.
@@ -85,9 +93,14 @@ twap_oracle_core = { git = "https://github.com/logos-blockchain/lez-programs", r
 # estate's is what made the canonical price account crate unresolvable against
 # this graph.
 #
-# The figures stay comparable, and that is measured rather than assumed: m0's
-# guardrails were run against 3.0.5 and every published cycle count was unchanged,
+# The figures stay comparable: m0's guardrails were run against 3.0.5 and every
+# published cycle count was unchanged,
 # even though the guest image ID moves. `adr/0008-exact-pins-and-tracking-the-estate.md`
 # records the experiment and what it settled.
-risc0-zkvm = "=3.0.5"
+#
+# `client` and no more. The default set adds `bonsai`, whose remote proving
+# client drags an HTTP and TLS stack into the lockfile for a service this
+# repository does not call; `client` alone carries the local executor, which is
+# all `methods/tests/cost.rs` needs.
+risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["client"] }
 risc0-build = "=3.0.5"

@@ -23,3 +23,24 @@ license.workspace = true
 # different programs.
 k256 = { version = "=0.13.3", default-features = false, features = ["ecdsa", "arithmetic"] }
 tiny-keccak = { version = "=2.0.2", features = ["keccak"] }
+
+[dev-dependencies]
+# Reading the committed RedStone vectors. Both already resolve in this graph, so
+# neither adds a version to the tree.
+serde_json = "1.0.151"
+hex = "0.4"
+
+# The generated invariants in `src/properties.rs`. Shrinking is the half of
+# property testing a hand-rolled loop does not give: a failing 700-byte payload
+# is not a bug report until something has reduced it.
+#
+# Already in this graph through `alloy-primitives`, reached from LEZ, so this
+# resolves to the same version and adds no crate to the lockfile.
+#
+# `handle-panics` in place of the default `fork`. One of the two is required,
+# because the property that matters most here is that guest-reachable code does
+# not panic (ADR 4) and without either feature a panicking case aborts the run
+# instead of shrinking to the input that caused it. `handle-panics` does that in
+# process; `fork` runs every case in a subprocess and brings `rusty-fork`,
+# `tempfile` and `wait-timeout` with it.
+proptest = { version = "1.11.0", default-features = false, features = ["std", "handle-panics"] }
