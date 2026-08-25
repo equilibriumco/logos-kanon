@@ -20,6 +20,17 @@ use crate::{
 /// accept is never one Kanon rejects.
 pub const MAX_AHEAD_MS: u64 = 3 * 60 * 1000;
 
+/// The oldest a package may be allowed to be, whatever a feed configures.
+///
+/// RedStone's own `MAX_TIMESTAMP_DELAY_MS`. A feed is free to be stricter and
+/// most should be, but past this bound Kanon would accept a package RedStone
+/// itself refuses, and there is no reading of the data where that is the
+/// intended behaviour. The ceiling is enforced rather than recommended because
+/// the failure is silent: `freshness` saturates, so a `maxAge` near `u64::MAX`
+/// puts the lower edge of the window at zero and admits every past timestamp
+/// while still looking configured.
+pub const MAX_MAX_AGE_MS: u64 = 15 * 60 * 1000;
+
 /// The two assets a price relates: how much quote one unit of base is worth.
 ///
 /// Opaque bytes here rather than a LEZ `AccountId`, because this crate carries
@@ -99,8 +110,9 @@ impl<'a> FeedConfig<'a> {
     ///
     /// [`ConfigError`] for an empty or oversized signer list, a threshold of zero
     /// or one no signer set can reach, a repeated or zero signer address, a
-    /// feed id that is empty, all-zero, or wider than the wire field, or a
-    /// decimal exponent above [`MAX_DECIMALS`].
+    /// feed id that is empty, all-zero, or wider than the wire field, a decimal
+    /// exponent above [`MAX_DECIMALS`], or a `maxAge` of zero or above
+    /// [`MAX_MAX_AGE_MS`].
     pub fn try_new(
         feed_id: &[u8],
         assets: AssetPair,
@@ -111,6 +123,12 @@ impl<'a> FeedConfig<'a> {
     ) -> Result<Self, ConfigError> {
         if max_age_ms == 0 {
             return Err(ConfigError::MaxAgeZero);
+        }
+        if max_age_ms > MAX_MAX_AGE_MS {
+            return Err(ConfigError::MaxAgeTooLarge {
+                max_age_ms,
+                max: MAX_MAX_AGE_MS,
+            });
         }
         if decimals > MAX_DECIMALS {
             return Err(ConfigError::DecimalsOutOfRange {
@@ -491,9 +509,16 @@ mod tests {
 
     const NOW_MS: u64 = 1_770_000_000_000;
 
-    /// No staleness bound, so every test that is not about timestamps keeps
-    /// using whatever timestamp reads clearly. Staleness has its own tests.
-    const NO_MAX_AGE: u64 = u64::MAX;
+    /// The widest bound a feed may configure, so a test that is not about
+    /// timestamps is never refused for one. Staleness has its own tests.
+    const NO_MAX_AGE: u64 = MAX_MAX_AGE_MS;
+
+    /// Three ordered moments for the tests about which round a package belongs
+    /// to. Relative to `NOW_MS`, because a bounded `maxAge` means a round label
+    /// has to be a time the test clock would call current.
+    const ROUND_A: u64 = NOW_MS - 4_000;
+    const ROUND_B: u64 = NOW_MS - 2_000;
+    const ROUND_C: u64 = NOW_MS;
 
     fn verify(payload: &Payload<'_>, config: &FeedConfig<'_>) -> Result<VerifiedFeed, VerifyError> {
         verify_feed(
@@ -727,7 +752,7 @@ mod tests {
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
         for key in &keys {
-            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], 1_770_000_000_000);
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], NOW_MS);
         }
         let bytes = builder.build();
 
@@ -746,9 +771,9 @@ mod tests {
         let keys = keys(5);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1_770_000_000_000)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 30])], 1_770_000_000_000)
-            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 20])], 1_770_000_000_000)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], NOW_MS)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 30])], NOW_MS)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -764,10 +789,10 @@ mod tests {
         let keys = keys(4);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
-            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 30])], 1)
-            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 40])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], NOW_MS)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 30])], NOW_MS)
+            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 40])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -789,7 +814,7 @@ mod tests {
             builder = builder.signed_package(
                 key,
                 &[(b"ETH", &[0, 0, 0, 7]), (b"BTC", &[0, 0, 0, 50])],
-                1,
+                NOW_MS,
             );
         }
         let bytes = builder.build();
@@ -811,10 +836,10 @@ mod tests {
 
         let mut builder = PayloadBuilder::default();
         for key in &keys {
-            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], 1);
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], NOW_MS);
         }
         let bytes = builder
-            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0x27, 0x0F])], 1)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0x27, 0x0F])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -833,9 +858,9 @@ mod tests {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 20])], 1)
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 30])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], NOW_MS)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 30])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -860,11 +885,11 @@ mod tests {
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
         for key in &keys {
-            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], 1);
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], NOW_MS);
         }
         // Byte for byte what the first package already is.
         let bytes = builder
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 60])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 60])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -925,9 +950,9 @@ mod tests {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
-            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], NOW_MS)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -946,7 +971,7 @@ mod tests {
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
         for key in &keys {
-            builder = builder.signed_package(key, &[(b"ETH", &[0, 0, 0, 5])], 1);
+            builder = builder.signed_package(key, &[(b"ETH", &[0, 0, 0, 5])], NOW_MS);
         }
         let bytes = builder.build();
 
@@ -969,9 +994,9 @@ mod tests {
         let stranger = signing_key(0x99);
 
         let bytes = PayloadBuilder::default()
-            .signed_package(&configured[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
-            .signed_package(&configured[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
-            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 30])], 1)
+            .signed_package(&configured[0], &[(b"BTC", &[0, 0, 0, 10])], NOW_MS)
+            .signed_package(&configured[1], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 30])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -990,7 +1015,7 @@ mod tests {
         let stranger = signing_key(0x99);
 
         let bytes = PayloadBuilder::default()
-            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 30])], 1)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 30])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -1009,10 +1034,10 @@ mod tests {
         let stranger = signing_key(0x99);
 
         let bytes = PayloadBuilder::default()
-            .signed_package(&configured[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
-            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 30])], 1)
-            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 31])], 2)
-            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 32])], 3)
+            .signed_package(&configured[0], &[(b"BTC", &[0, 0, 0, 10])], NOW_MS)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 30])], NOW_MS)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 31])], NOW_MS + 1)
+            .signed_package(&stranger, &[(b"BTC", &[0, 0, 0, 32])], NOW_MS + 2)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -1031,7 +1056,7 @@ mod tests {
         let keys = keys(1);
         let set = signer_set(&keys);
         let valid = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], NOW_MS)
             .build();
         let mut bytes = std::vec![0xDEu8; 16];
         bytes.extend_from_slice(&valid);
@@ -1053,10 +1078,10 @@ mod tests {
         let set = signer_set(&keys);
         let wide = [0x01u8; 33];
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &wide)], 1)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
-            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 20])], 1)
-            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &wide)], NOW_MS)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
+            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -1070,8 +1095,8 @@ mod tests {
         let set = signer_set(&keys);
         let wide = [0x01u8; 33];
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &wide)], 1)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &wide)], NOW_MS)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -1088,7 +1113,7 @@ mod tests {
         for reporting in 1..=5usize {
             let mut builder = PayloadBuilder::default();
             for key in keys.iter().take(reporting) {
-                builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 10])], 1);
+                builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 10])], NOW_MS);
             }
             let bytes = builder.build();
             let payload = Payload::decode(&bytes).expect("well formed");
@@ -1120,7 +1145,7 @@ mod tests {
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
         for key in &keys {
-            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], 1);
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], NOW_MS);
         }
         let bytes = builder
             .opaque_package(&[(b"BTC", &[0, 0, 0, 100])], 1, 0xFF)
@@ -1147,7 +1172,7 @@ mod tests {
 
         let mut builder = PayloadBuilder::default();
         for key in &stranger_keys {
-            builder = builder.signed_package(key, &[(b"ETH", &[0, 0, 0, 7])], 1);
+            builder = builder.signed_package(key, &[(b"ETH", &[0, 0, 0, 7])], NOW_MS);
         }
         let bytes = builder.build();
 
@@ -1173,7 +1198,7 @@ mod tests {
             .signed_package(
                 &keys[0],
                 &[(b"BTC", &[0, 0, 0, 10]), (b"BTC", &[0, 0, 0, 20])],
-                1,
+                NOW_MS,
             )
             .build();
 
@@ -1202,7 +1227,7 @@ mod tests {
 
         for points in [[valid, invalid], [invalid, valid]] {
             let bytes = PayloadBuilder::default()
-                .signed_package(&keys[0], &points, 1)
+                .signed_package(&keys[0], &points, NOW_MS)
                 .build();
             let payload = Payload::decode(&bytes).expect("well formed");
             let config = feed_config(&set, 1);
@@ -1216,7 +1241,7 @@ mod tests {
     fn agreed(keys: &[k256::ecdsa::SigningKey], value: &[u8]) -> std::vec::Vec<u8> {
         let mut builder = PayloadBuilder::default();
         for key in keys {
-            builder = builder.signed_package(key, &[(b"BTC", value)], 1_770_000_000_000);
+            builder = builder.signed_package(key, &[(b"BTC", value)], NOW_MS);
         }
         builder.build()
     }
@@ -1302,10 +1327,10 @@ mod tests {
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
         for key in &keys[..3] {
-            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], 1);
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 100])], NOW_MS);
         }
         let bytes = builder
-            .signed_package(&keys[3], &[(b"BTC", &[0xFF; 32])], 1)
+            .signed_package(&keys[3], &[(b"BTC", &[0xFF; 32])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -1332,7 +1357,7 @@ mod tests {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 0])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 0])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -1348,10 +1373,10 @@ mod tests {
         let keys = keys(4);
         let set = signer_set(&keys[..3]);
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 1)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 1)
-            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], 1)
-            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 30])], 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], NOW_MS)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], NOW_MS)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], NOW_MS)
+            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 30])], NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -1389,8 +1414,8 @@ mod tests {
 
         for (first, second) in [(good, useless), (useless, good)] {
             let bytes = PayloadBuilder::default()
-                .signed_package(&keys[0], &[first], 1)
-                .signed_package(&keys[0], &[second], 1)
+                .signed_package(&keys[0], &[first], NOW_MS)
+                .signed_package(&keys[0], &[second], NOW_MS)
                 .build();
 
             let payload = Payload::decode(&bytes).expect("well formed");
@@ -1455,7 +1480,7 @@ mod tests {
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
         for i in 0..=MAX_RECOVERIES {
-            builder = builder.signed_package(&keys[i % 3], &[(b"BTC", &[0, 0, 0, 50])], 1);
+            builder = builder.signed_package(&keys[i % 3], &[(b"BTC", &[0, 0, 0, 50])], NOW_MS);
         }
         let bytes = builder.build();
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -1486,12 +1511,12 @@ mod tests {
         let set = signer_set(&keys);
         let others = |builder: PayloadBuilder| {
             (0..MAX_RECOVERIES * 2).fold(builder, |b, i| {
-                b.signed_package(&keys[i % 3], &[(b"ETH", &[0, 0, 0, 7])], 1)
+                b.signed_package(&keys[i % 3], &[(b"ETH", &[0, 0, 0, 7])], NOW_MS)
             })
         };
         let ours = |builder: PayloadBuilder| {
             keys.iter().fold(builder, |b, key| {
-                b.signed_package(key, &[(b"BTC", &[0, 0, 0, 50])], 1)
+                b.signed_package(key, &[(b"BTC", &[0, 0, 0, 50])], NOW_MS)
             })
         };
 
@@ -1847,6 +1872,56 @@ mod tests {
     }
 
     #[test]
+    fn a_max_age_wider_than_redstones_own_bound_is_rejected() {
+        // The reason the bound is enforced and not merely recommended: at the
+        // top of the range `freshness` saturates, so the window's lower edge
+        // sits at zero and every past timestamp is current. A feed configured
+        // that way looks configured and checks nothing.
+        let signers = [signer(1)];
+        let boundless =
+            FeedConfig::try_new(b"BTC", pair(), DECIMALS, u64::MAX, &signers, 1).unwrap_err();
+        assert_eq!(
+            boundless,
+            ConfigError::MaxAgeTooLarge {
+                max_age_ms: u64::MAX,
+                max: MAX_MAX_AGE_MS
+            }
+        );
+
+        assert!(
+            FeedConfig::try_new(b"BTC", pair(), DECIMALS, MAX_MAX_AGE_MS, &signers, 1).is_ok(),
+            "the bound itself is a legal configuration"
+        );
+        assert!(
+            FeedConfig::try_new(b"BTC", pair(), DECIMALS, MAX_MAX_AGE_MS + 1, &signers, 1).is_err(),
+            "one millisecond past it is not"
+        );
+    }
+
+    #[test]
+    fn the_ceiling_admits_nothing_redstone_would_refuse() {
+        // The bound is RedStone's `MAX_TIMESTAMP_DELAY_MS`, so a package Kanon
+        // accepts at the widest legal `maxAge` is one RedStone accepts too.
+        // Stated as an assertion, because the two constants drifting apart is
+        // exactly the change that would go unnoticed.
+        assert_eq!(MAX_MAX_AGE_MS, 15 * 60 * 1000);
+
+        let signers = [signer(1)];
+        let widest = FeedConfig::try_new(b"BTC", pair(), DECIMALS, MAX_MAX_AGE_MS, &signers, 1)
+            .expect("valid config");
+        let oldest_admitted = NOW_MS - widest.max_age_ms();
+
+        assert_eq!(
+            freshness(oldest_admitted, NOW_MS, widest.max_age_ms()),
+            Freshness::Current
+        );
+        assert_eq!(
+            freshness(oldest_admitted - 1, NOW_MS, widest.max_age_ms()),
+            Freshness::Stale
+        );
+    }
+
+    #[test]
     fn the_first_strict_rejection_precedes_threshold_for_any_configuration() {
         let keys = keys(3);
         let set = signer_set(&keys);
@@ -1945,13 +2020,13 @@ mod tests {
         // number nobody published.
         let keys = keys(3);
         let set = signer_set(&keys);
-        let bytes = agreed_at_value(&keys, 5_000, &[10, 20, 30]);
+        let bytes = agreed_at_value(&keys, ROUND_A, &[10, 20, 30]);
 
         let payload = Payload::decode(&bytes).expect("well formed");
         let config = feed_config(&set, 3);
         let verified = verify(&payload, &config).expect("verifies");
 
-        assert_eq!(verified.timestamp_ms, 5_000);
+        assert_eq!(verified.timestamp_ms, ROUND_A);
         assert_eq!(verified.value, Value::from_be_slice(&[20]).expect("fits"));
     }
 
@@ -1964,9 +2039,9 @@ mod tests {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 9_000)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 5_000)
-            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 30])], 7_000)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], ROUND_C)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], ROUND_A)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 30])], ROUND_B)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -1975,8 +2050,8 @@ mod tests {
         assert_eq!(
             verify(&payload, &config),
             Err(VerifyError::TimestampMismatch {
-                expected: 7_000,
-                found: 5_000
+                expected: ROUND_B,
+                found: ROUND_A
             }),
             "three signers describing three moments is not one observation"
         );
@@ -1989,10 +2064,10 @@ mod tests {
         // answers is not the caller's to be handed silently.
         let keys = keys(3);
         let set = signer_set(&keys);
-        for (label, appended_at) in [("older", 5_000u64), ("newer", 9_000)] {
+        for (label, appended_at) in [("older", ROUND_A), ("newer", ROUND_C)] {
             let mut builder = PayloadBuilder::default();
             for key in &keys {
-                builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], 7_000);
+                builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], ROUND_B);
             }
             let bytes = builder
                 .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 99])], appended_at)
@@ -2024,9 +2099,9 @@ mod tests {
             .collect();
 
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 50])], 1)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 50])], 1)
-            .signed_package(&keys[2], &crowd, 1)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 50])], NOW_MS)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 50])], NOW_MS)
+            .signed_package(&keys[2], &crowd, NOW_MS)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -2050,10 +2125,10 @@ mod tests {
         let set = signer_set(&keys);
         let mut builder = PayloadBuilder::default();
         for key in &keys {
-            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], 7_000);
+            builder = builder.signed_package(key, &[(b"BTC", &[0, 0, 0, 60])], ROUND_B);
         }
         for _ in 0..5 {
-            builder = builder.signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 99])], 5_000);
+            builder = builder.signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 99])], ROUND_A);
         }
         let bytes = builder.build();
 
@@ -2075,10 +2150,10 @@ mod tests {
         let keys = keys(4);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 5_000)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 10])], 5_000)
-            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 30])], 7_000)
-            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 30])], 7_000)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], ROUND_A)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 10])], ROUND_A)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 30])], ROUND_B)
+            .signed_package(&keys[3], &[(b"BTC", &[0, 0, 0, 30])], ROUND_B)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");
@@ -2095,9 +2170,9 @@ mod tests {
         let keys = keys(3);
         let set = signer_set(&keys);
         let bytes = PayloadBuilder::default()
-            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], 6_000)
-            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], 6_000)
-            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], 6_000)
+            .signed_package(&keys[0], &[(b"BTC", &[0, 0, 0, 10])], ROUND_B)
+            .signed_package(&keys[1], &[(b"BTC", &[0, 0, 0, 20])], ROUND_B)
+            .signed_package(&keys[2], &[(b"BTC", &[0, 0, 0, 0])], ROUND_B)
             .build();
 
         let payload = Payload::decode(&bytes).expect("well formed");

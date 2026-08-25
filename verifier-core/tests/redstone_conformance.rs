@@ -58,7 +58,7 @@ fn pair() -> AssetPair {
 /// Generous, because these vectors age from the moment they are captured. What
 /// is under test here is the format, not the clock; staleness has its own tests
 /// against a clock the test controls.
-const FOREVER: u64 = u64::MAX;
+const FOREVER: u64 = verifier_core::feed::MAX_MAX_AGE_MS;
 
 #[test]
 fn every_captured_payload_decodes() {

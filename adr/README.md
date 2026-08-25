@@ -122,8 +122,17 @@ milestone made twice. The first answer chose a round by vote, to avoid making a 
 package fatal; the second refuses the payload, because ADR 15 had already ruled that a bad
 package refuses and accepted what that costs. Being strict about four properties of a
 package and holding a vote on the fifth was two positions rather than one. What the second
-answer costs is written into ADR 27 rather than left for SEC3's analysis to discover: a
-replay is now a denial, so a submitter has to own the bytes it submits.
+answer costs is written into ADR 27: an appended package is now a denial, so a submitter
+has to own the bytes it submits. The moment check runs before recovery, so that package
+needs no signer at all, which is why no amount of tuning relaxes the constraint.
+
+ADR 29 closes a range that only had one end. ADR 18 gave staleness a two-sided window and
+left `maxAge` to the feed; registration refused zero and nothing else. But `freshness`
+saturates, so a `maxAge` near `u64::MAX` put the window's lower edge at zero and admitted
+every timestamp in the past — the check was configurable into non-existence, and a feed in
+that state looked configured like any other. The test suites had been relying on exactly
+that to mean "this test is not about the clock", which is why a one-comparison check
+arrives with fifty sites of churn behind it.
 
 ## Open questions carried by these decisions
 
