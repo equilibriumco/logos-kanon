@@ -102,8 +102,10 @@ gap between everything and nothing is what makes the positive assertion worth ma
   or personal data: feed ids, timestamps, public signer addresses, prices and signatures.
 - The vectors go stale as prices and signer rosters move. They are not meant to track
   either: the format is what is under test, so a re-capture is only needed if the wire
-  format changes. `FOREVER` is used as `maxAge` in these tests for that reason, with
-  staleness tested separately against a clock the test controls.
+  format changes. The tests pair the widest `maxAge` a feed may configure with a clock
+  set to each vector's own timestamp for that reason, with staleness tested separately
+  against a clock the test controls. Before ADR 29 the constant was `u64::MAX` and named
+  `FOREVER`, which is the configuration that decision refuses.
 - Five feeds are covered: BTC, ETH, SOL, XMR and ZEC — F7's five, so M2-11's registration
   work has a decoded example of each.
 - The capture confirms XMR/USD and ZEC/USD are live on `redstone-primary-prod` with five

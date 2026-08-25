@@ -55,10 +55,11 @@ fn pair() -> AssetPair {
     AssetPair::new([1; AssetPair::ID_LEN], [2; AssetPair::ID_LEN])
 }
 
-/// Generous, because these vectors age from the moment they are captured. What
-/// is under test here is the format, not the clock; staleness has its own tests
-/// against a clock the test controls.
-const FOREVER: u64 = verifier_core::feed::MAX_MAX_AGE_MS;
+/// The widest bound a feed may legally configure, paired below with a clock set
+/// to each vector's own timestamp. These vectors age from the moment they are
+/// captured, and what is under test here is the format rather than the clock.
+/// Staleness has its own tests, against a clock the test controls.
+const WIDEST_WINDOW: u64 = verifier_core::feed::MAX_MAX_AGE_MS;
 
 #[test]
 fn every_captured_payload_decodes() {
@@ -159,7 +160,7 @@ fn a_published_payload_verifies_end_to_end() {
             vector.feed_id.as_bytes(),
             pair(),
             DECIMALS,
-            FOREVER,
+            WIDEST_WINDOW,
             &vector.signers,
             3,
         )
@@ -208,7 +209,7 @@ fn a_signer_set_that_is_not_the_published_one_reaches_no_threshold() {
             vector.feed_id.as_bytes(),
             pair(),
             DECIMALS,
-            FOREVER,
+            WIDEST_WINDOW,
             &strangers,
             3,
         )
