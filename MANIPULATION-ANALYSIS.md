@@ -105,6 +105,11 @@ A median of M values follows the attacker when the attacker holds more than half
 averages the two middle values. That gives M / 2 keys unbounded upward movement
 without full control, which is no better in practice.
 
+Three tests in `verifier-core/src/accept_and_reject.rs` hold this table, so the
+arithmetic is pinned and not described. Every package in them is validly signed by
+an authorised signer, for the right feed, at one moment. That is the point: the
+threshold is the only thing in the way.
+
 Two consequences follow for the recommendation:
 
 - **N does nothing.** N bounds the set an attacker draws from. It does not dilute

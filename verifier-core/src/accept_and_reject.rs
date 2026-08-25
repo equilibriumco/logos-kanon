@@ -647,3 +647,85 @@ fn no_two_failure_modes_answer_with_the_same_variant() {
         }
     }
 }
+
+/// Twice the honest value, so a median that moved is a median that says so.
+const TWO_HUNDRED: &[u8] = &[0, 0, 0, 200];
+
+fn value(n: u8) -> Value {
+    Value::from_be_slice(&[n]).expect("fits")
+}
+
+/// A payload an attacker assembled: `held` packages carrying [`TWO_HUNDRED`],
+/// then honest packages carrying [`HUNDRED`], `threshold` in total.
+///
+/// The honest packages are the point. An attacker short of the threshold needs no
+/// further keys, because every honest package for the round is public and it can
+/// put in as many as the threshold requires.
+fn assembled_by_an_attacker(keys: &[SigningKey], held: usize, threshold: usize) -> Vec<u8> {
+    let mut builder = PayloadBuilder::default();
+    for (i, key) in keys.iter().take(threshold).enumerate() {
+        let reported: &[u8] = if i < held { TWO_HUNDRED } else { HUNDRED };
+        builder = builder.signed_package(key, &[(FEED, reported)], NOW_MS);
+    }
+    builder.build()
+}
+
+#[test]
+fn two_compromised_signers_decide_a_threshold_of_three() {
+    // The price is a median, so an attacker needs more than half of the counted
+    // slots rather than all of them. Nothing here is a defect: every package is
+    // validly signed by an authorised signer, for the right feed, at one moment.
+    // That is what leaves the threshold as the only thing in the way, and why its
+    // arithmetic is worth pinning rather than describing.
+    let keys = keys(5);
+    let set = addresses(&keys);
+    let config = config(&set, 3);
+
+    let two = verify(&assembled_by_an_attacker(&keys, 2, 3), &config).expect("verifies");
+    assert_eq!(
+        two.value,
+        value(200),
+        "two of three slots decide the median outright"
+    );
+
+    let one = verify(&assembled_by_an_attacker(&keys, 1, 3), &config).expect("verifies");
+    assert_eq!(
+        one.value,
+        value(100),
+        "one of three moves nothing, and the honest majority holds"
+    );
+}
+
+#[test]
+fn a_threshold_of_four_is_no_harder_to_move_than_a_threshold_of_three() {
+    // An even threshold averages the two middle values, so half the slots reach
+    // the answer without holding a majority of them. Raising a threshold from
+    // three to four therefore buys nothing, which is the whole reason the
+    // recommendation names five.
+    let keys = keys(5);
+    let set = addresses(&keys);
+
+    let moved = verify(&assembled_by_an_attacker(&keys, 2, 4), &config(&set, 4)).expect("verifies");
+
+    assert_eq!(
+        moved.value,
+        value(150),
+        "two of four slots pull the midpoint halfway, and further with a wider value"
+    );
+    assert_ne!(moved.value, value(100), "the honest value did not survive");
+}
+
+#[test]
+fn a_threshold_of_five_needs_three_compromised_signers() {
+    // The odd step up is the one that helps. Two slots of five cannot reach the
+    // middle of the sorted values, so the honest report is the answer.
+    let keys = keys(5);
+    let set = addresses(&keys);
+    let config = config(&set, 5);
+
+    let two = verify(&assembled_by_an_attacker(&keys, 2, 5), &config).expect("verifies");
+    assert_eq!(two.value, value(100), "two of five cannot reach the middle");
+
+    let three = verify(&assembled_by_an_attacker(&keys, 3, 5), &config).expect("verifies");
+    assert_eq!(three.value, value(200), "three of five decide it");
+}
