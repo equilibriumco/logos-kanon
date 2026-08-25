@@ -658,6 +658,12 @@ fn value(n: u8) -> Value {
 /// A payload an attacker assembled: `held` packages carrying [`TWO_HUNDRED`],
 /// then honest packages carrying [`HUNDRED`], `threshold` in total.
 ///
+/// Every honest report is the same value here, which is deliberate and also a
+/// limit: it makes the tests below read as the attacker choosing the answer, and
+/// it hides the sub-majority case that
+/// `signers_below_the_bar_still_choose_which_honest_report_wins` covers with
+/// honest reports that differ.
+///
 /// The honest packages are the point. An attacker short of the threshold needs no
 /// further keys, because every honest package for the round is public and it can
 /// put in as many as the threshold requires.
@@ -728,4 +734,47 @@ fn a_threshold_of_five_needs_three_compromised_signers() {
 
     let three = verify(&assembled_by_an_attacker(&keys, 3, 5), &config).expect("verifies");
     assert_eq!(three.value, value(200), "three of five decide it");
+}
+
+#[test]
+fn signers_below_the_bar_still_choose_which_honest_report_wins() {
+    // The other tests here give every honest signer the same value, so an
+    // attacker under the majority bar looks powerless. It is not: a median picks
+    // a position, and two of five slots pushed to one extreme move that position
+    // onto the highest or the lowest honest report. The honest values bound the
+    // outcome and the attacker picks which of them is the outcome, which is a
+    // weaker position than deciding the price and a stronger one than nothing.
+    let keys = keys(5);
+    let set = addresses(&keys);
+    let config = config(&set, 5);
+
+    // Three honest reports that disagree, and two slots the attacker holds.
+    let spread: [&[u8]; 3] = [&[0, 0, 0, 95], &[0, 0, 0, 100], &[0, 0, 0, 105]];
+    let attacked = |attacker_value: &[u8]| {
+        let mut builder = PayloadBuilder::default();
+        for (key, honest) in keys[..3].iter().zip(spread) {
+            builder = builder.signed_package(key, &[(FEED, honest)], NOW_MS);
+        }
+        for key in &keys[3..] {
+            builder = builder.signed_package(key, &[(FEED, attacker_value)], NOW_MS);
+        }
+        verify(&builder.build(), &config).expect("verifies").value
+    };
+
+    assert_eq!(
+        attacked(TWO_HUNDRED),
+        value(105),
+        "pushed high, the top honest report becomes the median"
+    );
+    assert_eq!(
+        attacked(&[0, 0, 0, 1]),
+        value(95),
+        "pushed low, the bottom one does"
+    );
+
+    // And the bound: the attacker cannot reach past the honest reports, however
+    // far it pushes. Without this the test above would not distinguish influence
+    // from control.
+    assert_ne!(attacked(TWO_HUNDRED), value(200), "200 is not reachable");
+    assert_ne!(attacked(&[0, 0, 0, 1]), value(1), "nor is 1");
 }

@@ -25,19 +25,24 @@ the whole analysis. Most of what follows is a consequence of these seven.
 | 6 | The threshold counts distinct authorised signers, one slot each. The price is the median of the filled slots. An even count averages the two middle values. | [ADR 15][adr15], F3 |
 | 7 | The aggregator writes only a timestamp strictly newer than the stored one. | `aggregator-program/src/publish.rs` |
 
-RedStone's own bounds are `MAX_TIMESTAMP_DELAY_MS = 900_000` and
+RedStone's own defaults are `MAX_TIMESTAMP_DELAY_MS = 900_000` and
 `MAX_TIMESTAMP_AHEAD_MS = 180_000`, from
 `crates/redstone/src/protocol/constants.rs`. Kanon matches both.
+RedStone's validator applies these values by default. An integration built on
+their SDK is not obliged to hold to
+them, so nothing here rests on what RedStone rejects in general.
 
 ## The recommended minimum `maxAge`
 
 ### The ceiling is fifteen minutes, and the code holds it
 
-A `maxAge` of more than 900,000 ms admits packages that RedStone itself rejects.
-Registration refuses such a configuration, so the ceiling is an invariant and not
-advice. [ADR 29][adr29] records why it is enforced: `freshness` saturates, so a
-very large `maxAge` puts the lower edge of the window at zero. Every timestamp in
-the past then passes, and the feed still looks configured.
+A `maxAge` of more than 900,000 ms is looser than RedStone's own default, so it
+admits packages that the upstream default drops. Registration refuses such a
+configuration, so the ceiling is an invariant and not advice. The value is
+borrowed from RedStone and the policy is Kanon's. [ADR 29][adr29] records why it
+is enforced: `freshness` saturates, so a very large `maxAge` puts the lower edge
+of the window at zero. Every timestamp in the past then passes, and the feed still
+looks configured.
 
 ### The floor is the sum of three latencies
 
@@ -46,8 +51,9 @@ refuses honest updates. The floor is the sum of three terms:
 
 1. **The upstream publish interval.** The package must exist before anyone can
    submit it. RedStone sets this cadence for the feed.
-2. **Relayer latency.** The relayer must fetch the payload, assemble it, submit it,
-   and wait for inclusion.
+2. **Submission latency.** Fetch the payload, assemble it, submit it, and wait for
+   the transaction to execute. The clock is read inside the program, so the package
+   ages until execution and not until submission.
 3. **Clock skew between a RedStone signer and the sequencer.** A signer clock
    behind the sequencer makes a package look older than it is.
 
@@ -69,10 +75,16 @@ RedStone's, and M2-00 is the task that captures it.
 > risks refusing honest updates. A larger value widens the window that section
 > "Replay of stale packages" describes.
 
-For pull, the second term almost disappears. The consumer fetches the payload and
-verifies it in its own transaction, so no relayer hop exists. A pull consumer can
-therefore run tighter than push, once it knows its own fetch-to-submit time. Until
-then the same 120,000 ms applies, with the same uncertainty.
+For pull, part of the second term disappears and part of it does not. The consumer
+fetches the payload and verifies it in its own transaction, so the relayer's
+scheduling overhead is gone: no heartbeat interval, no deviation trigger, no retry
+back-off. Transaction latency stays. `verify_feed` reads the clock while the
+program runs, so the package keeps ageing through submission and inclusion until
+the moment it executes.
+
+The measurement a pull consumer needs is therefore fetch-to-execution, not
+fetch-to-submit. A pull consumer can run tighter than push once it knows that
+figure. Until then the same 120,000 ms applies, with the same uncertainty.
 
 A pull consumer must not treat `maxAge` as a formality because its own fetch was
 recent. Kanon verifies the timestamp of the signer, not the timestamp of the fetch.
@@ -117,9 +129,21 @@ Two consequences follow for the recommendation:
 - **Only odd increases help.** A move from 3 to 4 leaves the bar at two keys. A
   move from 3 to 5 raises it to three.
 
-With fewer keys than the table requires, a compromised key gives an attacker
-nothing on value. If a payload cannot reach M distinct authorised signers, it fails
-with `ThresholdNotMet`, which is a refusal and not a wrong price.
+With fewer keys than the table requires, an attacker cannot choose the price. It can
+still move it, inside a range it does not choose. Two keys in a five-slot median
+push their values to one extreme. The median then becomes the highest or the
+lowest honest report instead of the middle one. So the honest reports bound the
+outcome, and the attacker picks which of them wins.
+
+Whether that matters is a question about spread, not about the threshold. If the
+authorised signers agree closely, selecting among them moves the price very little.
+If one signer is an outlier, an attacker under the table's bar can promote that
+outlier to the answer. A monitor that alerts on signer disagreement is therefore
+worth more than it looks, because disagreement is what converts sub-majority access
+into real movement.
+
+If a payload cannot reach M distinct authorised signers at all, it fails with
+`ThresholdNotMet`, which is a refusal and not a wrong price.
 
 ### What a higher threshold costs
 
@@ -273,7 +297,8 @@ packet, and not only here.
 ## Summary of recommendations
 
 1. **Treat the threshold as a median, not a majority.** Two compromised keys
-   control a 3-of-N feed.
+   control a 3-of-N feed. Below that bar an attacker still selects among the honest
+   reports, so watch signer spread as well as signer identity.
 2. **Raise the threshold from 3 to 5 on high-value feeds.** A move to 4 leaves the
    bar at two keys, because an even count averages the middle two.
 3. **Set `maxAge` to 120,000 ms until the latencies are measured.** The figure can
