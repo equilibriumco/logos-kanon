@@ -27,6 +27,20 @@ about the clock". They worked exactly because the check had been disabled.
 So the range had a floor and no ceiling, and the end without one is the end where the
 check stops existing.
 
+## Where the answers came from
+
+`redstone-finance/rust-sdk` at `50cd703e`, Boost licensed, as with ADR 15 and ADR 18; the
+BUSL EVM connector stays unread. ADR 18 took `MAX_TIMESTAMP_DELAY_MS` from
+`crates/redstone/src/protocol/constants.rs` and read it as the bound RedStone applies.
+`crates/redstone/src/core/config.rs` says what it actually is: `Config::try_new` takes
+`max_timestamp_delay_ms` and `max_timestamp_ahead_ms` as `Option<TimestampMillis>` and
+resolves them with `unwrap_or` against those constants, documented as "If None is provided
+then default config value is used."
+
+So both bounds are the caller's to choose and the constants are a fallback. Nothing about
+what RedStone rejects in general follows from either, which is what makes the ceiling below
+a policy rather than an inherited property.
+
 ## Decision
 
 **`MAX_MAX_AGE_MS`, and `try_new` refuses anything above it.** The value is fifteen
@@ -34,12 +48,11 @@ minutes, RedStone's own `MAX_TIMESTAMP_DELAY_MS`, so the widest window Kanon per
 no looser than the upstream default. `ConfigError::MaxAgeTooLarge` carries both the
 offered value and the bound, so a caller learns what to change.
 
-**The value is borrowed, and the policy is ours.** `MAX_TIMESTAMP_DELAY_MS` is the
-default RedStone's own validator applies, not a bound every integration of theirs is
-held to, so adopting it is a choice this repository makes rather than a guarantee it
-inherits. The choice is easy to defend — being looser than the upstream default means
-accepting data the upstream's own default would drop — but it is a choice, and a later
-reader should not have to reconstruct that from the constant's provenance.
+**The value is borrowed, and the policy is ours.** Adopting RedStone's default is a
+decision rather than an inherited guarantee, for the reason the section above gives. It
+is an easy decision — being looser than the upstream's own fallback means accepting data
+that fallback drops — but a reader who mistakes it for inherited will not know it can be
+revisited.
 
 **The bound is enforced rather than published**, which is the part worth recording,
 because ADR 18 published the forward tolerance and this record does something else.
