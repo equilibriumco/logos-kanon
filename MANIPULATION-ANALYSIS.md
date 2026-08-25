@@ -77,8 +77,8 @@ with these signers picked it. Treating it as a bound repeats the mistake this
 document corrects about the fifteen minutes.
 
 > **Provisional recommendation: a minimum of 120,000 ms (two minutes) for push.**
-> This figure is a starting point and not a derivation. Two of the three terms are
-> unmeasured, so the measurements can move it in either direction. A smaller value
+> This figure is a starting point and not a derivation. No term of the three has a
+> measurement, so the measurements can move it in either direction. A smaller value
 > risks refusing honest updates. A larger value widens the window that section
 > "Replay of stale packages" describes.
 
