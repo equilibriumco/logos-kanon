@@ -365,3 +365,383 @@ fn post_states(
         AccountPostState::new(clock.account),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kanon_clock::CLOCK_ACCOUNT_ID;
+    use lee_core::account::{AccountId, Nonce};
+    use spel_framework::error::SpelError;
+
+    const OURS: ProgramId = [7u32; 8];
+    const SOMEONE_ELSE: ProgramId = [9u32; 8];
+    const DEFAULT: ProgramId = [0u32; 8];
+
+    const NOW_MS: u64 = 1_770_000_000_000;
+
+    /// Bytes that are not a payload, so a test reaching the decoder fails rather
+    /// than quietly proceeding.
+    const NOT_A_PAYLOAD: &[u8] = &[0xFF; 16];
+
+    fn account(owner: ProgramId, data: Vec<u8>, id: [u8; 32]) -> AccountWithMetadata {
+        AccountWithMetadata {
+            account: Account {
+                program_owner: owner,
+                balance: 0,
+                data: Data::try_from(data).expect("fits"),
+                nonce: Nonce(0),
+            },
+            is_authorized: false,
+            account_id: AccountId::new(id),
+        }
+    }
+
+    fn registered() -> FeedAccount {
+        let mut feed_id = [0u8; 32];
+        feed_id[..3].copy_from_slice(b"BTC");
+        FeedAccount {
+            feed_id,
+            base_asset: [1u8; 32],
+            quote_asset: [2u8; 32],
+            decimals: 8,
+            max_age_ms: 60_000,
+            signers: vec![[3u8; 20], [4u8; 20], [5u8; 20]],
+            threshold: 2,
+            paused: false,
+        }
+    }
+
+    fn feed_account(stored: &FeedAccount) -> AccountWithMetadata {
+        account(
+            OURS,
+            borsh::to_vec(stored).expect("serialises"),
+            [0xFEu8; 32],
+        )
+    }
+
+    /// A price account that does not exist yet, which is what a first write is
+    /// offered.
+    fn no_price_account() -> AccountWithMetadata {
+        account(DEFAULT, Vec::new(), [0xACu8; 32])
+    }
+
+    fn clock_account(id: [u8; 32], timestamp: u64) -> AccountWithMetadata {
+        let mut data = [0u8; 16];
+        data[8..].copy_from_slice(&timestamp.to_le_bytes());
+        account(DEFAULT, data.to_vec(), id)
+    }
+
+    fn clock() -> AccountWithMetadata {
+        clock_account(CLOCK_ACCOUNT_ID, NOW_MS)
+    }
+
+    fn submit(
+        feed: AccountWithMetadata,
+        price_account: AccountWithMetadata,
+        clock: AccountWithMetadata,
+        payload: &[u8],
+    ) -> Result<Vec<AccountPostState>, SubmitError> {
+        submit_price(feed, price_account, clock, payload, OURS)
+    }
+
+    #[test]
+    fn a_clock_that_is_not_the_pinned_account_is_refused_before_the_feed_is_read() {
+        // ADR 13's guarantee, and the ordering it implies. The feed here is one
+        // this program owns whose data is *not* a feed, so a run that reads the
+        // feed before the clock answers `FeedUndecodable` and a run that checks
+        // the clock first answers `WrongAccount`. Both are refusals, which is
+        // why asserting the refusal alone would not pin the order.
+        let undecodable = account(OURS, vec![0xFF; 4], [0xFE; 32]);
+
+        for id in [
+            *b"/LEZ/ClockProgramAccount/0000010",
+            *b"/LEZ/ClockProgramAccount/0000050",
+            [0u8; 32],
+        ] {
+            assert_eq!(
+                submit(
+                    undecodable.clone(),
+                    no_price_account(),
+                    clock_account(id, NOW_MS),
+                    NOT_A_PAYLOAD,
+                ),
+                Err(SubmitError::Clock(TimeError::WrongAccount)),
+                "the clock has to be settled before anything reads the feed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_feed_account_this_program_does_not_own_is_not_a_feed() {
+        // The substitution this check exists to stop: an account the caller owns
+        // holding a signer set of the caller's choosing. It decodes perfectly as
+        // a feed, which is the point -- the data cannot be what distinguishes it.
+        let mut forged = registered();
+        forged.signers = vec![[0xAA; 20]];
+        forged.threshold = 1;
+        let bytes = borsh::to_vec(&forged).expect("serialises");
+
+        assert_eq!(
+            submit(
+                account(SOMEONE_ELSE, bytes, [0xFE; 32]),
+                no_price_account(),
+                clock(),
+                NOT_A_PAYLOAD,
+            ),
+            Err(SubmitError::FeedNotOurs)
+        );
+
+        // An unregistered account is the same refusal rather than one of its
+        // own: it carries the default owner, which is why there is no separate
+        // "not initialised" cause.
+        assert_eq!(
+            submit(
+                account(DEFAULT, Vec::new(), [0xFE; 32]),
+                no_price_account(),
+                clock(),
+                NOT_A_PAYLOAD,
+            ),
+            Err(SubmitError::FeedNotOurs)
+        );
+    }
+
+    #[test]
+    fn a_paused_feed_refuses_before_a_payload_is_decoded() {
+        // The payload is not a payload, so a run that decodes first answers
+        // `Malformed` -- which is what pins the order rather than the refusal.
+        let mut stored = registered();
+        stored.paused = true;
+
+        assert_eq!(
+            submit(
+                feed_account(&stored),
+                no_price_account(),
+                clock(),
+                NOT_A_PAYLOAD,
+            ),
+            Err(SubmitError::FeedPaused),
+            "a paused feed should not pay to find out it is paused"
+        );
+    }
+
+    #[test]
+    fn a_non_default_price_account_with_a_default_owner_is_refused() {
+        // The state that is neither a create nor a valid update. The account is
+        // not default, so LEZ refuses the data write; the owner is default, so
+        // deciding the claim on ownership alone would call it a create and hand
+        // the chain a post-state it rejects. Refused here, where the error says
+        // why.
+        let squatted = account(DEFAULT, vec![1, 2, 3], [0xAC; 32]);
+
+        assert_eq!(
+            submit(
+                feed_account(&registered()),
+                squatted,
+                clock(),
+                NOT_A_PAYLOAD
+            ),
+            Err(SubmitError::PriceAccountNotOurs)
+        );
+    }
+
+    #[test]
+    fn a_price_account_another_program_owns_is_refused() {
+        let theirs = account(SOMEONE_ELSE, vec![1, 2, 3], [0xAC; 32]);
+
+        assert_eq!(
+            submit(feed_account(&registered()), theirs, clock(), NOT_A_PAYLOAD),
+            Err(SubmitError::PriceAccountNotOurs)
+        );
+    }
+
+    #[test]
+    fn a_feed_this_program_owns_whose_data_is_not_a_feed_reports_it_as_such() {
+        assert_eq!(
+            submit(
+                account(OURS, vec![0xFF; 4], [0xFE; 32]),
+                no_price_account(),
+                clock(),
+                NOT_A_PAYLOAD,
+            ),
+            Err(SubmitError::FeedUndecodable)
+        );
+    }
+
+    #[test]
+    fn a_price_account_this_program_owns_whose_data_is_not_a_price_reports_it_as_such() {
+        assert_eq!(
+            submit(
+                feed_account(&registered()),
+                account(OURS, vec![0xFF; 4], [0xAC; 32]),
+                clock(),
+                NOT_A_PAYLOAD,
+            ),
+            Err(SubmitError::PriceAccountUndecodable)
+        );
+    }
+
+    #[test]
+    fn bytes_that_are_not_a_payload_are_reported_as_malformed() {
+        // Also the only check that the decoder's failure is wrapped the right
+        // way round rather than reaching a caller as something else.
+        assert_eq!(
+            submit(
+                feed_account(&registered()),
+                no_price_account(),
+                clock(),
+                NOT_A_PAYLOAD,
+            ),
+            Err(SubmitError::Verify(VerifyError::Malformed(
+                DecodeError::MissingMarker
+            )))
+        );
+    }
+
+    /// Every cause a caller can reach, one representative per leaf.
+    ///
+    /// Enumerated by hand rather than derived, which is the point: the
+    /// exhaustive `match` in `code` makes a new variant a compile error, and
+    /// this list makes it a test failure until somebody decides its number.
+    fn reachable_causes() -> Vec<SubmitError> {
+        let clock = [
+            TimeError::Missing,
+            TimeError::WrongAccount,
+            TimeError::Undecodable,
+            TimeError::Unavailable,
+        ];
+        let config = [
+            ConfigError::NoSigners,
+            ConfigError::ThresholdZero,
+            ConfigError::ThresholdExceedsSigners {
+                threshold: 2,
+                signers: 1,
+            },
+            ConfigError::TooManySigners {
+                signers: 33,
+                max: 32,
+            },
+            ConfigError::DuplicateSigner,
+            ConfigError::ZeroSignerAddress,
+            ConfigError::FeedIdTooLong { len: 33 },
+            ConfigError::ZeroFeedId,
+            ConfigError::DecimalsOutOfRange {
+                decimals: 40,
+                max: 38,
+            },
+            ConfigError::MaxAgeZero,
+            ConfigError::MaxAgeTooLarge {
+                max_age_ms: u64::MAX,
+                max: 900_000,
+            },
+        ];
+        let decode = [
+            DecodeError::MissingMarker,
+            DecodeError::Truncated,
+            DecodeError::LengthOutOfRange,
+            DecodeError::NumberOverflow,
+            DecodeError::TooLong { len: 1, max: 0 },
+            DecodeError::NoDataPackages,
+            DecodeError::NoDataPoints,
+            DecodeError::ZeroWidthValue,
+            DecodeError::TrailingBytes(3),
+        ];
+        let backend = [
+            BackendError::InvalidRecoveryId,
+            BackendError::InvalidSignature,
+            BackendError::RecoveryFailed,
+        ];
+        let verify = [
+            VerifyError::UnauthorisedSigner,
+            VerifyError::ThresholdNotMet {
+                met: 1,
+                required: 2,
+            },
+            VerifyError::TimestampMismatch {
+                expected: 1,
+                found: 2,
+            },
+            VerifyError::TooManyPackages { max: 32 },
+            VerifyError::StalePackage,
+            VerifyError::FuturePackage,
+            VerifyError::AssetMismatch,
+            VerifyError::ValueOutOfRange,
+            VerifyError::ScalingOutOfRange,
+        ];
+        let publish = [
+            PublishError::AssetMismatch,
+            PublishError::SourceMismatch,
+            PublishError::NotNewer {
+                stored: 2,
+                offered: 1,
+            },
+        ];
+
+        let mut causes = vec![
+            SubmitError::FeedNotOurs,
+            SubmitError::FeedUndecodable,
+            SubmitError::FeedPaused,
+            SubmitError::PriceAccountNotOurs,
+            SubmitError::PriceAccountUndecodable,
+        ];
+        causes.extend(clock.into_iter().map(SubmitError::Clock));
+        causes.extend(config.into_iter().map(SubmitError::Config));
+        causes.extend(
+            decode
+                .into_iter()
+                .map(|err| SubmitError::Verify(VerifyError::Malformed(err))),
+        );
+        causes.extend(
+            backend
+                .into_iter()
+                .map(|err| SubmitError::Verify(VerifyError::InvalidSignature(err))),
+        );
+        causes.extend(verify.into_iter().map(SubmitError::Verify));
+        causes.extend(publish.into_iter().map(SubmitError::Publish));
+        causes
+    }
+
+    #[test]
+    fn no_two_semantic_causes_share_an_error_code() {
+        // ADR 23's assertion, one layer out: a caller that cannot tell two
+        // failures apart cannot act on either. Semantic causes rather than enum
+        // values -- see the two exclusions below.
+        let causes = reachable_causes();
+        for (i, left) in causes.iter().enumerate() {
+            for right in &causes[i + 1..] {
+                assert_ne!(
+                    left.code(),
+                    right.code(),
+                    "{left:?} and {right:?} answer with the same code"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_cause_reached_twice_keeps_one_code() {
+        // `NoClock` and `InvalidConfig` are unreachable through this path: the
+        // clock is settled before the feed is read and the configuration before
+        // the payload is decoded. If they became reachable they would answer
+        // with the same codes as the direct causes, which is intended rather
+        // than a clash -- these numbers name where a failure came from.
+        assert_eq!(
+            SubmitError::Verify(VerifyError::NoClock(TimeError::WrongAccount)).code(),
+            SubmitError::Clock(TimeError::WrongAccount).code()
+        );
+        assert_eq!(
+            SubmitError::Verify(VerifyError::InvalidConfig(ConfigError::ThresholdZero)).code(),
+            SubmitError::Config(ConfigError::ThresholdZero).code()
+        );
+    }
+
+    #[test]
+    fn the_code_a_caller_sees_is_the_frameworks_offset_one() {
+        // What reaches a relayer is `SpelError::error_code`, not `code`. The
+        // offset belongs to the framework and this is where it is pinned, so a
+        // caller reading 6605 can look 605 up.
+        for cause in reachable_causes() {
+            let spel: SpelError = cause.into();
+            assert_eq!(spel.error_code(), 6000 + cause.code());
+        }
+    }
+}
