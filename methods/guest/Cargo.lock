@@ -9,6 +9,7 @@ dependencies = [
  "borsh",
  "kanon-idl",
  "serde",
+ "spel-framework",
  "spel-framework-macros",
  "verifier-core",
 ]

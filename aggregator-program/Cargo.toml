@@ -24,13 +24,18 @@ kanon-idl.workspace = true
 # `#[account_type]`, which marks the state types the IDL generator publishes,
 # and the derives the instruction enum and account state need on the wire.
 spel-framework-macros.workspace = true
+# For the IDL generator binary: the macro expands to a `main` that refers to the
+# framework by name. Without its `host` feature, which would pull in a LEZ node.
+spel-framework.workspace = true
 borsh = { workspace = true, features = ["derive"] }
 serde = { workspace = true }
 
-# For the IDL generator example: the macro expands to a `main` that serialises
-# the surface it parsed out of the guest source.
+# A binary rather than an example, so `tests/idl.rs` can reach it through
+# `CARGO_BIN_EXE_generate-idl` and assert the committed artefact is current. An
+# example is not addressable that way, which would leave the check to CI alone.
+[[bin]]
+name = "generate-idl"
+path = "src/bin/generate-idl.rs"
+
 [dev-dependencies]
 serde_json = "1"
-# The generated `main` refers to the framework by name. Host side only, and
-# without its `host` feature, which would pull in a LEZ node.
-spel-framework.workspace = true

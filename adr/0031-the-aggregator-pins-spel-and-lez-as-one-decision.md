@@ -52,11 +52,13 @@ a trade-off.
 
 ## Consequences
 
-- **The framework is split across three manifests, by what each needs.**
-  `aggregator-program` takes `spel-framework-macros` only, because `#[account_type]` is a
-  no-op the IDL generator reads and the instruction enum needs no runtime. The guest takes
-  the full `spel-framework`. The IDL generator takes it as a dev-dependency, because the
-  macro expands to code that names it.
+- **`aggregator-program` depends on the framework, for the IDL generator rather than for
+  the program.** `#[account_type]` is a no-op the generator reads and the instruction enum
+  needs no runtime, so the macro crate alone would do; `generate_idl!` expands to a `main`
+  that names `spel_framework`, and a binary cannot take that as a dev-dependency. The cost
+  is small because the framework's own dependency, LEZ, is in the graph already through
+  `kanon-idl`. A binary and not an example, so `tests/idl.rs` can reach it through
+  `CARGO_BIN_EXE_generate-idl` and keep the check in `cargo test`.
 - **`spel-framework` forces LEZ's `host` feature on, and the guest builds anyway.**
   Its `nssa_core` dependency carries `features = ["host"]` unconditionally, which pulls
   `chacha20`, `ml-kem` and `crypto-common` — and through them `getrandom`, which has no
@@ -64,10 +66,13 @@ a trade-off.
   does and as CI does, the guest compiles: the toolchain supplies the backend. Built by
   invoking `cargo` against the target by hand it does not, which is a property of the
   build path rather than of the code, and worth knowing before diagnosing it as breakage.
-- **The licence gate needed no new entry.** `spel-framework` declares no `license` field,
-  like the two SPEL crates already clarified in `deny.toml`, but `cargo deny` resolves it
-  from the LICENSE files at the checkout root. The two existing clarifications stay
-  because they are still what covers the crates that have none.
+- **The licence gate needed a third clarification, and a root-only run does not show it.**
+  `spel-framework` declares no `license` field, like the two SPEL crates `deny.toml`
+  already clarifies. Against the root workspace `cargo deny` resolves it from the
+  checkout's licence files and passes; against the guest lockfile it reports
+  `unlicensed` and fails. Running the gate over every workspace, as `licenses.yml` does,
+  is what makes the difference visible, and it is why a green local run of the root
+  workspace is not evidence the gate passes.
 - **`scaffold.toml`'s SPEL pin is now load-bearing rather than decorative.** ADR 28 has
   `lgs-build.yml` checking the scaffold pins against `Cargo.lock`; the SPEL line is now one
   the aggregator depends on, so a pin bump that misses either place fails there.
