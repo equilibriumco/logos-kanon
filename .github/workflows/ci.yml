@@ -241,6 +241,27 @@ jobs:
       - name: cargo test -p traceability
         run: cargo test --locked -p traceability
 
+  idl:
+    name: aggregator IDL is current
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The IDL is generated from the guest program's own source, so the
+      # committed artefact is a cache of that surface rather than a second
+      # definition of it. Regenerating and diffing is what stops the two
+      # disagreeing: a changed instruction with a stale artefact would ship an
+      # SDK and a CLI built against a surface the program no longer has.
+      - name: regenerate and compare
+        run: |
+          cargo run --locked -p aggregator-program --example generate_idl \
+            > /tmp/aggregator-idl.json
+          diff -u kanon-idl/aggregator-idl.json /tmp/aggregator-idl.json
+
   sequencer:
     name: standalone LEZ sequencer
     runs-on: ubuntu-24.04

@@ -19,6 +19,17 @@ verifier-core = { path = "../../verifier-core", version = "0.1.0" }
 # if it stops being.
 kanon-idl = { path = "../../kanon-idl", version = "0.1.0" }
 
+# The aggregator program. The instruction set and the feed state live there so
+# the host can test them; this binary is the SPEL entry point that dispatches on
+# them, because the guest is what LEZ executes.
+aggregator-program = { path = "../../aggregator-program", version = "0.1.0" }
+
+# SPEL, and LEZ's account types under the name SPEL refers to them by. Both
+# spelled with the tag the root workspace uses: `nssa_core` *is* `lee_core`, and
+# cargo only unifies them when the source and tag match character for character.
+spel-framework = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" }
+nssa_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", package = "lee_core" }
+
 # The mixed configuration: accelerate recovery, leave keccak256 in software.
 # This is the cost baseline's recommendation rather than a default, and the reasoning is
 # keeping close to the decision (`m0/cost-baseline/README.md`, *Recommendations*

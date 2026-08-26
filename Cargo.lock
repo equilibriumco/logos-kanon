@@ -6,7 +6,12 @@ version = 4
 name = "aggregator-program"
 version = "0.1.0"
 dependencies = [
+ "borsh",
  "kanon-idl",
+ "serde",
+ "serde_json",
+ "spel-framework",
+ "spel-framework-macros",
  "verifier-core",
 ]
 
@@ -2358,7 +2363,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3150,6 +3155,18 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+
+[[package]]
+name = "spel-framework"
+version = "0.6.0"
+source = "git+https://github.com/logos-co/spel.git?tag=v0.6.0#0cb7e0980535af619482cf1c823f4d394b3ebd61"
+dependencies = [
+ "borsh",
+ "lee_core",
+ "serde_json",
+ "spel-framework-core",
+ "spel-framework-macros",
+]
 
 [[package]]
 name = "spel-framework-core"

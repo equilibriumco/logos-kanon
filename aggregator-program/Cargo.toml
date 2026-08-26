@@ -1,8 +1,11 @@
-# The push-mode aggregator. Not implemented yet.
+# The push-mode aggregator: the instruction set, the feed state it keeps, and
+# the logic each instruction runs.
 #
-# It becomes a SPEL program: the SPEL dependency lands later, together
-# with the IDL surface, rather than being pinned here before anything uses it.
-# Which SPEL revision is a live question, recorded in `m0/versions.md`.
+# The SPEL program itself is the guest binary under `methods/guest/src/bin/`,
+# because that is what LEZ executes. This crate is what the guest delegates to,
+# which is what makes the logic testable on the host, and it follows the shape
+# Logos's own programs use: an instruction enum and `#[account_type]` state here,
+# the `#[lez_program]` module there.
 [package]
 name = "aggregator-program"
 description = "Push-mode LEZ aggregator: verifies RedStone packages and writes the canonical price account"
@@ -17,3 +20,17 @@ verifier-core.workspace = true
 # `AccountId` its identifier fields are made of. Through `kanon-idl` rather than
 # from upstream directly, so "re-exported, not forked" has one place it happens.
 kanon-idl.workspace = true
+
+# `#[account_type]`, which marks the state types the IDL generator publishes,
+# and the derives the instruction enum and account state need on the wire.
+spel-framework-macros.workspace = true
+borsh = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
+
+# For the IDL generator example: the macro expands to a `main` that serialises
+# the surface it parsed out of the guest source.
+[dev-dependencies]
+serde_json = "1"
+# The generated `main` refers to the framework by name. Host side only, and
+# without its `host` feature, which would pull in a LEZ node.
+spel-framework.workspace = true
