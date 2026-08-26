@@ -102,7 +102,14 @@ mod kanon_aggregator {
         threshold: u8,
     ) -> SpelResult {
         let _ = (
-            feed, admin, feed_id, base_asset, quote_asset, decimals, max_age_ms, signers,
+            feed,
+            admin,
+            feed_id,
+            base_asset,
+            quote_asset,
+            decimals,
+            max_age_ms,
+            signers,
             threshold,
         );
         Err(not_yet("register_feed", "M2-07"))

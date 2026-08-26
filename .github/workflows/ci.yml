@@ -62,14 +62,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Both workspaces. `m0/` resolves separately so that its pins can be frozen
-      # to the toolchain its published figures were measured on, which means
-      # neither `--workspace` reaches it. Lint is not a figure, though, so it
-      # applies to m0's host code just as much as to the product's.
+      # Every workspace, and the guest is the one that had been missing. `m0/`
+      # resolves separately so that its pins can be frozen to the toolchain its
+      # published figures were measured on, and each guest resolves separately so
+      # it can cross-compile; neither is reached by `--workspace`. Lint is not a
+      # figure, though, so it applies to all of them. Adding the guest here found
+      # existing drift, which is what an ungated workspace accumulates.
       - name: cargo fmt
         run: |
           cargo fmt --all -- --check
           cargo fmt --all --manifest-path m0/Cargo.toml -- --check
+          cargo fmt --all --manifest-path methods/guest/Cargo.toml -- --check
 
       # RISC0_SKIP_BUILD is required, not a shortcut. `cargo clippy` exports a
       # rustc wrapper that the guest build inherits, and clippy-driver has no
@@ -175,6 +178,17 @@ jobs:
       # turns out not to be guest-compatible fails.
       - name: build the product guest
         run: cargo build --release --locked -p kanon-methods
+
+      # The macro-generated half of the SPEL program: the dispatcher, the account
+      # constraints and the validator SPEL derives from them. None of it exists
+      # before expansion, so no test in the product workspace can reach it, and
+      # the build above proves only that it compiles. The guest is an excluded
+      # workspace, which is why this needs its own manifest rather than a
+      # `--workspace` run.
+      - name: test the guest's generated code
+        run: |
+          cargo test --release --locked \
+            --manifest-path methods/guest/Cargo.toml --bin aggregator
 
   licenses:
     name: cargo deny
