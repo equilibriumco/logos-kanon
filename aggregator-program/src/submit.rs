@@ -376,6 +376,9 @@ mod tests {
     const OURS: ProgramId = [7u32; 8];
     const SOMEONE_ELSE: ProgramId = [9u32; 8];
     const DEFAULT: ProgramId = [0u32; 8];
+    /// The clock account's real owner. Nothing here reads it -- the account id is
+    /// what is checked -- but a clock owned by nobody is not a state LEZ has.
+    const CLOCK_PROGRAM: ProgramId = [88u32; 8];
 
     const NOW_MS: u64 = 1_770_000_000_000;
 
@@ -428,7 +431,7 @@ mod tests {
     fn clock_account(id: [u8; 32], timestamp: u64) -> AccountWithMetadata {
         let mut data = [0u8; 16];
         data[8..].copy_from_slice(&timestamp.to_le_bytes());
-        account(DEFAULT, data.to_vec(), id)
+        account(CLOCK_PROGRAM, data.to_vec(), id)
     }
 
     fn clock() -> AccountWithMetadata {
