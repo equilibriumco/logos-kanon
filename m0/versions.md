@@ -120,12 +120,19 @@ startup and never opens its RPC port without it, so **Bedrock is not optional** 
 that is a startup dependency and nothing more. It is *not* a `maxAge` time source. That
 answer is the clock program, ADR 13.
 
-**Still open, and now M2's question rather than M1's:** SPEL stays pinned to v0.1.2
-regardless of which LEZ the sequencer runs, so the aggregator program in M2-01 is where
-the version question actually bites. A v0.2.x-aligned SPEL exists (scaffold
-`3d639076` vendors v0.2.0-rc3, against the default `73fc462e`'s v0.1.2), which is the
-first thing to try. Deploying a program through `lgs` may need the same treatment as
-`test-node` did.
+**Closed by M2-01, and it was never a choice.** This section used to read that SPEL sat
+at v0.1.2 and that M2-01 would have to pick between that and a v0.2.x-aligned scaffold.
+Both figures were stale. SPEL is at v0.6.0, `scaffold.toml` pins `0cb7e098`, and
+`Cargo.lock` already resolved `spel-framework-core` at that same commit before the
+aggregator existed -- `twap_oracle_core` uses the framework's `#[account_type]` macro, so
+the canonical price account brought SPEL into the graph.
+
+What remains is a constraint rather than a question. `spel-framework` names its own LEZ
+tag (`v0.2.0`, as `nssa_core`, which is `lee_core` renamed), so a SPEL bump and a LEZ bump
+are one decision: cargo unifies the two spellings only when source and tag match exactly,
+and `AccountId` is defined there. [ADR
+31](../adr/0031-the-aggregator-pins-spel-and-lez-as-one-decision.md) records it.
+Deploying a program through `lgs` is still untried, and is M4's rather than M2-01's.
 
 ## Open: the LGPL-3.0 dependency in LEZ's host graph
 

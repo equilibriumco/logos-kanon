@@ -46,6 +46,7 @@ they describe the design being proposed for acceptance.
 | [28](0028-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
 | [29](0029-a-staleness-window-has-an-upper-bound-and-it-is-enforced.md) | A staleness window has an upper bound, and it is enforced | accepted |
 | [30](0030-the-signer-set-stays-per-feed.md) | The signer set stays per feed, though every feed currently shares one | accepted |
+| [31](0031-the-aggregator-pins-spel-and-lez-as-one-decision.md) | The aggregator pins SPEL and LEZ as one decision, spelled as the graph resolves them | accepted |
 
 ## How they fit together
 
@@ -147,6 +148,10 @@ questions outstanding with Logos*:
 - **Is LEZ's transitive LGPL-3.0 dependency an accepted position for the estate**
   (ADR 1) — and, separately, three Logos crates ship without a `license` field, which a
   one-line manifest change would fix for every downstream consumer (ADR 9).
+
+One that `m0/versions.md` carried as M2's is now closed rather than answered: which SPEL
+revision the aggregator builds against had already been decided by the dependency graph,
+because the canonical price account brings SPEL in through its own macro (ADR 31).
 
 One is settled locally, with a measurement in M2: which clock account an oracle should
 read (ADR 13). The CI ceilings that stop the accelerator configuration regressing
