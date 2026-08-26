@@ -25,7 +25,7 @@ Not tracked here: the Servicing obligations from the proposal's *Servicing
 and SLA* section. They are contractual rather than code and have no test to
 name; monthly operating reports are their evidence.
 
-Right now: **1 verified, 13 partial, 22 planned**, of 36 requirements.
+Right now: **1 verified, 14 partial, 21 planned**, of 36 requirements.
 
 ## Functionality
 
@@ -37,7 +37,7 @@ Right now: **1 verified, 13 partial, 22 planned**, of 36 requirements.
 | **F4** | partial | `M1‑08`, `M1‑12`, `M1‑14`, `M1‑15`, `M1‑16`, `M1‑17`, `M1‑21` | `verifier‑core`, `kanon‑clock` | `the_signed_span_covers_the_points_and_the_three_trailing_fields`, `truncation_at_every_length_is_rejected_rather_than_panicking`, `trailing_bytes_before_the_packages_are_rejected`, `a_feed_registered_against_another_pair_is_refused`, `a_pair_matching_only_on_the_base_is_still_a_mismatch`, `a_negative_value_rejects_even_when_quorum_is_present`, `every_repeated_point_for_the_requested_feed_is_validated`, `one_stale_package_rejects_even_when_quorum_is_present`, `one_future_package_rejects_even_when_quorum_is_present`, `signers_that_all_reported_something_unusable_are_named_as_the_fault`, `the_staleness_boundary_admits_a_package_exactly_max_age_old`, `a_package_dated_beyond_clock_skew_is_a_different_failure_from_a_stale_one`, `a_replayed_payload_is_refused_however_well_signed_it_is`, `any_other_account_is_refused_before_its_contents_are_read`, `every_published_signature_recovers_to_the_signer_redstone_named`, `an_envelope_redstone_published_decodes_and_every_package_in_it_recovers`, `a_published_payload_verifies_end_to_end`, `a_wrong_signed_span_recovers_to_nobody` |
 | **F5** | partial | `M1‑09`, `M1‑16`, `M1‑17`, `M1‑20`, `M1‑26`, `M2‑02` | `aggregator‑program/src/publish.rs`, `verifier‑core`, `kanon‑idl` | `the_verified_price_carries_both_scales`, `an_agreed_price_too_large_for_the_account_is_reported_not_wrapped`, `a_fresh_account_takes_every_field_from_the_feed_and_its_configuration`, `the_source_id_is_the_bytes_a_consumer_can_write_down`, `rebuilding_the_adaptor_does_not_change_what_it_writes`, `a_newer_observation_moves_the_price_and_the_timestamp_and_nothing_else`, `an_account_for_another_pair_is_refused_rather_than_repointed`, `an_account_another_source_populated_is_not_this_adaptors_to_write`, `an_older_observation_inside_the_window_cannot_move_the_price_backwards`, `the_same_observation_twice_is_not_an_update`, `the_timestamp_is_the_round_every_counted_package_shares`, `the_vendored_idl_declares_the_fields_we_expect`, `field_order_is_part_of_the_standard`, `the_reexported_type_is_constructible_with_the_documented_shape`, `the_account_encodes_to_the_bytes_a_foreign_decoder_expects`, `the_encoded_length_is_what_the_idl_field_types_add_up_to`, `a_round_trip_through_the_on_chain_container_recovers_every_field`, `a_seventh_field_would_be_a_break_rather_than_something_consumers_ignore` |
 | **F6** | planned | `M1‑07`, `M2‑06`, `M2‑07`, `M2‑08`, `M2‑09`, `M2‑10` | `aggregator‑program` | — |
-| **F7** | planned | `M2‑00`, `M2‑11`, `M2‑12` | `aggregator‑program` | — |
+| **F7** | partial | `M2‑00`, `M2‑11`, `M2‑12` | `aggregator‑program` | `FEEDS.md` |
 | **F8** | planned | `M4‑01`, `M4‑02`, `M4‑03`, `M4‑04`, `M4‑05`, `M4‑06`, `M4‑07`, `M4‑08` | `kanon‑relayer` | — |
 | **F9** | planned | `M3‑01`, `M3‑02`, `M3‑03`, `M3‑04` | `pull‑lib` | — |
 
@@ -67,7 +67,7 @@ Gated on RFP-001 having merged an admin-authority interface; M1-07 establishes w
 
 **F7** — BTC/USD, ETH/USD, SOL/USD, XMR/USD and ZEC/USD registered on LEZ devnet/testnet as part of the deliverable
 
-M2-00 first confirms RedStone publishes XMR/USD and ZEC/USD on the chosen data service and captures the authorised signer sets; the two privacy-asset feeds are the ones that cannot be assumed.
+M2-00 confirmed all five feeds are published on `redstone-primary-prod`, including the two privacy assets that could not be assumed, and `FEEDS.md` records what it found. One roster of five signers covers all five feeds, every address recovered from the package signature rather than read off the gateway's label, because the roster is what a feed is registered with. The set is the observed one and not an authorised one -- a signer authorised upstream but silent through the sample would not appear -- so M2-08 remains the path for what the observation missed. Rounds land every ten seconds nominally, but three of twenty-six intervals in the sample were double that and an earlier sample held one of thirty seconds, so what a staleness floor has to clear is the worst gap and five minutes only bounds it from below. ADR 30 records why the identical rosters are still stored per feed. The row stays partial until M2-11 registers the five on devnet and M2-12 exercises them end to end.
 
 **F8** — Relayer as a Logos module with a Logos Core headless daemon: configurable data service and feeds, heartbeat and deviation triggers, parallel gateways with first-success, retry and back-off, structured logging, wallet-balance monitoring, clean shutdown
 
