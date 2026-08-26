@@ -45,6 +45,7 @@ they describe the design being proposed for acceptance.
 | [27](0027-one-price-comes-from-one-round-and-a-mixed-payload-is-refused.md) | One price comes from one round, and a payload that mixes rounds is refused | accepted |
 | [28](0028-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
 | [29](0029-a-staleness-window-has-an-upper-bound-and-it-is-enforced.md) | A staleness window has an upper bound, and it is enforced | accepted |
+| [30](0030-the-signer-set-stays-per-feed.md) | The signer set stays per feed, though every feed currently shares one | accepted |
 
 ## How they fit together
 
