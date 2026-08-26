@@ -72,11 +72,23 @@
           "init": false,
           "name": "feed",
           "signer": false,
-          "writable": true
+          "writable": false
         },
         {
           "init": false,
           "name": "price_account",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "feed"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_PRICE_ACCOUNT"
+              }
+            ]
+          },
           "signer": false,
           "writable": true
         },
