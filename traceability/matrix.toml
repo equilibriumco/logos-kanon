@@ -195,11 +195,15 @@ note = "The dry-run has to report the same typed error codes the on-chain pull l
 
 [[row]]
 id = "U4"
-status = "planned"
+status = "partial"
 tasks = ["M2-01", "M4-12"]
-implemented_in = ["kanon-idl"]
-verified_by = []
-note = "Re-exported, not forked: the RFP-019 standard's definition stays RFP-019's."
+implemented_in = ["kanon-idl", "aggregator-program"]
+verified_by = [
+  "test:the_committed_idl_matches_the_guest_source",
+  "test:each_variant_decodes_to_the_instruction_the_idl_names_at_its_index",
+  "test:the_vendored_idl_declares_the_fields_we_expect",
+]
+note = "Two IDLs, and only one of them is this repository's to define. The price account's stays RFP-019's: re-exported, not forked, with `reference/twap_oracle-idl.json` vendored at a named commit so the conformance test can notice the two disagreeing. The adaptor's own is M2-01's, at `kanon-idl/aggregator-idl.json`, and it is generated from the guest program's source rather than written, so it cannot describe a surface the program does not have. Three tests hold it, because the surface is declared twice and SPEL joins the halves positionally: `spel-cli` encodes an instruction's discriminant as its index in the IDL while the guest decodes it as the declaration index of `Instruction`, so two variants of the same shape could be swapped in one place only and a caller's deregistration would arrive as a pause. The parity tests assert the discriminant and the per-variant argument order against `risc0_zkvm::serde`, which is the codec the transaction actually uses. What is left for M4-12 is publishing the artefact as a standalone deliverable and generating the CLI from it."
 
 [[row]]
 id = "U5"

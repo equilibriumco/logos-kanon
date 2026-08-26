@@ -25,7 +25,7 @@ Not tracked here: the Servicing obligations from the proposal's *Servicing
 and SLA* section. They are contractual rather than code and have no test to
 name; monthly operating reports are their evidence.
 
-Right now: **1 verified, 14 partial, 21 planned**, of 36 requirements.
+Right now: **1 verified, 15 partial, 20 planned**, of 36 requirements.
 
 ## Functionality
 
@@ -84,7 +84,7 @@ Equilibrium operates this under the SLA, so its logging, wallet monitoring and s
 | **U1** | planned | `M4‑11` | `kanon‑sdk` | — |
 | **U2** | planned | `M4‑18`, `M4‑19`, `M4‑20`, `M4‑21` | `kanon‑app` | — |
 | **U3** | planned | `M4‑13`, `M4‑14`, `M4‑15`, `M4‑16` | — | — |
-| **U4** | planned | `M2‑01`, `M4‑12` | `kanon‑idl` | — |
+| **U4** | partial | `M2‑01`, `M4‑12` | `kanon‑idl`, `aggregator‑program` | `the_committed_idl_matches_the_guest_source`, `each_variant_decodes_to_the_instruction_the_idl_names_at_its_index`, `the_vendored_idl_declares_the_fields_we_expect` |
 | **U5** | planned | `M4‑17` | — | — |
 | **U6** | partial | `M1‑15`, `M1‑16`, `M1‑17`, `M1‑18`, `M1‑22`, `M3‑04` | `verifier‑core`, `pull‑lib` | `a_decode_failure_and_a_signature_failure_stay_distinguishable`, `the_threshold_failure_carries_what_was_reached_and_what_was_needed`, `a_feed_registered_against_another_pair_is_refused`, `signers_that_all_reported_something_unusable_are_named_as_the_fault`, `one_bad_value_is_reported_before_threshold_is_evaluated`, `the_first_bad_package_in_the_wire_walk_is_reported`, `an_exponent_the_conversion_cannot_divide_by_is_a_configuration_error`, `a_missing_clock_is_not_a_stale_package`, `a_stale_package_and_a_future_one_stay_distinguishable`, `a_signers_stale_package_about_another_feed_does_not_make_this_one_stale`, `a_signers_stale_package_about_this_feed_still_makes_it_stale`, `values_spliced_from_three_rounds_do_not_become_a_price`, `values_from_different_rounds_are_not_made_into_one_price`, `the_timestamp_is_the_round_every_counted_package_shares`, `more_packages_for_this_feed_than_verification_will_pay_for_is_refused`, `package_age_is_checked_before_its_value`, `a_clock_that_cannot_be_read_refuses_rather_than_guesses`, `no_two_failure_modes_answer_with_the_same_variant`, `a_malformed_payload_is_named_as_malformed_and_carries_the_decoder_reason`, `an_envelope_that_is_not_redstones_is_refused_before_any_verification`, `too_few_signers_reports_how_many_arrived_against_how_many_were_needed`, `signers_nobody_configured_are_named_as_the_fault_rather_than_the_count`, `a_pair_that_is_not_the_callers_is_refused_before_a_single_recovery`, `a_payload_older_than_the_window_is_stale_rather_than_short_of_signers`, `a_payload_dated_ahead_of_the_clock_is_its_own_failure_not_a_stale_one`, `zero_and_negative_prices_are_rejected_directly`, `one_signer_supplying_the_feed_twice_counts_once_and_is_short_of_the_threshold`, `a_price_the_accounts_scale_cannot_hold_is_reported_not_wrapped`, `a_clock_that_cannot_be_read_fails_the_verification_rather_than_defaulting`, `an_unusable_configuration_is_refused_before_a_payload_is_ever_seen`, `a_signature_that_recovers_to_nobody_is_reported_directly` |
 | **U7** | planned | `M3‑05`, `M3‑06`, `M3‑07` | `reference‑consumers/aggregator‑read`, `reference‑consumers/pull` | — |
@@ -103,7 +103,7 @@ The dry-run has to report the same typed error codes the on-chain pull library r
 
 **U4** — IDL for the adaptor program and the RFP-019 price-account standard, re-exported rather than forked, via SPEL
 
-Re-exported, not forked: the RFP-019 standard's definition stays RFP-019's.
+Two IDLs, and only one of them is this repository's to define. The price account's stays RFP-019's: re-exported, not forked, with `reference/twap_oracle-idl.json` vendored at a named commit so the conformance test can notice the two disagreeing. The adaptor's own is M2-01's, at `kanon-idl/aggregator-idl.json`, and it is generated from the guest program's source rather than written, so it cannot describe a surface the program does not have. Three tests hold it, because the surface is declared twice and SPEL joins the halves positionally: `spel-cli` encodes an instruction's discriminant as its index in the IDL while the guest decodes it as the declaration index of `Instruction`, so two variants of the same shape could be swapped in one place only and a caller's deregistration would arrive as a pause. The parity tests assert the discriminant and the per-variant argument order against `risc0_zkvm::serde`, which is the codec the transaction actually uses. What is left for M4-12 is publishing the artefact as a standalone deliverable and generating the CLI from it.
 
 **U5** — SPEL enhanced so a new program can hook in pull and push feed modes easily
 
