@@ -242,15 +242,22 @@ impl From<PublishError> for SubmitError {
 ///
 /// `self_program_id` comes from the execution context and never from an account.
 ///
-/// The order of the checks is deliberate, and the claim is narrower than it
-/// looks: every refusal a caller can actually provoke — the clock, the feed's
-/// ownership, the pause flag, the stored configuration, the price account's state
-/// and the payload's framing — happens before the first signature recovery. The
-/// two identifier checks inside [`publish`] do not, and are left there on
-/// purpose: with the price account derived from the feed and writable only by
-/// this program, an account holding another pair or another source is a state
-/// nothing can currently produce, so moving them earlier would buy cycles on a
-/// path no caller can reach.
+/// The order of the checks is deliberate, and the claim is narrow: every
+/// rejection decidable from the accounts, the stored configuration or the
+/// payload's framing happens before the first signature recovery — the clock, the
+/// feed's ownership, the pause flag, the configuration itself, the price
+/// account's state, and the envelope.
+///
+/// The rest cannot be, and are not. An invalid signature and an unmet threshold
+/// are answers verification exists to produce, and a replayed payload reaches
+/// `NotNewer` only after it: that check compares against a timestamp
+/// verification has to derive first. A caller can provoke all three.
+///
+/// The two identifier checks inside [`publish`] are the ones that could have
+/// moved earlier and deliberately did not. With the price account derived from
+/// the feed and writable only by this program, an account holding another pair or
+/// another source is a state nothing can currently produce, so hoisting them
+/// would buy cycles on a path no caller can reach.
 ///
 /// None of this makes an oversized payload free. LEZ has read and deserialised
 /// the instruction data before this function is entered, which is the residual

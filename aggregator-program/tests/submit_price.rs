@@ -165,16 +165,20 @@ fn written(post_states: &[AccountPostState]) -> OraclePriceAccount {
 }
 
 #[test]
-fn the_price_accounts_address_is_the_documented_one() {
-    // The formula `Instruction::SubmitPrice`'s doc comment publishes, checked
-    // against a constant. Nothing else here could catch a documented derivation
-    // that has drifted from the real one, because every other test derives both
-    // sides from the same code.
+fn the_derived_price_account_address_has_not_moved() {
+    // Every other test here derives both sides from the same code, so a changed
+    // formula would go unnoticed as long as it changed consistently. This one
+    // compares against a number, which is the only way a change becomes visible.
+    //
+    // What it cannot do is check the prose. `Instruction::SubmitPrice` documents
+    // this formula for clients to reproduce, and a doc comment that drifts from
+    // the code still passes here -- nothing mechanical reads it. The constant is
+    // what a reviewer checks the prose against.
     assert_eq!(
         price_account_id().into_value(),
         PRICE_ACCOUNT_FOR_THE_FEED,
-        "the derivation moved: either the documented formula is now wrong, or \
-         this constant is"
+        "the derivation moved: update this constant, and the formula \
+         `Instruction::SubmitPrice` publishes, together"
     );
 }
 
