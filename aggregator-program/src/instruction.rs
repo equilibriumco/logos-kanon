@@ -11,12 +11,15 @@
 //! gate lives behind that boundary rather than being spelled into each
 //! instruction.
 
-use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use verifier_core::SignerAddress;
 
 /// What the aggregator can be asked to do.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+/// Serde and not Borsh, because serde is what the wire uses: `read_lee_inputs`
+/// deserialises this with `risc0_zkvm::serde`, and the variant's position in this
+/// declaration is the discriminant a caller has to encode. Deriving Borsh as well
+/// would offer a second encoding that no one reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Instruction {
     /// Verify a signed RedStone payload and publish the price it carries.
     ///

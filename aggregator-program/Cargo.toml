@@ -38,4 +38,14 @@ name = "generate-idl"
 path = "src/bin/generate-idl.rs"
 
 [dev-dependencies]
+# Deliberately without `preserve_order`. It would give the parity test field
+# order for free, and it would also change what the IDL generator emits: the
+# feature is unified across the graph, so `serde_json::Map` becomes an `IndexMap`
+# for `spel-framework`'s use of it too, and the committed artefact's key order
+# would then depend on whether the command that produced it built dev
+# dependencies. The test reads declaration order off the serialised text instead.
 serde_json = "1"
+# The codec the wire actually uses. `read_lee_inputs` deserialises the
+# instruction with `risc0_zkvm::serde`, so encoding with it here is what makes
+# the parity test a statement about the transaction rather than about Rust.
+risc0-zkvm.workspace = true

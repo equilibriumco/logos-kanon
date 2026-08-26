@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "kanon-idl",
+ "risc0-zkvm",
  "serde",
  "serde_json",
  "spel-framework",

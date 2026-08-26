@@ -52,6 +52,18 @@ a trade-off.
 
 ## Consequences
 
+- **The instruction set is declared twice, and SPEL joins the halves positionally.**
+  `spel-cli` encodes an instruction's discriminant as its index in `idl.instructions`,
+  which comes from the guest function order; the guest decodes it as the declaration index
+  of `Instruction`. Nothing in the framework ties the two, so two variants of the same
+  shape could be swapped in one place only, and a caller's `deregister_feed` would arrive
+  at `pause_feed`. `tests/instruction_parity.rs` asserts both the discriminant and the
+  per-variant argument order against `risc0_zkvm::serde`, which is the codec
+  `read_lee_inputs` uses, so the assertion is about the transaction rather than about a
+  restatement of it.
+- **`Instruction` derives serde and not Borsh**, because serde is what the wire uses. A
+  Borsh derive would offer a second encoding of the same type that nothing reads, and whose
+  discriminant is a `u8` where the wire's is a `u32` word.
 - **`aggregator-program` depends on the framework, for the IDL generator rather than for
   the program.** `#[account_type]` is a no-op the generator reads and the instruction enum
   needs no runtime, so the macro crate alone would do; `generate_idl!` expands to a `main`
