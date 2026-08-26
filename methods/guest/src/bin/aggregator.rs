@@ -177,3 +177,79 @@ mod kanon_aggregator {
 /// naming it here is what makes a change to that type a build failure in the
 /// guest rather than a surprise at deployment.
 const _: Option<FeedAccount> = None;
+
+/// The checks SPEL generates from the account attributes above.
+///
+/// They run in the dispatcher, before any handler, so nothing in
+/// `aggregator-program` can reach them and no host test in that crate can
+/// either. They exist only after macro expansion, which is why these two tests
+/// live in the guest workspace — and why `cargo test --workspace` never runs
+/// them.
+#[cfg(test)]
+mod tests {
+    use aggregator_program::submit::PRICE_ACCOUNT_SEED;
+    use nssa_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
+    use nssa_core::program::{InstructionData, ProgramId};
+    use spel_framework::error::SpelError;
+    use spel_framework::pda::{compute_pda, seed_from_str};
+
+    const OURS: ProgramId = [7u32; 8];
+    const FEED_ACCOUNT_ID: [u8; 32] = [0xFE; 32];
+
+    fn account(id: [u8; 32]) -> AccountWithMetadata {
+        AccountWithMetadata {
+            account: Account {
+                program_owner: OURS,
+                balance: 0,
+                data: Data::default(),
+                nonce: Nonce(0),
+            },
+            is_authorized: false,
+            account_id: AccountId::new(id),
+        }
+    }
+
+    /// The address the constraint should accept, derived the way a client would.
+    fn price_account_id() -> AccountId {
+        compute_pda(
+            &OURS,
+            &[&FEED_ACCOUNT_ID, &seed_from_str(PRICE_ACCOUNT_SEED)],
+        )
+    }
+
+    fn validate(price_account_id: AccountId) -> Result<(), SpelError> {
+        let accounts = [
+            account(FEED_ACCOUNT_ID),
+            account(*price_account_id.value()),
+            account(*b"/LEZ/ClockProgramAccount/0000001"),
+        ];
+        let instruction: InstructionData = Vec::new();
+        super::kanon_aggregator::__validate_submit_price(&accounts, &OURS, &instruction)
+    }
+
+    #[test]
+    fn the_declared_accounts_pass_the_generated_validator() {
+        // Also the assertion that this file and `aggregator-program` derive the
+        // same address: the constraint hashes `r#const("KANON_PRICE_ACCOUNT")`
+        // and the test hashes `PRICE_ACCOUNT_SEED`, and only one of the two is a
+        // literal here.
+        validate(price_account_id()).expect("the derived address is the declared one");
+    }
+
+    #[test]
+    fn a_wrong_price_account_pda_is_refused_by_the_generated_validator() {
+        // What stops feed A writing feed B's price account. Every account here
+        // is owned by this program, so ownership alone would admit it.
+        let elsewhere = compute_pda(&OURS, &[&[0xAB; 32], &seed_from_str(PRICE_ACCOUNT_SEED)]);
+        assert!(
+            matches!(validate(elsewhere), Err(SpelError::PdaMismatch { .. })),
+            "an account derived from another feed has to be refused"
+        );
+
+        // And a plain account nobody derived, which is the simpler mistake.
+        assert!(matches!(
+            validate(AccountId::new([0x11; 32])),
+            Err(SpelError::PdaMismatch { .. })
+        ));
+    }
+}
