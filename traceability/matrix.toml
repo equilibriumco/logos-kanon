@@ -35,8 +35,10 @@ verified_by = [
   "test:the_trait_is_object_safe",
   "test:a_signature_round_trips_to_the_signing_key_address",
   "test:keccak256_matches_the_known_digest_of_the_empty_input",
+  "test:a_registered_feed_verifies_against_what_it_stores",
+  "test:the_committed_idl_matches_the_guest_source",
 ]
-note = "Two halves. The verification half has landed: the `VerifierBackend` trait (M1-10) is the localised-swap structure, and `InProgramBackend` (M1-11) implements it with the same k256 and tiny-keccak M0 measured. The guest patches in the *mixed* accelerator configuration -- recovery accelerated, keccak in software -- which is M0's recommendation rather than a default. The aggregator half is M2."
+note = "Two halves. The verification half landed in M1: the `VerifierBackend` trait (M1-10) is the localised-swap structure, and `InProgramBackend` (M1-11) implements it with the same k256 and tiny-keccak M0 measured. The guest patches in the *mixed* accelerator configuration -- recovery accelerated, keccak in software -- which is M0's recommendation rather than a default. The aggregator half is now standing but empty. M2-01 settled the surface: the instruction set and the feed state in `aggregator-program`, so the host can test them, and the `#[lez_program]` module in `methods/guest/src/bin/aggregator.rs`, because the guest is what LEZ executes -- the shape Logos's own programs use. The guest cross-compiles to riscv32 with SPEL and LEZ linked, which is what proves the surface is buildable rather than only well-formed, and ADR 31 records why the SPEL pin cannot move independently of the LEZ one. The IDL is generated from the guest's own source and `the_committed_idl_matches_the_guest_source` regenerates and compares, so a changed instruction cannot ship an SDK built against a surface the program no longer has. It is a test rather than a CI step because that is what makes the generator addressable from one -- `CARGO_BIN_EXE_generate-idl` reaches a binary and not an example -- and it puts the check on the same `cargo test` a contributor already runs. Every instruction body refuses with the task that fills it, so what is left is M2-02 for `submit_price` and M2-06 to M2-10 for the admin-gated rest."
 
 [[row]]
 id = "F2"
@@ -193,11 +195,15 @@ note = "The dry-run has to report the same typed error codes the on-chain pull l
 
 [[row]]
 id = "U4"
-status = "planned"
+status = "partial"
 tasks = ["M2-01", "M4-12"]
-implemented_in = ["kanon-idl"]
-verified_by = []
-note = "Re-exported, not forked: the RFP-019 standard's definition stays RFP-019's."
+implemented_in = ["kanon-idl", "aggregator-program"]
+verified_by = [
+  "test:the_committed_idl_matches_the_guest_source",
+  "test:each_variant_decodes_to_the_instruction_the_idl_names_at_its_index",
+  "test:the_vendored_idl_declares_the_fields_we_expect",
+]
+note = "Two IDLs, and only one of them is this repository's to define. The price account's stays RFP-019's: re-exported, not forked, with `reference/twap_oracle-idl.json` vendored at a named commit so the conformance test can notice the two disagreeing. The adaptor's own is M2-01's, at `kanon-idl/aggregator-idl.json`, and it is generated from the guest program's source rather than written, so it cannot describe a surface the program does not have. Three tests hold it, because the surface is declared twice and SPEL joins the halves positionally: `spel-cli` encodes an instruction's discriminant as its index in the IDL while the guest decodes it as the declaration index of `Instruction`, so two variants of the same shape could be swapped in one place only and a caller's deregistration would arrive as a pause. The parity tests assert the discriminant and the per-variant argument order against `risc0_zkvm::serde`, which is the codec the transaction actually uses. What is left for M4-12 is publishing the artefact as a standalone deliverable and generating the CLI from it."
 
 [[row]]
 id = "U5"

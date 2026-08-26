@@ -146,6 +146,16 @@ name = "spel-framework-macros"
 expression = "MIT OR Apache-2.0"
 license-files = []
 
+[[licenses.clarify]]
+# The same repository, and the crate the aggregator depends on directly. Worth
+# noting that this one is only reported against the guest lockfile: in the root
+# workspace `cargo deny` resolves it from the checkout's licence files, so a
+# root-only run passes and the gate still fails. Running it over every
+# workspace, as `licenses.yml` does, is what catches that.
+name = "spel-framework"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
 [bans]
 # Duplicate versions are noisy in a graph this size and say nothing about
 # licensing, which is what this gate is for.

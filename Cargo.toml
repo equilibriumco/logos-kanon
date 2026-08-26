@@ -82,6 +82,18 @@ clock_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.g
 # way upstream does and checks that the declared layout reads it. Pinned to what
 # the LEZ graph already resolves, so it adds no new version to the tree.
 borsh = "1.8.0"
+
+# SPEL, for the aggregator. Only the macro crate here: `#[account_type]` is a
+# no-op the IDL generator reads, and the instruction enum needs nothing else, so
+# the core crate carries no framework runtime. The guest takes the full
+# framework, where the program actually runs.
+#
+# Spelled by the same tag the graph already resolves through `twap_oracle_core`,
+# which is what keeps one SPEL in the tree: a second revision would give the
+# guest two `AccountId` types, the hazard the `lee_core` note above describes.
+spel-framework-macros = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" }
+spel-framework = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" }
+serde = { version = "1", features = ["derive"] }
 twap_oracle_core = { git = "https://github.com/logos-blockchain/lez-programs", rev = "4363f13912e0ba8627e70575161862ab337c1169" }
 
 # Exact, not a caret range, and deliberately 3.0.5 where `m0/Cargo.toml` says 3.0.6.

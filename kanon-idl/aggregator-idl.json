@@ -1,0 +1,258 @@
+{
+  "accounts": [
+    {
+      "name": "FeedAccount",
+      "type": {
+        "fields": [
+          {
+            "name": "feed_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "base_asset",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "quote_asset",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "max_age_ms",
+            "type": "u64"
+          },
+          {
+            "name": "signers",
+            "type": {
+              "vec": {
+                "array": [
+                  "u8",
+                  20
+                ]
+              }
+            }
+          },
+          {
+            "name": "threshold",
+            "type": "u8"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "kind": "struct"
+      }
+    }
+  ],
+  "errors": [],
+  "instruction_type": "aggregator_program::Instruction",
+  "instructions": [
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "price_account",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "clock",
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "payload",
+          "type": {
+            "vec": "u8"
+          }
+        }
+      ],
+      "name": "submit_price"
+    },
+    {
+      "accounts": [
+        {
+          "init": true,
+          "name": "feed",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "vec": "u8"
+          }
+        },
+        {
+          "name": "base_asset",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "quote_asset",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "decimals",
+          "type": "u8"
+        },
+        {
+          "name": "max_age_ms",
+          "type": "u64"
+        },
+        {
+          "name": "signers",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          }
+        },
+        {
+          "name": "threshold",
+          "type": "u8"
+        }
+      ],
+      "name": "register_feed"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "signers",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          }
+        },
+        {
+          "name": "threshold",
+          "type": "u8"
+        }
+      ],
+      "name": "update_signer_set"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "deregister_feed"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "pause_feed"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "unpause_feed"
+    }
+  ],
+  "name": "kanon_aggregator",
+  "types": [],
+  "version": "0.1.0"
+}
