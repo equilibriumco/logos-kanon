@@ -28,8 +28,13 @@ pub enum Instruction {
     /// payload that fails any check publishes nothing.
     ///
     /// Expected accounts:
-    /// 1. `feed` — the registered feed's account, written only by this program.
-    /// 2. `price_account` — the canonical RFP-019 price account for the pair.
+    /// 1. `feed` — the registered feed's account, read and never written, and
+    ///    required to be owned by this program: an account a caller owns would
+    ///    decode as a feed with a signer set of the caller's choosing.
+    /// 2. `price_account` — the canonical RFP-019 price account, one per feed at
+    ///    `for_public_pda(program, sha256(feed_account_id || "KANON_PRICE_ACCOUNT"))`.
+    ///    A caller derives it rather than being told it, and the first
+    ///    submission creates it (ADR 32).
     /// 3. `clock` — the LEZ clock program's every-block account, which is where
     ///    staleness gets its "now" and the only place it may come from
     ///    (ADR 13).
