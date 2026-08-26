@@ -34,10 +34,16 @@ is the security parameter a feed is registered with, and read off the gateway's 
 it would be a claim by whoever answered the request — a wrong roster either locks a feed
 out or lets a stranger in.
 
-That the five feeds share one roster is a measurement rather than a guarantee, so the feed
-config stays per feed as `verifier-core` already has it. [ADR
+The five feeds are not a special case. Sweeping every feed the data service serves — 878
+of them — found exactly one roster, these same five addresses, with no exception anywhere.
+So sharing a roster is a property of `redstone-primary-prod` and not something F7's five
+happen to have in common.
+
+That is still an observation and not a guarantee, and the feed config stays per feed as
+`verifier-core` already has it. [ADR
 30](adr/0030-the-signer-set-stays-per-feed.md) records why the identical sets are stored
-five times instead of collapsed into one.
+per feed instead of collapsed into one, and the reason is not doubt about the
+measurement.
 
 ### What this does not establish
 
@@ -46,6 +52,13 @@ signers *may*. Nothing here reads a roster endpoint — the set above is the set
 actually produced packages, so a signer authorised upstream but silent through the window
 would not appear in it. Registering these five registers the signers observed to be live,
 and M2-08's `update_signer_set` is the path for whatever the observation missed.
+
+The 878-feed sweep is weaker evidence than the five-feed capture, deliberately. Recovering
+an address from every package the service serves is several thousand recoveries a poll, so
+the sweep reads the address the gateway labels each package with. It is answering a weaker
+question — whether a differing roster exists anywhere — where a gateway with no motive to
+invent one is good enough. The five addresses being registered do not rest on it: those
+are recovered.
 
 The rotation rate is the other half, and it is slow. These are the same five addresses the
 conformance capture recorded on 2026-08-14, twelve days earlier. Against that, the older

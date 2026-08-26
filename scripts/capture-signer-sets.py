@@ -16,6 +16,16 @@ over the reconstructed package, using the same code that builds the conformance
 vectors, and the served label is compared against it. A disagreement is reported
 rather than resolved.
 
+# Why the whole data service is swept, and on weaker evidence
+
+The five feeds F7 names are recovery-verified: every address is recovered from the
+signature. That is too slow to run over every feed the service serves, several thousand
+packages a poll, so the sweep that asks whether any other feed has a different roster
+reads the addresses the gateway labels packages with. It is the weaker source, and it is
+answering the weaker question -- whether a differing roster exists anywhere -- where a
+gateway with no reason to lie is good enough. The five feeds being registered do not rest
+on it.
+
 # Why the interval needs many samples and not two
 
 A round's timestamp is the round's, not the observer's, so the interval between
@@ -56,6 +66,7 @@ def main():
     cap = load_capture_module()
     url = f"{cap.GATEWAY}/data-packages/latest/{cap.DATA_SERVICE}"
 
+    service_rosters = defaultdict(int)
     signers = defaultdict(lambda: defaultdict(int))
     rounds = defaultdict(set)
     intra_round_spread = defaultdict(int)
@@ -74,6 +85,13 @@ def main():
             print(f"poll {polls}: {error}", file=sys.stderr)
             time.sleep(POLL_SECONDS)
             continue
+
+        for feed, packages in served.items():
+            roster = frozenset(
+                (p.get("signerAddress") or "").lower() for p in packages
+            )
+            if roster:
+                service_rosters[roster] += 1
 
         for feed in cap.FEEDS:
             packages = served.get(feed, [])
@@ -130,6 +148,15 @@ def main():
                     "Every signer address was recovered from the package signature and "
                     "compared against the address the gateway served alongside it."
                 ),
+            },
+            "service_wide": {
+                "note": (
+                    "Every feed the data service serves, by the signer address the "
+                    "gateway labels each package with rather than by recovery."
+                ),
+                "distinct_rosters": len(service_rosters),
+                "roster_sizes": sorted({len(r) for r in service_rosters}),
+                "feed_observations": sum(service_rosters.values()),
             },
             "mislabelled_packages": mislabelled,
             "unrecoverable_packages": unrecoverable,

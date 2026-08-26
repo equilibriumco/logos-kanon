@@ -7,8 +7,10 @@
 
 ## Where the answers came from
 
-`scripts/capture-signer-sets.py`, sampling `redstone-primary-prod` for five minutes and
-recovering every signer address from the package signature. `FEEDS.md` carries the figures.
+`scripts/capture-signer-sets.py`, sampling `redstone-primary-prod` for five minutes. The
+five registered feeds have every signer address recovered from the package signature; the
+sweep across all 878 feeds the service serves reads the gateway's own labels, which is
+weaker evidence for the weaker claim it supports. `FEEDS.md` carries the figures.
 
 ## Context
 
@@ -23,11 +25,21 @@ M2-07's `register_feed` has to take a set it could instead read from one place. 
 global roster would be smaller, cheaper to update — one admin transaction instead of five
 — and, today, exactly as correct.
 
-It is correct today because of an accident of how one data service is configured, and the
-capture is not evidence that it will stay that way. Signers subscribe to feeds, and
-nothing in the wire format ties one feed's set to another's. A new feed can arrive with a
-different set, and a feed can be moved between sets without anything in a payload
-changing shape. The measurement covers five feeds on one data service over five minutes.
+The simplification is not tempting because of a small sample. Sweeping every feed
+`redstone-primary-prod` serves, 878 of them, found one roster and no exception anywhere,
+so a global set matches everything measurable about this data service rather than just
+about F7's five feeds.
+
+What the sweep does not reach is anything outside this data service. Nothing in the wire
+format ties one feed's signer set to another's: signers subscribe to feeds, a new feed can
+arrive with a different set, and a feed can move between sets without a payload changing
+shape. One data service agreeing with itself today is not a property of the format.
+
+There is a second reason, and it survives whatever RedStone does. A feed's other security
+parameters — its threshold, its `maxAge`, its asset pair — are already per feed in
+`verifier-core`'s config. Moving the signer set alone to a global slot would split one
+feed's security parameters across two places with different update paths, so reading what
+governs a feed would mean reading both and knowing which wins.
 
 The cost of being wrong is not symmetric. Per-feed sets that turn out to be identical
 waste four copies of five addresses and four admin transactions. A global set that turns
@@ -65,10 +77,12 @@ adaptor has no standing to call a defect.
 
 ## Alternatives considered
 
-- **One global signer set for the whole program.** Smaller, and matches everything
-  measured. Rejected because it encodes a property of one data service's current
-  configuration into the account layout, where the repair for being wrong is a migration
-  rather than a transaction.
+- **One global signer set for the whole program.** Smaller, and it matches every feed the
+  data service serves rather than only the five being registered. Rejected because it
+  encodes a property of one data service's current configuration into the account layout,
+  where the repair for being wrong is a migration rather than a transaction, and because
+  it would leave a feed's signer set governed from somewhere other than the rest of the
+  feed's parameters.
 - **Per-feed sets, with a test asserting they are identical.** Keeps the layout and adds
   a tripwire for divergence. Rejected because the tripwire fires on ordinary upstream
   behaviour: RedStone rotating one feed's signers is not a failure, and a red build that
