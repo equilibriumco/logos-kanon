@@ -63,11 +63,17 @@ lower edge of the window, and a package then looks younger. Block lag pushes
 toward `FuturePackage` and away from `StalePackage`, so it belongs to the forward
 tolerance and not to this floor.
 
-**No term of the three has a measurement today.** Submission latency needs a
-relayer, and the relayer arrives in M4. M2-19 exercises the push path end to end,
-and it is the first point where a submission figure becomes visible. M4-04 and
-M4-05 set the cadence and the retry policy of the relayer. The publish interval for
-each feed is RedStone's, and M2-00 is the task that captures it.
+**One term of the three has a measurement, and it is the smallest.** M2-00 sampled
+`redstone-primary-prod` and `FEEDS.md` records what it found: rounds land every
+10,000 ms nominally, and the worst gap it observed was 20,000 ms, one round skipped.
+The cadence is not the number this floor needs. The worst gap is, and a five-minute
+sample bounds that only from below -- a longer sample finds a longer gap, so the
+figure has to be read as a lower bound rather than a ceiling.
+
+The other two have no measurement. Submission latency needs a relayer, and the
+relayer arrives in M4. M2-19 exercises the push path end to end, and it is the first
+point where a submission figure becomes visible. M4-04 and M4-05 set the cadence and
+the retry policy of the relayer.
 
 Clock skew has no measurement and no bound either. The three-minute forward
 tolerance is RedStone's own default for the other side of the window. It records
@@ -77,8 +83,10 @@ with these signers picked it. Treating it as a bound repeats the mistake this
 document corrects about the fifteen minutes.
 
 > **Provisional recommendation: a minimum of 120,000 ms (two minutes) for push.**
-> This figure is a starting point and not a derivation. No term of the three has a
-> measurement, so the measurements can move it in either direction. A smaller value
+> This figure is a starting point and not a derivation. One of its three terms is
+> measured now and two are not, so the measurements can still move it in either
+> direction. What is measured is also the small one: 20,000 ms of the 120,000 leaves
+> about 100 seconds for submission latency and clock skew together. A smaller value
 > risks refusing honest updates. A larger value widens the window that section
 > "Replay of stale packages" describes.
 
