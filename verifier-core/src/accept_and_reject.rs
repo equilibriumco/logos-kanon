@@ -737,6 +737,28 @@ fn a_threshold_of_five_needs_three_compromised_signers() {
 }
 
 #[test]
+fn a_threshold_of_seven_needs_four_and_the_pattern_does_not_stop_at_five() {
+    // The last row of the table in `MANIPULATION-ANALYSIS.md`, and the reason it
+    // is there: the ratio does not improve as the threshold grows. Seven slots
+    // need four, the same half-plus-one as five needing three, so the step from
+    // five to seven buys proportionally nothing. Pinned rather than left to the
+    // formula, because the formula is what the table is asserting.
+    let keys = keys(9);
+    let set = addresses(&keys);
+    let config = config(&set, 7);
+
+    let three = verify(&assembled_by_an_attacker(&keys, 3, 7), &config).expect("verifies");
+    assert_eq!(
+        three.value,
+        value(100),
+        "three of seven cannot reach the middle"
+    );
+
+    let four = verify(&assembled_by_an_attacker(&keys, 4, 7), &config).expect("verifies");
+    assert_eq!(four.value, value(200), "four of seven decide it");
+}
+
+#[test]
 fn signers_below_the_bar_still_choose_which_honest_report_wins() {
     // The other tests here give every honest signer the same value, so an
     // attacker under the majority bar looks powerless. It is not: a median picks
