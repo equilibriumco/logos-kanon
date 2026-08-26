@@ -15,6 +15,11 @@ apart. Regenerate with:
 python3 scripts/capture-signer-sets.py --minutes 5
 ```
 
+It reports a feed as published only for rounds it actually saw, and exits non-zero
+if any of the five produced none or if no request was answered. A capture that
+cannot reach the gateway therefore fails rather than reporting five feeds it never
+observed.
+
 ## The signer set
 
 The same five addresses sign all five feeds:

@@ -62,6 +62,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--minutes", type=float, default=5.0)
     args = parser.parse_args()
+    if args.minutes <= 0:
+        parser.error("--minutes has to be positive: a window of zero observes nothing")
 
     cap = load_capture_module()
     url = f"{cap.GATEWAY}/data-packages/latest/{cap.DATA_SERVICE}"
@@ -72,8 +74,8 @@ def main():
     intra_round_spread = defaultdict(int)
     mislabelled = []
     unrecoverable = []
-    absent = set()
     polls = 0
+    answered = 0
     started = time.monotonic()
 
     while time.monotonic() - started < args.minutes * 60:
@@ -85,6 +87,7 @@ def main():
             print(f"poll {polls}: {error}", file=sys.stderr)
             time.sleep(POLL_SECONDS)
             continue
+        answered += 1
 
         for feed, packages in served.items():
             roster = frozenset(
@@ -96,7 +99,6 @@ def main():
         for feed in cap.FEEDS:
             packages = served.get(feed, [])
             if not packages:
-                absent.add(feed)
                 continue
             instants = [p["timestampMilliseconds"] for p in packages]
             rounds[feed].add(max(instants))
@@ -119,7 +121,11 @@ def main():
 
     feeds = {}
     for feed in cap.FEEDS:
-        if feed in absent and feed not in rounds:
+        # Publication is what was observed, not the absence of an observation.
+        # Deriving it the other way round reported every feed as published when
+        # nothing had been seen at all, which is the one output of this script
+        # that must never be produced by accident: it is M2-00's evidence.
+        if not rounds[feed]:
             feeds[feed] = {"published": False}
             continue
         ordered = sorted(rounds[feed])
@@ -143,6 +149,7 @@ def main():
                 "data_service": cap.DATA_SERVICE,
                 "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "polls": polls,
+                "polls_answered": answered,
                 "poll_seconds": POLL_SECONDS,
                 "note": (
                     "Every signer address was recovered from the package signature and "
@@ -167,7 +174,16 @@ def main():
     )
     print()
 
-    if mislabelled or unrecoverable:
+    missing = [feed for feed in cap.FEEDS if not rounds[feed]]
+    if answered == 0:
+        print(
+            f"no poll was answered out of {polls}: nothing here was observed",
+            file=sys.stderr,
+        )
+    elif missing:
+        print(f"served no packages for {', '.join(missing)}", file=sys.stderr)
+
+    if mislabelled or unrecoverable or answered == 0 or missing:
         sys.exit(1)
 
 
