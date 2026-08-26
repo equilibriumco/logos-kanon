@@ -242,10 +242,19 @@ impl From<PublishError> for SubmitError {
 ///
 /// `self_program_id` comes from the execution context and never from an account.
 ///
-/// The order of the checks is deliberate: nothing pays for a signature recovery
-/// that a cheap comparison could have refused. It does not make an oversized
-/// payload free — LEZ has read and deserialised the instruction data before this
-/// function is entered, which is the residual [ADR 26] records.
+/// The order of the checks is deliberate, and the claim is narrower than it
+/// looks: every refusal a caller can actually provoke — the clock, the feed's
+/// ownership, the pause flag, the stored configuration, the price account's state
+/// and the payload's framing — happens before the first signature recovery. The
+/// two identifier checks inside [`publish`] do not, and are left there on
+/// purpose: with the price account derived from the feed and writable only by
+/// this program, an account holding another pair or another source is a state
+/// nothing can currently produce, so moving them earlier would buy cycles on a
+/// path no caller can reach.
+///
+/// None of this makes an oversized payload free. LEZ has read and deserialised
+/// the instruction data before this function is entered, which is the residual
+/// [ADR 26] records.
 ///
 /// # Errors
 ///
@@ -297,11 +306,14 @@ pub fn submit_price(
         )
     };
 
-    // ADR 16 makes the pair the caller's claim checked against the registration.
-    // In push mode the standing claim is what the account already publishes, so
-    // the comparison runs before the recoveries rather than after them. On a
-    // first write there is nothing published yet and the registration is the
-    // only claim there is.
+    // ADR 16 makes the pair the caller's claim checked against the registration,
+    // and in push mode the standing claim is what the account already publishes.
+    // Passing the registration's own pair instead would make `verify_feed`'s
+    // comparison `x != x` -- structurally dead rather than merely unreachable --
+    // so the account's pair is what keeps it a real check, against the day the
+    // account and the feed stop being derived from one another. On a first write
+    // there is nothing published yet and the registration is the only claim
+    // there is.
     let expected = published.as_ref().map_or_else(
         || *config.assets(),
         |account| {

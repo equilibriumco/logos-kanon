@@ -198,8 +198,8 @@ keys or it is not, whoever relays it. Restricting the sender would help only to 
 degree that the relayer assembles payloads from packages it fetched itself and
 refuses packages from anywhere else -- and a relayer that forwards a payload another
 party assembled adds nothing at all. The fetching discipline is where the value is,
-so it is an operational requirement on the relayer (M2-13) rather than a check the
-program can make.
+so it is an operational requirement on the relayer -- M4-02, which fetches the DDL
+over HTTPS, under F8 -- rather than a check the program can make.
 
 No requirement asks for a submitter restriction either: SEC2 governs the signer set,
 not the submitter, and RFP-020 names "a relayer (or any caller)" as who may submit.

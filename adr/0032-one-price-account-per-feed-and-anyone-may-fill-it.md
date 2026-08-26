@@ -54,8 +54,8 @@ checked and every later one writes as owner.
 Authenticity comes from the registered signer set and nowhere else, because a
 sender attests to nothing about the bytes it carries. Restricting it would help
 only to the degree that the relayer assembles payloads from packages it fetched
-itself, which is a discipline for the relayer (M2-13) and not a check the program
-can make. RFP-020 names "a relayer (or any caller)" as who may submit.
+itself, which is a discipline for the relayer -- M4-02 fetches the DDL over HTTPS,
+under F8 -- and not a check the program can make. RFP-020 names "a relayer (or any caller)" as who may submit.
 
 **The pair `verify_feed` is given is the one the account publishes**, and the
 feed's own only on a first write.

@@ -31,9 +31,12 @@ pub enum Instruction {
     /// 1. `feed` — the registered feed's account, read and never written, and
     ///    required to be owned by this program: an account a caller owns would
     ///    decode as a feed with a signer set of the caller's choosing.
-    /// 2. `price_account` — the canonical RFP-019 price account, one per feed at
-    ///    `for_public_pda(program, sha256(feed_account_id || "KANON_PRICE_ACCOUNT"))`.
-    ///    A caller derives it rather than being told it, and the first
+    /// 2. `price_account` — the canonical RFP-019 price account, one per feed, at
+    ///    `for_public_pda(program, sha256(feed_account_id || zero_pad_32("KANON_PRICE_ACCOUNT")))`.
+    ///    The padding is not incidental: SPEL widens every seed to 32 bytes
+    ///    before combining them, so hashing the nineteen bytes of the string
+    ///    derives a different account and the generated validator refuses it. A
+    ///    caller derives this rather than being told it, and the first
     ///    submission creates it (ADR 32).
     /// 3. `clock` — the LEZ clock program's every-block account, which is where
     ///    staleness gets its "now" and the only place it may come from

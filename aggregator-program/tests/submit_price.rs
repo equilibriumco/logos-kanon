@@ -89,6 +89,20 @@ fn feed_account(state: &FeedAccount) -> AccountWithMetadata {
     )
 }
 
+/// The address the derivation produces for `FEED_ACCOUNT_ID` under `OURS`,
+/// written out.
+///
+/// Pinned rather than derived, for the reason `REDSTONE_SOURCE_ID` is pinned: a
+/// client checking its own implementation needs a number it can compare against,
+/// and a test that derives both sides agrees with itself however the formula
+/// moves. It also pins the part that is easy to state wrongly -- SPEL widens
+/// every seed to 32 bytes before combining them, so hashing the nineteen bytes
+/// of the name derives a different account.
+const PRICE_ACCOUNT_FOR_THE_FEED: [u8; 32] = [
+    0x57, 0xA3, 0x74, 0x1A, 0x9E, 0x3D, 0x92, 0xA8, 0xCC, 0x05, 0x0E, 0xF6, 0x0C, 0xB5, 0x8E, 0xE1,
+    0xBF, 0x08, 0x6B, 0xE4, 0xE6, 0xE8, 0xA3, 0x19, 0x2F, 0x61, 0x74, 0x7E, 0x8D, 0xE4, 0xC2, 0xE8,
+];
+
 /// The address the constraint derives, computed the way a client would.
 fn price_account_id() -> AccountId {
     compute_pda(
@@ -148,6 +162,20 @@ fn submit(
 
 fn written(post_states: &[AccountPostState]) -> OraclePriceAccount {
     OraclePriceAccount::try_from(&post_states[1].account().data).expect("a price account")
+}
+
+#[test]
+fn the_price_accounts_address_is_the_documented_one() {
+    // The formula `Instruction::SubmitPrice`'s doc comment publishes, checked
+    // against a constant. Nothing else here could catch a documented derivation
+    // that has drifted from the real one, because every other test derives both
+    // sides from the same code.
+    assert_eq!(
+        price_account_id().into_value(),
+        PRICE_ACCOUNT_FOR_THE_FEED,
+        "the derivation moved: either the documented formula is now wrong, or \
+         this constant is"
+    );
 }
 
 #[test]
