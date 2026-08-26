@@ -243,10 +243,11 @@ impl From<PublishError> for SubmitError {
 /// `self_program_id` comes from the execution context and never from an account.
 ///
 /// The order of the checks is deliberate, and the claim is narrow: every
-/// rejection decidable from the accounts, the stored configuration or the
-/// payload's framing happens before the first signature recovery — the clock, the
-/// feed's ownership, the pause flag, the configuration itself, the price
-/// account's state, and the envelope.
+/// *reachable* rejection decidable from the accounts, the stored configuration or
+/// the payload's framing happens before the first signature recovery — the clock,
+/// the feed's ownership, the pause flag, the configuration itself, the price
+/// account's state, and the envelope. Reachable is load-bearing there, because the
+/// two identifier checks below are account checks that run afterwards.
 ///
 /// The rest cannot be, and are not. An invalid signature and an unmet threshold
 /// are answers verification exists to produce, and a replayed payload reaches
