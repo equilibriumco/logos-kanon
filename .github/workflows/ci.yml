@@ -163,12 +163,19 @@ jobs:
       # assertion, and it is an allow-list rather than a list of crates to
       # refuse: a denylist only catches the reuse someone thought of.
       #
-      # What the list covers is the packages *this repository* puts in the
-      # closure, which is where an aggregator crate can come from and nowhere
-      # else: none of them is published, so none can arrive from a registry.
-      # Third-party packages are `cargo deny`'s job in the `licenses` job below,
-      # and pinning them here would fail on every upstream bump for no reason
-      # this requirement cares about.
+      # What the list covers is every package in the closure that does not come
+      # from a registry: this repository's own, and anything reached by path or
+      # by git. Stopping at this repository's own packages was not enough, and
+      # the hole was the price account itself -- `twap_oracle_core` declares the
+      # canonical one, it is a git dependency, and `deny.toml` already allows
+      # that source, so a direct dependency on it would have been the aggregator
+      # account in `pull-lib` with every gate green.
+      #
+      # Registry packages stay out of scope, and that is a judgement rather than
+      # an oversight: nothing aggregator-side is published, `cargo deny` governs
+      # what may come from a registry at all, and pinning `k256`'s transitive
+      # set would fail on every upstream bump for no reason this requirement
+      # cares about.
       #
       # Three flags carry the rest of it, and the default of each would leave a
       # way past:
@@ -190,12 +197,17 @@ jobs:
       # The consumer is checked too, and it is the half the requirement is
       # actually about: `pull-lib` staying clean is worth nothing if the
       # reference consumer has to register a feed anyway.
-      - name: this repository puts only the verifier and the clock in pull's closure
+      - name: pull's closure is the verifier and the clock, and nothing else of ours
         run: |
+          # A registry package renders as `name v1.2.3`, with nothing in the
+          # third field but a `(*)` dedupe marker or `(proc-macro)`. Anything
+          # from a path or a git revision renders its source there, which is
+          # what picks the non-registry packages out.
           closure() {
             cargo tree --locked --all-features --target all \
                 -p "$1" --edges normal,build --prefix none \
-              | grep -F "($PWD/" | awk '{print $1}' | sort -u
+              | awk '$3 != "" && $3 != "(*)" && $3 != "(proc-macro)" { print $1 }' \
+              | sort -u
           }
 
           diff <(printf '%s\n' kanon-clock pull-lib verifier-core) \

@@ -5,11 +5,12 @@
 # registering a feed against the aggregator, so this crate must never depend on
 # an aggregator crate. CI's `pull-independence` job asserts it on the resolved
 # build graph, under every feature and every target rather than the runner's
-# defaults -- an allow-list of the packages this repository puts in the closure,
-# so a reuse nobody anticipated is caught too. Third-party packages are `cargo
-# deny`'s business, and no aggregator crate can arrive that way because none is
-# published. Dev-dependencies are outside it, which is what leaves the two paths
-# comparable in a test.
+# defaults -- an allow-list of every package in the closure that does not come
+# from a registry, so a reuse nobody anticipated is caught too. It has to reach
+# past this repository's own packages, because `twap_oracle_core` declares the
+# canonical price account and arrives by git. Registry packages are `cargo
+# deny`'s business. Dev-dependencies are outside it, which is what leaves the
+# two paths comparable in a test.
 [package]
 name = "pull-lib"
 description = "Inline RedStone payload verification for public-mode LEZ consumer programs"
