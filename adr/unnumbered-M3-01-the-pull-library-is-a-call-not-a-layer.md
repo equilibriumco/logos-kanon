@@ -1,4 +1,4 @@
-# 33. The pull library is a call, not a layer
+# [M3-01:01]. The pull library is a call, not a layer
 
 - **Status**: accepted
 - **Milestone**: M3 (`M3-01`)

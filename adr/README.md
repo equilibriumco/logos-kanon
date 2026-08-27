@@ -53,7 +53,7 @@ they describe the design being proposed for acceptance.
 | [M2-06:01](unnumbered-M2-06-where-the-admin-authority-comes-from.md) | Where the admin authority comes from, and how it is established | accepted, unnumbered |
 | [M2-16:01](unnumbered-M2-16-where-a-payload-nobody-captured-comes-from.md) | Where a payload nobody captured comes from | accepted, unnumbered, supersedes part of 21 and 23 |
 | [M2-19:01](unnumbered-M2-19-the-end-to-end-tests-resolve-in-their-own-workspace.md) | The end-to-end tests resolve in their own workspace | accepted, unnumbered, extends 7 |
-| [33](0033-the-pull-library-is-a-call-not-a-layer.md) | The pull library is a call, not a layer | accepted |
+| [M3-01:01](unnumbered-M3-01-the-pull-library-is-a-call-not-a-layer.md) | The pull library is a call, not a layer | accepted, unnumbered |
 
 ## How they fit together
 
@@ -152,8 +152,8 @@ ownership is never released, so an address claimed once is claimed for that
 program build's lifetime. That is why the price account is derived from the feed
 and the feed is not derived from the asset pair — one is a binding, the other
 would be a registration that a single wrong exponent could burn.
-ADR 33 is ADR 13 reaching its second caller, and the place where the reason for
-pinning a clock is easiest to see. In push mode the caller is a relayer and the
+[M3-01:01] is ADR 13 reaching its second caller, and the place where the reason
+for pinning a clock is easiest to see. In push mode the caller is a relayer and the
 party protected is a consumer reading the account afterwards. In pull mode they
 are the same program: the consumer supplies the signer set, the threshold and the
 window, and would also supply the clock if the library let it — so the check that
