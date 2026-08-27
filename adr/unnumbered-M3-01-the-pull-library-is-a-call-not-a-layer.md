@@ -32,16 +32,31 @@ U6's parity between the modes holds because both modes return the same enum from
 the same call — M3-04 still asserts it, but it is asserting an identity rather
 than a coincidence.
 
-**The clock is the account, not a parameter.** `verify_price` takes the clock
-account's id and data and builds the reading itself, refusing anything but the
-pinned every-block account. A `TimeSource` parameter is the obvious ergonomic
-choice and it hands every consumer the ability to defeat its own staleness check,
-which is exactly what [ADR 13](0013-staleness-is-measured-against-the-lez-clock-program.md)
-exists to prevent. Pull mode is where that matters most, because here the caller
-is the party the check protects. `kanon-clock` had already said as much — it
-describes itself as the one implementation shared by both modes, "because the
-pinned-account rejection is the whole of the guarantee" — so this is M1's
-decision reaching its second caller rather than a new one.
+**The clock is the account, not a parameter**, and the guarantee is narrower here
+than in push mode. `verify_price` takes the clock account's id and data and builds
+the reading itself, refusing anything but the pinned every-block account, rather
+than accepting a `TimeSource` the consumer supplies.
+
+What that catches is the mistake, and the mistake is likely: the 10- and 50-block
+accounts hold real timestamps, so reaching for the wrong one produces a plausible
+answer rather than an obvious failure
+([ADR 13](0013-staleness-is-measured-against-the-lez-clock-program.md)).
+
+What it cannot catch is fabrication. The id and the data arrive as two independent
+slices, so a consumer passing `CLOCK_ACCOUNT_ID` beside bytes of its own choosing
+is believed. Binding them requires the `AccountWithMetadata` a dispatcher hands a
+program, and that type is in a `std` crate this one cannot depend on — the same
+constraint that makes `kanon-clock` declare the clock's layout rather than import
+it. The push aggregator has no such residual, because there the dispatcher hands
+`submit_price` an account whose id and data are fields of one struct.
+
+That asymmetry is worth stating precisely, because it also settles who the check
+protects. In push mode a relayer supplies the clock and a consumer reading the
+account afterwards bears the risk, so pinning is a boundary against a third party
+and the push path can enforce it. In pull mode the program supplies its own clock,
+so a program that fabricates one is misleading its own users rather than being
+attacked — and the residual is therefore an obligation on the consumer, not a hole
+in this crate. `reference-consumers/pull` is where it is demonstrated (M3-06).
 
 **A payload names no data service, and the signer set is the binding.** RFP-020
 lists `dataServiceId` in the pull configuration, and there is nothing to check it

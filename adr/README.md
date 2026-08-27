@@ -152,15 +152,19 @@ ownership is never released, so an address claimed once is claimed for that
 program build's lifetime. That is why the price account is derived from the feed
 and the feed is not derived from the asset pair — one is a binding, the other
 would be a registration that a single wrong exponent could burn.
-[M3-01:01] is ADR 13 reaching its second caller, and the place where the reason
-for pinning a clock is easiest to see. In push mode the caller is a relayer and the
-party protected is a consumer reading the account afterwards. In pull mode they
-are the same program: the consumer supplies the signer set, the threshold and the
-window, and would also supply the clock if the library let it — so the check that
-looks like distrust of the caller is the caller protecting itself from its own
-convenience. The rest of that ADR is about adding nothing: one function over
-`verifier-core`'s own types is what makes ADR 2's "one verification, two modes"
-an identity rather than a claim two crates have to keep agreeing on.
+[M3-01:01] is ADR 13 reaching its second caller, and the place where pinning a
+clock turns out to guarantee less than it does in the first. In push mode a relayer
+supplies the clock and a consumer reading the account afterwards bears the risk, so
+the check is a boundary against a third party — and the dispatcher hands
+`submit_price` an account whose id and data are fields of one struct, which is what
+makes it enforceable. In pull mode the program supplies its own clock as two
+separate slices, so pinning catches the wrong-account mistake, which is the likely
+error, and cannot catch fabrication at all. A program that fabricates one is
+misleading its own users, so what is left is an obligation on the consumer rather
+than a hole in the library, and the reference consumer is where it is shown. The
+rest of that record is about adding nothing: one function over `verifier-core`'s
+own types is what makes ADR 2's "one verification, two modes" an identity rather
+than a claim two crates have to keep agreeing on.
 
 ADR 29 closes a range that only had one end. ADR 18 gave staleness a two-sided window and
 left `maxAge` to the feed; registration refused zero and nothing else. But `freshness`

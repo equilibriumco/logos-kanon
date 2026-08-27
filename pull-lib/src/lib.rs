@@ -27,14 +27,30 @@
 //! from. `FEEDS.md` records which addresses served which service when this was
 //! measured, and ADR 30 records why the set stays per feed.
 //!
-//! # The clock is not a parameter
+//! # The clock is not a parameter, and what that does and does not buy
 //!
 //! [`verify_price`] takes the clock *account* and builds the reading itself,
-//! refusing any account but the pinned every-block one (ADR 13). A `TimeSource`
-//! parameter would have been more flexible and would have handed every consumer
-//! the ability to defeat its own staleness check, which is the one thing pinning
-//! exists to prevent. In pull mode the caller is the consumer, so this is the
-//! mode where that matters most.
+//! refusing any account but the pinned every-block one (ADR 13), rather than
+//! accepting a `TimeSource` the consumer supplies.
+//!
+//! What that establishes: the consumer has named the every-block account and not
+//! one of the other two, which hold real timestamps up to ten and fifty blocks
+//! stale and are therefore the plausible mistake rather than an obvious one.
+//!
+//! **What it cannot establish is that the bytes came from that account.** The id
+//! and the data arrive as two independent slices, so a consumer that passes
+//! `CLOCK_ACCOUNT_ID` alongside sixteen bytes of its own choosing is believed.
+//! Binding the two is only possible where a program meets its dispatcher, in the
+//! `AccountWithMetadata` the chain hands it — and that type belongs to a `std`
+//! crate this one cannot depend on, which is the same constraint that makes
+//! `kanon-clock` declare the layout rather than import it.
+//!
+//! So the residual is real and it is the consumer's: read the clock from the
+//! account the transaction supplied, and do not synthesise it. The push
+//! aggregator has no such residual, because the dispatcher hands it an account
+//! whose id and data are fields of one struct. `reference-consumers/pull` is
+//! where the account-side half is demonstrated (M3-06); nothing in this crate can
+//! check it.
 #![no_std]
 #![forbid(unsafe_code)]
 
@@ -69,6 +85,11 @@ pub use verifier_core::value::Value;
 ///
 /// Returns the agreed price on both scales, how many signers reported, and the
 /// observation's timestamp.
+///
+/// `clock_account_id` and `clock_data` must be the id and the data of the account
+/// the transaction supplied. Nothing here can check that they came from the same
+/// account — see the module header — so passing anything else is a way for a
+/// consumer program to mislead its own users about how fresh a price is.
 ///
 /// # Errors
 ///

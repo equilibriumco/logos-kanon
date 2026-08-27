@@ -1,4 +1,5 @@
-# Public-mode pull verification. Not implemented yet.
+# Public-mode pull verification: one call over `verifier-core`, for a consumer
+# program that verifies a payload inline rather than reading a published price.
 #
 # The RFP requires that a consumer using only pull can integrate without
 # registering a feed against the aggregator, so this crate must never depend on

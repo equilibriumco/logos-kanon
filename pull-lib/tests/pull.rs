@@ -30,6 +30,12 @@ fn pair() -> AssetPair {
 
 /// The clock account's sixteen bytes: `block_id` then `timestamp`, both
 /// little-endian.
+///
+/// Synthesised, which is the point worth naming rather than hiding: these tests
+/// exercise what `verify_price` does with a clock, and not that the clock came
+/// from the account it claims. Nothing in this crate can check the second --
+/// binding an id to its data needs the `AccountWithMetadata` a dispatcher hands
+/// a program -- so that half is the reference consumer's to demonstrate (M3-06).
 fn clock_data(now_ms: u64) -> [u8; 16] {
     let mut data = [0u8; 16];
     data[8..].copy_from_slice(&now_ms.to_le_bytes());
