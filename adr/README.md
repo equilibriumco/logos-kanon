@@ -48,6 +48,7 @@ they describe the design being proposed for acceptance.
 | [30](0030-the-signer-set-stays-per-feed.md) | The signer set stays per feed, though every feed currently shares one | accepted |
 | [31](0031-the-aggregator-pins-spel-and-lez-as-one-decision.md) | The aggregator pins SPEL and LEZ as one decision, spelled as the graph resolves them | accepted |
 | [32](0032-one-price-account-per-feed-and-anyone-may-fill-it.md) | One price account per feed, at a derived address, and anyone may fill it | accepted |
+| [M2-06:01](unnumbered-M2-06-where-the-admin-authority-comes-from.md) | Where the admin authority comes from, and how it is established | accepted, unnumbered |
 
 ## How they fit together
 
