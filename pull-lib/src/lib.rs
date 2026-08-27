@@ -19,9 +19,10 @@
 //! failure is an addition rather than a break: a `use` of an aggregator type to
 //! borrow a field layout compiles, and every test below still passes. So the
 //! guard is on the build graph instead — CI's `pull-independence` job pins the
-//! crates that may appear in this crate's dependency closure, and the reference
-//! consumer's, to an allow-list. `Cargo.toml` records why an allow-list and why
-//! dev-dependencies sit outside it.
+//! packages this repository may put in this crate's dependency closure, and the
+//! reference consumer's, to an allow-list, across every feature and every
+//! target. `Cargo.toml` records why an allow-list, why the list stops at this
+//! repository's own packages, and why dev-dependencies sit outside it.
 //!
 //! # What a consumer supplies
 //!

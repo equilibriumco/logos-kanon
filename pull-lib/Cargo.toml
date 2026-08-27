@@ -4,9 +4,12 @@
 # The RFP requires that a consumer using only pull can integrate without
 # registering a feed against the aggregator, so this crate must never depend on
 # an aggregator crate. CI's `pull-independence` job asserts it on the resolved
-# build graph -- an allow-list of what may appear in the closure, so a reuse
-# nobody anticipated is caught too. Dev-dependencies are outside it, which is
-# what leaves the two paths comparable in a test.
+# build graph, under every feature and every target rather than the runner's
+# defaults -- an allow-list of the packages this repository puts in the closure,
+# so a reuse nobody anticipated is caught too. Third-party packages are `cargo
+# deny`'s business, and no aggregator crate can arrive that way because none is
+# published. Dev-dependencies are outside it, which is what leaves the two paths
+# comparable in a test.
 [package]
 name = "pull-lib"
 description = "Inline RedStone payload verification for public-mode LEZ consumer programs"

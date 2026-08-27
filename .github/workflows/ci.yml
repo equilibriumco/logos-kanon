@@ -163,18 +163,38 @@ jobs:
       # assertion, and it is an allow-list rather than a list of crates to
       # refuse: a denylist only catches the reuse someone thought of.
       #
-      # `--edges normal,build` leaves dev-dependencies out on purpose. A test
-      # comparing the two paths against each other is exactly what M3-04's
-      # error-taxonomy parity asks for, and that reaches nothing a consumer
-      # links.
+      # What the list covers is the packages *this repository* puts in the
+      # closure, which is where an aggregator crate can come from and nowhere
+      # else: none of them is published, so none can arrive from a registry.
+      # Third-party packages are `cargo deny`'s job in the `licenses` job below,
+      # and pinning them here would fail on every upstream bump for no reason
+      # this requirement cares about.
+      #
+      # Three flags carry the rest of it, and the default of each would leave a
+      # way past:
+      #
+      #   --all-features  a dependency can be optional and reached only through
+      #                   a feature nobody enables by default. Measured: an
+      #                   `optional = true` aggregator dependency behind a
+      #                   non-default feature is invisible without this.
+      #   --target all    and a dependency can be declared per target. That one
+      #                   matters here, because this crate's shipping target is
+      #                   a riscv32 guest and not the runner: measured, a
+      #                   `cfg(target_arch = "riscv32")` dependency is invisible
+      #                   to a host-only walk.
+      #   --edges         normal,build leaves dev-dependencies out on purpose. A
+      #                   test comparing the two paths against each other is
+      #                   exactly what M3-04's error-taxonomy parity asks for,
+      #                   and it reaches nothing a consumer links.
       #
       # The consumer is checked too, and it is the half the requirement is
       # actually about: `pull-lib` staying clean is worth nothing if the
       # reference consumer has to register a feed anyway.
-      - name: the pull closure is the verifier and the clock, and nothing else
+      - name: this repository puts only the verifier and the clock in pull's closure
         run: |
           closure() {
-            cargo tree --locked -p "$1" --edges normal,build --prefix none \
+            cargo tree --locked --all-features --target all \
+                -p "$1" --edges normal,build --prefix none \
               | grep -F "($PWD/" | awk '{print $1}' | sort -u
           }
 
