@@ -157,15 +157,24 @@ arrives with fifty sites of churn behind it.
 
 ## Open questions carried by these decisions
 
-Five are with Logos, and the first four are stated in full in `m0/versions.md`,
-*Open: questions outstanding with Logos*:
+Five are with Logos. `m0/versions.md`, *Open: questions outstanding with Logos*,
+states four of them in full and the mapping is not one-to-one, so it is spelled
+out per bullet rather than by a count:
 
 - **Which LEZ pin the estate is standardising on**, and the timeline for scaffold
   PR #246 including whether `test-node` is in scope (ADR 8, ADR 12).
-- **Is `#212` merging, and when** (ADR 14).
+  `m0/versions.md` item 1.
+- **Is `#212` merging, and when** (ADR 14). `m0/versions.md` item 2.
 - **Is LEZ's transitive LGPL-3.0 dependency an accepted position for the estate**
   (ADR 1) — and, separately, three Logos crates ship without a `license` field, which a
-  one-line manifest change would fix for every downstream consumer (ADR 9).
+  one-line manifest change would fix for every downstream consumer (ADR 9). The
+  second half is `m0/versions.md` item 3; the LGPL question is stated in
+  `deny.toml` beside the exceptions it justifies rather than there.
+- **`OraclePriceAccount` is harder to depend on than it needs to be** (ADR 8,
+  ADR 9): the account-type crate pulls risc0 and `uniswap_v3_math` in to carry six
+  Borsh fields, and `=3.0.5` is an exact pin, which is what makes the canonical
+  account awkward for the external adaptors it was written for.
+  `m0/versions.md` item 4 has the detail.
 - **Two things SPEL's IDL generator does that a program author cannot see**
   (ADR 32), found while declaring `submit_price`'s accounts and worth reporting
   rather than working around twice. It parses `#[account(owner = ...)]` and
@@ -173,7 +182,8 @@ Five are with Logos, and the first four are stated in full in `m0/versions.md`,
   every generated client — which is why Kanon's is a Rust check with a test
   recording why. And the documented `const("...")` seed spelling cannot parse,
   because a seed is read as an expression and a bare keyword is not one; only the
-  raw `r#const("...")` and the legacy `literal("...")` work.
+  raw `r#const("...")` and the legacy `literal("...")` work. Not in
+  `m0/versions.md`, which predates it.
 
 One that `m0/versions.md` carried as M2's is now closed rather than answered: which SPEL
 revision the aggregator builds against had already been decided by the dependency graph,

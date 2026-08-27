@@ -61,8 +61,16 @@ under F8 -- and not a check the program can make. RFP-020 names "a relayer (or a
 feed's own only on a first write.
 [ADR 16](0016-the-asset-pair-is-a-registration-claim.md) makes that argument the
 caller's claim against the registration; in push mode the standing claim is what
-consumers are already reading. It moves the refusal of a misrouted write ahead of
-the signature recoveries instead of after them.
+consumers are already reading.
+
+The reason is not the cycles it saves, which is how this first read. A misrouted
+write is already impossible: the price account is derived from the feed, so an
+account belonging to another feed is refused by the constraint before the program
+runs. The reason is that passing the registration's own pair would make the
+comparison `x != x` — structurally dead rather than merely unreachable — where the
+account's pair keeps a real check against the day the two stop being derived from
+one another. It also makes `publish`'s own pair check dead on this path, since by
+then the two values it compares are the two `verify_feed` just found equal.
 
 **The feed's ownership is checked in Rust, not by a constraint.** SPEL's IDL
 generator parses `owner` and discards it, so `#[account(owner = self_program_id)]`
@@ -94,6 +102,9 @@ what clients must derive, check in code what only this program can explain.
   number collapsed them: a malformed envelope and a malleable signature are
   different numbers reached through the same outer variant. A cause reachable two
   ways keeps one number, because these name causes rather than enum positions.
+  Three of the arms are unreachable from a submission and say so in a test: the
+  clock and the configuration are settled before verification, and the write's own
+  pair check compares two values `verify_feed` has already compared.
 - **The guest workspace is now tested and formatted in CI.** The dispatcher and
   the constraints exist only after macro expansion, so the PDA check has no
   reachable test anywhere else. Turning the formatting gate on also found drift

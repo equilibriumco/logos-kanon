@@ -254,11 +254,15 @@ impl From<PublishError> for SubmitError {
 /// `NotNewer` only after it: that check compares against a timestamp
 /// verification has to derive first. A caller can provoke all three.
 ///
-/// The two identifier checks inside [`publish`] are the ones that could have
-/// moved earlier and deliberately did not. With the price account derived from
-/// the feed and writable only by this program, an account holding another pair or
-/// another source is a state nothing can currently produce, so hoisting them
-/// would buy cycles on a path no caller can reach.
+/// The two identifier checks inside [`publish`] are each after the recovery for a
+/// different reason. Its pair check is already done earlier and by someone else:
+/// `expected` is the account's pair on the update path, so `verify_feed`'s first
+/// comparison is between the same two values, and a mismatched account answers
+/// `Verify(AssetMismatch)` before `publish` is entered. By the time it runs, its
+/// own comparison cannot fail. Its source check is genuinely only there, and
+/// stays there: with the price account derived from the feed and writable only by
+/// this program, an account naming another source is a state nothing can produce,
+/// so hoisting it would buy cycles on a path no caller can reach.
 ///
 /// None of this makes an oversized payload free. LEZ has read and deserialised
 /// the instruction data before this function is entered, which is the residual
@@ -620,11 +624,17 @@ mod tests {
         );
     }
 
-    /// Every cause a caller can reach, one representative per leaf.
+    /// Every cause a submission can reach, one representative per leaf.
     ///
     /// Enumerated by hand rather than derived, which is the point: the
     /// exhaustive `match` in `code` makes a new variant a compile error, and
     /// this list makes it a test failure until somebody decides its number.
+    ///
+    /// Three of `code`'s arms are deliberately absent, and each has its reason
+    /// asserted below rather than only stated here: `NoClock` and
+    /// `InvalidConfig` because the clock and the configuration are settled before
+    /// verification runs, and `PublishError::AssetMismatch` because
+    /// `verify_feed` has already compared the same two values.
     fn reachable_causes() -> Vec<SubmitError> {
         let clock = [
             TimeError::Missing,
@@ -691,7 +701,6 @@ mod tests {
             VerifyError::ScalingOutOfRange,
         ];
         let publish = [
-            PublishError::AssetMismatch,
             PublishError::SourceMismatch,
             PublishError::NotNewer {
                 stored: 2,
@@ -738,6 +747,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_writes_pair_check_cannot_answer_because_verification_answered_first() {
+        // `publish` compares the account's pair against the configuration's, and
+        // `submit_price` has already passed the account's pair to `verify_feed`
+        // as the caller's claim -- so the two values `publish` compares are equal
+        // by the time it sees them. Its variant keeps a code, because the
+        // function is public and its own tests reach it; nothing a submission can
+        // do reaches it.
+        assert_eq!(
+            SubmitError::Publish(PublishError::AssetMismatch).code(),
+            701,
+            "the code stays assigned even though a submission cannot produce it"
+        );
+        assert!(
+            !reachable_causes().contains(&SubmitError::Publish(PublishError::AssetMismatch)),
+            "if a submission can now reach it, it belongs in the list"
+        );
     }
 
     #[test]

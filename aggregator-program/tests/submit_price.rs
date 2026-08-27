@@ -496,7 +496,7 @@ fn a_price_account_registered_against_another_pair_is_refused() {
 }
 
 #[test]
-fn an_account_another_source_populated_is_not_this_adaptors_to_write() {
+fn a_submission_to_an_account_another_source_populated_is_refused() {
     let v = vector("BTC");
     let theirs = OraclePriceAccount {
         base_asset: AccountId::new(BASE),
