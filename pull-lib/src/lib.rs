@@ -32,6 +32,22 @@
 //! addresses served which service when this was measured, and ADR 30 records why
 //! the set stays per feed.
 //!
+//! # The expected pair is checked against your own configuration
+//!
+//! [`verify_price`] takes an `expected` pair and compares it against the one in
+//! `config.feed`. Both are the consumer's, so a mismatch means the consumer
+//! contradicted itself and nothing more — no signer attests to which assets a
+//! feed prices, as [`VerifyError::AssetMismatch`] says.
+//!
+//! That is a real difference from push, and not a thinner version of the same
+//! check. There `config` is read from a registered feed account, so the
+//! comparison is a caller's claim against a registration a program made earlier
+//! (ADR 16); here there is no registration to claim against. A consumer that
+//! copies the wrong ids into both its `FeedConfig` and its `expected` gets a
+//! verified price labelled with the wrong pair and no error, which is exactly
+//! what the parameter looks like it prevents. Getting the feed id right is what
+//! prevents it.
+//!
 //! # The clock is not a parameter, and what that does and does not buy
 //!
 //! [`verify_price`] takes the clock *account* and builds the reading itself,
@@ -62,7 +78,7 @@
 use kanon_clock::LezClock;
 use verifier_core::backend::VerifierBackend;
 use verifier_core::decode::Payload;
-use verifier_core::{verify_feed, AssetPair, FeedConfig, VerifiedFeed, VerifyError};
+use verifier_core::verify_feed;
 
 /// The verifier this crate delegates to. Re-exported so a consumer program pins
 /// one verification implementation rather than two.
@@ -74,12 +90,31 @@ pub use verifier_core;
 /// pass, rather than reaching into `kanon-clock` for a constant.
 pub use kanon_clock::CLOCK_ACCOUNT_ID;
 
-/// What a consumer needs to build a configuration and read a result, in one
-/// place.
-pub use verifier_core::backend::{InProgramBackend, SignerAddress};
-pub use verifier_core::error::ConfigError;
-pub use verifier_core::feed::MAX_MAX_AGE_MS;
+/// What a consumer needs to build a configuration, make the call, and act on
+/// what comes back, in one place.
+///
+/// Every type in [`verify_price`]'s signature is here, and so is every error
+/// type reachable by matching on a [`VerifyError`]. `tests/pull.rs` is what
+/// holds this honest: it names no crate but this one, so a re-export missing
+/// from here fails to compile there.
+pub use verifier_core::backend::{BackendError, InProgramBackend, SignerAddress};
+pub use verifier_core::decode::DecodeError;
+pub use verifier_core::error::{ConfigError, VerifyError};
+pub use verifier_core::feed::{AssetPair, FeedConfig, VerifiedFeed, MAX_MAX_AGE_MS, MAX_SIGNERS};
+pub use verifier_core::time::TimeError;
 pub use verifier_core::value::Value;
+
+/// The largest payload that will verify, for a caller to enforce *before* it
+/// builds a transaction.
+///
+/// Re-exported because that enforcement is the consumer's and it cannot happen
+/// here. LEZ reads a program's whole instruction data before its first
+/// instruction and charges for it, so by the time [`verify_price`] could refuse
+/// an oversized payload the transaction has already paid about 113 cycles a byte
+/// for the bytes (ADR 26). `Payload::decode` still refuses one — that keeps the
+/// bound a property of verification rather than of a caller's diligence — but
+/// the refusal that saves anything happens before the transaction exists.
+pub use verifier_core::decode::MAX_PAYLOAD_BYTES;
 
 /// The configuration RFP-020 asks a pull consumer to supply:
 /// `(dataServiceId, feedId, authorised signer set, M-of-N threshold, maxAge)`.
@@ -106,9 +141,11 @@ pub struct PullConfig<'a> {
 /// Verifies a payload against the consumer's own configuration.
 ///
 /// `config` and `expected` are the consumer's: the signer set, the threshold and
-/// the staleness window come from its configuration, and the pair is what it
-/// expects the feed to price. `clock_account_id` and `clock_data` are the LEZ
-/// clock account the consumer program was given.
+/// the staleness window come from its configuration, and so does the pair the
+/// `expected` one is compared against — a mismatch here is a consumer
+/// disagreeing with itself, not a payload caught out. See the module header.
+/// `clock_account_id` and `clock_data` are the LEZ clock account the consumer
+/// program was given.
 ///
 /// `config.data_service_id` is not read. It is part of the configuration RFP-020
 /// describes and it cannot be checked against a payload, so it is the consumer's

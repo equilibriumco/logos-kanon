@@ -10,9 +10,16 @@
 //! `scripts/capture-redstone-vectors.py`, because the gateway serves per-signer
 //! JSON rather than a finished payload.
 
-use pull_lib::{verify_price, InProgramBackend, PullConfig, CLOCK_ACCOUNT_ID};
-use verifier_core::value::median;
-use verifier_core::{AssetPair, FeedConfig, VerifyError};
+// Only this crate, deliberately: a consumer integrating through pull should not
+// have to name `verifier-core`, so this suite is also the check that `pull-lib`
+// re-exports everything reaching it takes. `median` is reached through
+// `pull_lib::verifier_core` rather than re-exported: it recomputes the expected
+// price here, which is a test's business and not part of a consumer's surface.
+use pull_lib::verifier_core::value::median;
+use pull_lib::{
+    verify_price, AssetPair, DecodeError, FeedConfig, InProgramBackend, PullConfig, SignerAddress,
+    VerifyError, CLOCK_ACCOUNT_ID,
+};
 
 #[path = "../../verifier-core/tests/support/vectors.rs"]
 mod vectors;
@@ -28,7 +35,7 @@ const THRESHOLD: u8 = 3;
 const DATA_SERVICE: &str = "redstone-primary-prod";
 
 /// The configuration a consumer holds, built the way RFP-020 describes it.
-fn config<'a>(v: &Vector, signers: &'a [verifier_core::SignerAddress]) -> PullConfig<'a> {
+fn config<'a>(v: &Vector, signers: &'a [SignerAddress]) -> PullConfig<'a> {
     PullConfig {
         data_service_id: DATA_SERVICE,
         feed: FeedConfig::try_new(
@@ -87,7 +94,13 @@ fn a_consumers_own_configuration_verifies_a_captured_payload() {
 
         assert_eq!(verified.price, expected_price(&v), "{}", v.feed_id);
         assert_eq!(verified.timestamp_ms, v.timestamp_ms, "{}", v.feed_id);
-        assert!(verified.signers >= THRESHOLD, "{}", v.feed_id);
+        // Equality, not `>= THRESHOLD`: `VerifiedFeed::signers` is never below
+        // the threshold, so that comparison could not fail. Every captured
+        // signer reported, and asserting it catches a loss the price cannot --
+        // drop the highest and lowest of five packages and the median is
+        // unchanged, because the median of five is also the median of its middle
+        // three.
+        assert_eq!(verified.signers as usize, v.signers.len(), "{}", v.feed_id);
     }
 }
 
@@ -141,12 +154,18 @@ fn a_clock_account_the_consumer_chose_is_refused_before_any_recovery() {
 }
 
 #[test]
-fn a_signer_outside_the_consumers_set_cannot_reach_the_threshold() {
+fn a_package_the_consumer_did_not_authorise_is_refused_outright() {
     // The signer set is the consumer's, and it is also what binds a feed to a
     // data service: nothing on the wire names one.
+    //
+    // "Outright" is the whole of it: an unauthorised package aborts the
+    // verification rather than going uncounted towards the threshold. So this is
+    // not an M-of-N case, and there is no M-of-N case to write here -- the
+    // threshold belongs to `verifier-core`, which takes no argument naming its
+    // caller and so has no per-mode behaviour to reach (ADR 23).
     let v = vectors::named("BTC");
     let mut signers = v.signers.clone();
-    signers[0] = verifier_core::SignerAddress([0xAA; 20]);
+    signers[0] = SignerAddress([0xAA; 20]);
     let config = config(&v, &signers);
 
     assert_eq!(
@@ -220,9 +239,7 @@ fn a_consumer_handed_bytes_that_are_not_a_payload_is_told_so() {
             &clock_data(v.timestamp_ms),
             &InProgramBackend::new(),
         ),
-        Err(VerifyError::Malformed(
-            verifier_core::DecodeError::MissingMarker
-        ))
+        Err(VerifyError::Malformed(DecodeError::MissingMarker))
     );
 }
 
