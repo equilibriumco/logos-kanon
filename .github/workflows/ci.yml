@@ -203,8 +203,13 @@ jobs:
           # third field but a `(*)` dedupe marker or `(proc-macro)`. Anything
           # from a path or a git revision renders its source there, which is
           # what picks the non-registry packages out.
+          #
+          # `--color never` against this workflow's `CARGO_TERM_COLOR: always`:
+          # coloured output wraps the `(*)` marker in escape codes, so the field
+          # stops comparing equal and every deduped registry package reads as a
+          # local one.
           closure() {
-            cargo tree --locked --all-features --target all \
+            cargo tree --locked --color never --all-features --target all \
                 -p "$1" --edges normal,build --prefix none \
               | awk '$3 != "" && $3 != "(*)" && $3 != "(proc-macro)" { print $1 }' \
               | sort -u
