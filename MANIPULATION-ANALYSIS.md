@@ -186,21 +186,23 @@ authorised packages already meet the threshold (SEC1, [ADR 15][adr15]). An attac
 therefore cannot pad a payload with keys of its own making. Every counted key is
 one the admin authority put in the set.
 
-### An open dependency on M2-02
+### Submission is permissionless, so this section holds as written
 
-The authorisation of `submit_price` decides how much of this section an attacker can
-reach. No requirement restricts who can submit a payload, because SEC2 governs the
-signer set and not the submitter. M2-02 makes this decision.
+M2-02 settled it: `submit_price` never consults the transaction's sender
+([ADR 32][adr32]). The keys in the table above are therefore the whole of what an
+attacker needs, and nothing in this section is contingent on a submitter check.
 
-- If submission is **permissionless**, this section holds as written. The keys in
-  the table are enough on their own.
-- If submission is restricted to an authorised relayer, an attacker needs those
-  keys and a way to reach the relayer's payload.
+That is the honest position rather than the permissive one. A sender attests to
+nothing about the bytes it carries: a payload is either signed by enough authorised
+keys or it is not, whoever relays it. Restricting the sender would help only to the
+degree that the relayer assembles payloads from packages it fetched itself and
+refuses packages from anywhere else -- and a relayer that forwards a payload another
+party assembled adds nothing at all. The fetching discipline is where the value is,
+so it is an operational requirement on the relayer -- M4-02, which fetches the DDL
+over HTTPS, under F8 -- rather than a check the program can make.
 
-A relayer restriction is worth less than it looks. It helps only to the degree that
-the relayer builds payloads from packages it fetched itself, and refuses packages
-from anywhere else. A relayer that forwards a payload another party assembled adds
-nothing. M2-02 must decide the sourcing rule together with the authorisation rule.
+No requirement asks for a submitter restriction either: SEC2 governs the signer set,
+not the submitter, and RFP-020 names "a relayer (or any caller)" as who may submit.
 
 ## Replay of stale packages
 
@@ -347,4 +349,5 @@ packet, and not only here.
 [adr18]: adr/0018-timestamp-validity-is-two-sided-and-costs-one-signer.md
 [adr24]: adr/0024-a-duplicate-package-is-skipped.md
 [adr27]: adr/0027-one-price-comes-from-one-round-and-a-mixed-payload-is-refused.md
+[adr32]: adr/0032-one-price-account-per-feed-and-anyone-may-fill-it.md
 [adr29]: adr/0029-a-staleness-window-has-an-upper-bound-and-it-is-enforced.md

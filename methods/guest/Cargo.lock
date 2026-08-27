@@ -7,7 +7,9 @@ name = "aggregator-program"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "kanon-clock",
  "kanon-idl",
+ "lee_core",
  "serde",
  "spel-framework",
  "spel-framework-macros",
@@ -1603,6 +1605,13 @@ dependencies = [
  "once_cell",
  "risc0-bigint2",
  "sha2",
+]
+
+[[package]]
+name = "kanon-clock"
+version = "0.1.0"
+dependencies = [
+ "verifier-core",
 ]
 
 [[package]]

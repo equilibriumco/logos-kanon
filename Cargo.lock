@@ -7,7 +7,10 @@ name = "aggregator-program"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "hex",
+ "kanon-clock",
  "kanon-idl",
+ "lee_core",
  "risc0-zkvm",
  "serde",
  "serde_json",

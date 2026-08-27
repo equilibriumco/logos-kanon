@@ -35,20 +35,48 @@ mod kanon_aggregator {
     /// Verifies a signed RedStone payload and publishes the price it carries.
     ///
     /// Expected accounts:
-    /// 1. `feed` — the registered feed, read for its configuration.
-    /// 2. `price_account` — the canonical RFP-019 account the price is written to.
+    /// 1. `feed` — the registered feed, read for its configuration. Read-only,
+    ///    and this program's: an account a caller owns would decode as a feed
+    ///    with a signer set of the caller's choosing. That check is in
+    ///    `submit_price` rather than an `owner` constraint, because the IDL
+    ///    generator drops `owner` and a constraint no client can see is worse
+    ///    than one that carries its own error.
+    /// 2. `price_account` — the canonical RFP-019 account the price is written
+    ///    to, one per feed at an address derived from the feed's own. Declared
+    ///    rather than checked in code, because the derivation is what a relayer,
+    ///    an SDK and a consumer each have to reproduce, and the constraint is
+    ///    what publishes it to them.
     /// 3. `clock` — the LEZ clock program's every-block account. Read-only, and
     ///    the only admissible source of "now" (ADR 13).
     #[instruction]
     pub fn submit_price(
-        _ctx: ProgramContext,
-        #[account(mut)] feed: AccountWithMetadata,
-        #[account(mut)] price_account: AccountWithMetadata,
+        ctx: ProgramContext,
+        feed: AccountWithMetadata,
+        // `r#const` and not `const`: the seed is parsed as a `syn::Expr`, and a
+        // bare keyword is not one, so the documented spelling fails to parse
+        // before the seed parser sees it. Both SPEL's parsers accept the raw
+        // identifier.
+        #[account(mut, pda = [account("feed"), r#const("KANON_PRICE_ACCOUNT")])]
+        price_account: AccountWithMetadata,
         clock: AccountWithMetadata,
         payload: Vec<u8>,
     ) -> SpelResult {
-        let _ = (feed, price_account, clock, payload);
-        Err(not_yet("submit_price", "M2-02"))
+        let post_states = aggregator_program::submit::submit_price(
+            feed,
+            price_account,
+            clock,
+            &payload,
+            ctx.self_program_id,
+        )?;
+        // Fully qualified deliberately. `#[lez_program]` rewrites a call whose
+        // path is exactly the two segments `SpelOutput::execute` into
+        // `execute_with_claims`, which takes `&[Account]` and a generated claims
+        // helper that has no way to reach the runtime feed seed -- and could not
+        // build a conditional claim in any case, since `price_account` is `mut`
+        // rather than `init`. Three segments are left alone, which is the form
+        // Logos's own programs use wherever the delegated logic already decided
+        // the post-states.
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 
     /// Registers a feed with the parameters later submissions are checked against.
@@ -74,7 +102,14 @@ mod kanon_aggregator {
         threshold: u8,
     ) -> SpelResult {
         let _ = (
-            feed, admin, feed_id, base_asset, quote_asset, decimals, max_age_ms, signers,
+            feed,
+            admin,
+            feed_id,
+            base_asset,
+            quote_asset,
+            decimals,
+            max_age_ms,
+            signers,
             threshold,
         );
         Err(not_yet("register_feed", "M2-07"))
@@ -149,3 +184,79 @@ mod kanon_aggregator {
 /// naming it here is what makes a change to that type a build failure in the
 /// guest rather than a surprise at deployment.
 const _: Option<FeedAccount> = None;
+
+/// The checks SPEL generates from the account attributes above.
+///
+/// They run in the dispatcher, before any handler, so nothing in
+/// `aggregator-program` can reach them and no host test in that crate can
+/// either. They exist only after macro expansion, which is why these two tests
+/// live in the guest workspace — and why `cargo test --workspace` never runs
+/// them.
+#[cfg(test)]
+mod tests {
+    use aggregator_program::submit::PRICE_ACCOUNT_SEED;
+    use nssa_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
+    use nssa_core::program::{InstructionData, ProgramId};
+    use spel_framework::error::SpelError;
+    use spel_framework::pda::{compute_pda, seed_from_str};
+
+    const OURS: ProgramId = [7u32; 8];
+    const FEED_ACCOUNT_ID: [u8; 32] = [0xFE; 32];
+
+    fn account(id: [u8; 32]) -> AccountWithMetadata {
+        AccountWithMetadata {
+            account: Account {
+                program_owner: OURS,
+                balance: 0,
+                data: Data::default(),
+                nonce: Nonce(0),
+            },
+            is_authorized: false,
+            account_id: AccountId::new(id),
+        }
+    }
+
+    /// The address the constraint should accept, derived the way a client would.
+    fn price_account_id() -> AccountId {
+        compute_pda(
+            &OURS,
+            &[&FEED_ACCOUNT_ID, &seed_from_str(PRICE_ACCOUNT_SEED)],
+        )
+    }
+
+    fn validate(price_account_id: AccountId) -> Result<(), SpelError> {
+        let accounts = [
+            account(FEED_ACCOUNT_ID),
+            account(*price_account_id.value()),
+            account(*b"/LEZ/ClockProgramAccount/0000001"),
+        ];
+        let instruction: InstructionData = Vec::new();
+        super::kanon_aggregator::__validate_submit_price(&accounts, &OURS, &instruction)
+    }
+
+    #[test]
+    fn the_declared_accounts_pass_the_generated_validator() {
+        // Also the assertion that this file and `aggregator-program` derive the
+        // same address: the constraint hashes `r#const("KANON_PRICE_ACCOUNT")`
+        // and the test hashes `PRICE_ACCOUNT_SEED`, and only one of the two is a
+        // literal here.
+        validate(price_account_id()).expect("the derived address is the declared one");
+    }
+
+    #[test]
+    fn a_wrong_price_account_pda_is_refused_by_the_generated_validator() {
+        // What stops feed A writing feed B's price account. Every account here
+        // is owned by this program, so ownership alone would admit it.
+        let elsewhere = compute_pda(&OURS, &[&[0xAB; 32], &seed_from_str(PRICE_ACCOUNT_SEED)]);
+        assert!(
+            matches!(validate(elsewhere), Err(SpelError::PdaMismatch { .. })),
+            "an account derived from another feed has to be refused"
+        );
+
+        // And a plain account nobody derived, which is the simpler mistake.
+        assert!(matches!(
+            validate(AccountId::new([0x11; 32])),
+            Err(SpelError::PdaMismatch { .. })
+        ));
+    }
+}
