@@ -58,23 +58,35 @@ so a program that fabricates one is misleading its own users rather than being
 attacked — and the residual is therefore an obligation on the consumer, not a hole
 in this crate. `reference-consumers/pull` is where it is demonstrated (M3-06).
 
-**A payload names no data service, and the signer set is the binding.** RFP-020
-lists `dataServiceId` in the pull configuration, and there is nothing to check it
-against: a data package carries a 32-byte feed id and a value, and the service
-appears nowhere in the signed span. The only variable slot in the envelope is the
-unsigned metadata, which sits outside every signature — so even where a service
-id were present, whoever assembled the payload chose it, and a check against it
-would verify nothing. Both sample envelopes carry zero metadata bytes, including
-the one RedStone serialised themselves
-(`verifier-core/tests/vectors/redstone-sdk-sample-payload.hex`), but the absence
-is the weaker half of the argument; the unsignability is the whole of it.
+**The `dataServiceId` is carried, and it authenticates nothing.** RFP-020's
+Functionality 9 asks for a configured
+`(dataServiceId, feedId, authorised signer set, M-of-N threshold, maxAge)`, so
+`PullConfig` is that tuple: the label, plus the `FeedConfig` that holds the other
+four.
 
-So the configuration carries no such field. What the documentation says instead
-is that those addresses *are* the data service: a package signed by anyone else
-is `UnauthorisedSigner` whatever service it might claim to come from. `FEEDS.md`
+It cannot be verified. A data package carries a 32-byte feed id and a value, and
+the service appears nowhere in the signed span. The only variable slot in the
+envelope is the unsigned metadata, which sits outside every signature — so even
+where a service id were present, whoever assembled the payload chose it. Both
+sample envelopes carry zero metadata bytes, including the one RedStone serialised
+themselves (`verifier-core/tests/vectors/redstone-sdk-sample-payload.hex`), but
+the absence is the weaker half of the argument; the unsignability is the whole of
+it.
+
+So the signer set is the binding, and the label is the consumer's own record of
+which service its roster came from — for its logs and its own error paths. Those
+addresses *are* the data service: a package signed by anyone else is
+`UnauthorisedSigner` whatever service it might claim to come from. `FEEDS.md`
 records which roster served which service when it was measured, and
 [ADR 30](0030-the-signer-set-stays-per-feed.md) records why the set stays per
 feed.
+
+**It stays out of the push path**, which the proposal does not ask for: `register_feed`
+is specified as `(asset id, M-of-N, authorized signer set)` and RFP-020 names the
+service only under Functionality 9, here, and Functionality 8, the relayer's
+configurable fetch (M4-02). Putting it on the aggregator's stored feed as well
+would change the account layout, the committed IDL and registration for something
+nothing was promised.
 
 ## Consequences
 
@@ -100,11 +112,18 @@ feed.
 
 ## Alternatives considered
 
-- **A `PullConfig` of its own, converted to `FeedConfig` internally.** It reads
-  like the tidier public surface and it buys a second type to keep in step, a
-  second set of validation errors, and a real question about which of the two
-  `verifier-core`'s tests are about. The whole value of one verification core is
-  that there is one configuration type in front of it.
+- **A `PullConfig` that validates, and converts to `FeedConfig` internally.**
+  Distinct from the transparent two-field struct that exists: a wrapper that
+  re-checked its contents would buy a second set of errors describing the same
+  faults and a real question about which of the two `verifier-core`'s tests are
+  about. `PullConfig` holds a `FeedConfig` rather than restating it, so there is
+  still one validated configuration type behind both modes.
+- **Leaving `dataServiceId` out and documenting why.** The technical argument
+  stands on its own — the field verifies nothing — and it is not this repository's
+  to make: Functionality 9 is a hard requirement that names the tuple, and an
+  internal record cannot amend an accepted deliverable. Carrying an unread field
+  is the smaller cost, and saying plainly that it is unread is what keeps it from
+  being mistaken later for a check.
 - **Take `&impl TimeSource`.** More flexible, easier to fake in a test, and it
   makes staleness advisory for every consumer that wants it to be. Refused for
   the reason ADR 13 gives.

@@ -10,7 +10,7 @@
 //! `scripts/capture-redstone-vectors.py`, because the gateway serves per-signer
 //! JSON rather than a finished payload.
 
-use pull_lib::{verify_price, InProgramBackend, CLOCK_ACCOUNT_ID};
+use pull_lib::{verify_price, InProgramBackend, PullConfig, CLOCK_ACCOUNT_ID};
 use verifier_core::value::median;
 use verifier_core::{AssetPair, FeedConfig, VerifyError};
 
@@ -23,6 +23,25 @@ use vectors::Vector;
 const DECIMALS: u8 = 8;
 const MAX_AGE_MS: u64 = 60_000;
 const THRESHOLD: u8 = 3;
+
+/// The service the captured roster belongs to, per `FEEDS.md`.
+const DATA_SERVICE: &str = "redstone-primary-prod";
+
+/// The configuration a consumer holds, built the way RFP-020 describes it.
+fn config<'a>(v: &Vector, signers: &'a [verifier_core::SignerAddress]) -> PullConfig<'a> {
+    PullConfig {
+        data_service_id: DATA_SERVICE,
+        feed: FeedConfig::try_new(
+            v.feed_id.as_bytes(),
+            pair(),
+            DECIMALS,
+            MAX_AGE_MS,
+            signers,
+            THRESHOLD,
+        )
+        .expect("a valid consumer configuration"),
+    }
+}
 
 fn pair() -> AssetPair {
     AssetPair::new([0xB7; AssetPair::ID_LEN], [0x05; AssetPair::ID_LEN])
@@ -54,15 +73,7 @@ fn expected_price(v: &Vector) -> u128 {
 fn a_consumers_own_configuration_verifies_a_captured_payload() {
     for v in vectors::all() {
         let signers = v.signers.clone();
-        let config = FeedConfig::try_new(
-            v.feed_id.as_bytes(),
-            pair(),
-            DECIMALS,
-            MAX_AGE_MS,
-            &signers,
-            THRESHOLD,
-        )
-        .expect("a valid consumer configuration");
+        let config = config(&v, &signers);
 
         let verified = verify_price(
             &v.payload,
@@ -87,15 +98,7 @@ fn a_clock_account_the_consumer_chose_is_refused_before_any_recovery() {
     // random id -- and an account of the consumer's own is the attack.
     let v = vectors::named("BTC");
     let signers = v.signers.clone();
-    let config = FeedConfig::try_new(
-        v.feed_id.as_bytes(),
-        pair(),
-        DECIMALS,
-        MAX_AGE_MS,
-        &signers,
-        THRESHOLD,
-    )
-    .expect("valid");
+    let config = config(&v, &signers);
 
     for id in [
         *b"/LEZ/ClockProgramAccount/0000010",
@@ -144,15 +147,7 @@ fn a_signer_outside_the_consumers_set_cannot_reach_the_threshold() {
     let v = vectors::named("BTC");
     let mut signers = v.signers.clone();
     signers[0] = verifier_core::SignerAddress([0xAA; 20]);
-    let config = FeedConfig::try_new(
-        v.feed_id.as_bytes(),
-        pair(),
-        DECIMALS,
-        MAX_AGE_MS,
-        &signers,
-        THRESHOLD,
-    )
-    .expect("valid");
+    let config = config(&v, &signers);
 
     assert_eq!(
         verify_price(
@@ -171,15 +166,7 @@ fn a_signer_outside_the_consumers_set_cannot_reach_the_threshold() {
 fn a_pair_the_consumer_did_not_expect_is_refused_before_any_recovery() {
     let v = vectors::named("BTC");
     let signers = v.signers.clone();
-    let config = FeedConfig::try_new(
-        v.feed_id.as_bytes(),
-        pair(),
-        DECIMALS,
-        MAX_AGE_MS,
-        &signers,
-        THRESHOLD,
-    )
-    .expect("valid");
+    let config = config(&v, &signers);
     let elsewhere = AssetPair::new([0xEE; AssetPair::ID_LEN], [0x05; AssetPair::ID_LEN]);
 
     assert_eq!(
@@ -199,15 +186,7 @@ fn a_pair_the_consumer_did_not_expect_is_refused_before_any_recovery() {
 fn a_clock_past_the_consumers_window_reports_a_stale_package() {
     let v = vectors::named("BTC");
     let signers = v.signers.clone();
-    let config = FeedConfig::try_new(
-        v.feed_id.as_bytes(),
-        pair(),
-        DECIMALS,
-        MAX_AGE_MS,
-        &signers,
-        THRESHOLD,
-    )
-    .expect("valid");
+    let config = config(&v, &signers);
 
     assert_eq!(
         verify_price(
@@ -230,15 +209,7 @@ fn a_consumer_handed_bytes_that_are_not_a_payload_is_told_so() {
     // one name means either can satisfy a row meant for the other.
     let v = vectors::named("BTC");
     let signers = v.signers.clone();
-    let config = FeedConfig::try_new(
-        v.feed_id.as_bytes(),
-        pair(),
-        DECIMALS,
-        MAX_AGE_MS,
-        &signers,
-        THRESHOLD,
-    )
-    .expect("valid");
+    let config = config(&v, &signers);
 
     assert_eq!(
         verify_price(
@@ -253,4 +224,39 @@ fn a_consumer_handed_bytes_that_are_not_a_payload_is_told_so() {
             verifier_core::DecodeError::MissingMarker
         ))
     );
+}
+
+#[test]
+fn the_data_service_label_changes_nothing_about_a_verification() {
+    // What "carried and authenticates nothing" means, asserted rather than
+    // documented: the same payload and the same roster verify to the same price
+    // under any label, including an empty one and a service the roster does not
+    // belong to. If this ever starts failing, something has begun reading a field
+    // no payload attests to.
+    let v = vectors::named("BTC");
+    let signers = v.signers.clone();
+    let mut results = Vec::new();
+
+    for label in ["redstone-primary-prod", "redstone-avalanche-prod", "", "🙂"] {
+        let mut config = config(&v, &signers);
+        config.data_service_id = label;
+
+        results.push(
+            verify_price(
+                &v.payload,
+                &config,
+                &pair(),
+                &CLOCK_ACCOUNT_ID,
+                &clock_data(v.timestamp_ms),
+                &InProgramBackend::new(),
+            )
+            .unwrap_or_else(|err| panic!("{label:?} should verify: {err:?}")),
+        );
+    }
+
+    assert!(
+        results.windows(2).all(|pair| pair[0] == pair[1]),
+        "the label reached the verification"
+    );
+    assert_eq!(results[0].price, expected_price(&v));
 }

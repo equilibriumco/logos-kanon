@@ -1,7 +1,7 @@
 //! Public-mode pull: verify a RedStone payload inline, in a consumer program.
 //!
-//! One function. Given a signed payload, the feed configuration the *consumer*
-//! holds, the pair the consumer expects, and the LEZ clock account, it returns a
+//! One function. Given a signed payload, the configuration the *consumer* holds,
+//! the pair the consumer expects, and the LEZ clock account, it returns a
 //! verified price or a typed reason.
 //!
 //! Nothing here decides anything about a payload. [`verifier_core`] does all of
@@ -17,15 +17,20 @@
 //! payload is a set of signed claims, and which signatures count is the
 //! consumer's decision.
 //!
-//! **A payload names no data service.** RedStone's `dataServiceId` is a key into
-//! their gateway and their signer registry, not a field on the wire: a data
-//! package carries a feed id and a value, and the only variable slot in the
-//! envelope sits outside every signature, where whoever assembles the payload
-//! chooses it. The signer set is therefore the binding — those addresses *are*
-//! the data service, and a package signed by anyone else is
-//! [`VerifyError::UnauthorisedSigner`] whatever service it might claim to come
-//! from. `FEEDS.md` records which addresses served which service when this was
-//! measured, and ADR 30 records why the set stays per feed.
+//! **The `dataServiceId` is carried and authenticates nothing.** RFP-020 puts it
+//! in this configuration and it is there, on [`PullConfig`]. What it cannot do is
+//! verify anything: `dataServiceId` is a key into RedStone's gateway and their
+//! signer registry, not a field on the wire. A data package carries a feed id and
+//! a value, and the only variable slot in the envelope sits outside every
+//! signature, where whoever assembles the payload chooses it.
+//!
+//! The signer set is the binding. Those addresses *are* the data service, and a
+//! package signed by anyone else is [`VerifyError::UnauthorisedSigner`] whatever
+//! service it might claim to come from. So the label is here for the consumer's
+//! own benefit — naming the service its roster came from, in its logs and its
+//! own error paths — and verification never reads it. `FEEDS.md` records which
+//! addresses served which service when this was measured, and ADR 30 records why
+//! the set stays per feed.
 //!
 //! # The clock is not a parameter, and what that does and does not buy
 //!
@@ -76,12 +81,38 @@ pub use verifier_core::error::ConfigError;
 pub use verifier_core::feed::MAX_MAX_AGE_MS;
 pub use verifier_core::value::Value;
 
+/// The configuration RFP-020 asks a pull consumer to supply:
+/// `(dataServiceId, feedId, authorised signer set, M-of-N threshold, maxAge)`.
+///
+/// Four of the five live in [`FeedConfig`], which is `verifier-core`'s own type
+/// and the one the push path uses too, so there is one configuration shape behind
+/// both modes rather than two kept in step. The fifth is the data service label,
+/// which is here and is not verification's business — see the module header.
+///
+/// Transparent on purpose: two public fields, no constructor, no validation of
+/// its own. [`FeedConfig::try_new`] already refuses a configuration that cannot
+/// be used, and a wrapper that re-checked its contents would be a second set of
+/// errors describing the same faults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PullConfig<'a> {
+    /// RedStone's data service, `redstone-primary-prod` for the feeds `FEEDS.md`
+    /// measured. Records which service the signer set below belongs to; nothing
+    /// in verification reads it, because no payload attests to it.
+    pub data_service_id: &'a str,
+    /// The feed, its authorised signers, and how many of them must agree.
+    pub feed: FeedConfig<'a>,
+}
+
 /// Verifies a payload against the consumer's own configuration.
 ///
 /// `config` and `expected` are the consumer's: the signer set, the threshold and
 /// the staleness window come from its configuration, and the pair is what it
 /// expects the feed to price. `clock_account_id` and `clock_data` are the LEZ
 /// clock account the consumer program was given.
+///
+/// `config.data_service_id` is not read. It is part of the configuration RFP-020
+/// describes and it cannot be checked against a payload, so it is the consumer's
+/// own record of which service its roster came from.
 ///
 /// Returns the agreed price on both scales, how many signers reported, and the
 /// observation's timestamp.
@@ -99,7 +130,7 @@ pub use verifier_core::value::Value;
 /// any signature is recovered.
 pub fn verify_price<B: VerifierBackend>(
     payload: &[u8],
-    config: &FeedConfig<'_>,
+    config: &PullConfig<'_>,
     expected: &AssetPair,
     clock_account_id: &[u8; 32],
     clock_data: &[u8],
@@ -110,5 +141,5 @@ pub fn verify_price<B: VerifierBackend>(
     // staleness check.
     let clock = LezClock::from_account(clock_account_id, clock_data)?;
     let payload = Payload::decode(payload)?;
-    verify_feed(&payload, config, expected, backend, &clock)
+    verify_feed(&payload, &config.feed, expected, backend, &clock)
 }
