@@ -13,9 +13,22 @@
 //! reject.
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use lee_core::account::{Account, AccountWithMetadata};
-use lee_core::program::ProgramId;
+use core::fmt;
+use lee_core::account::{Account, AccountWithMetadata, Data};
+use lee_core::program::{AccountPostState, ProgramId};
 use serde::{Deserialize, Serialize};
+use spel_framework::pda::seed_from_str;
+use spel_framework::spel_output::AutoClaim;
+use spel_framework_macros::account_type;
+
+/// The name seed the config account's address is derived from.
+///
+/// Declared as a constraint on the instructions rather than checked in code, for
+/// the reason [ADR 32] gives about the price account: the derivation is what a
+/// client has to reproduce, and the constraint is what publishes it in the IDL.
+///
+/// [ADR 32]: ../../adr/0032-one-price-account-per-feed-and-anyone-may-fill-it.md
+pub const ADMIN_CONFIG_SEED: &str = "KANON_ADMIN_CONFIG";
 
 /// The authority, as the config account stores it.
 ///
@@ -24,6 +37,7 @@ use serde::{Deserialize, Serialize};
 /// deletion rather than a migration. No instruction in this program produces
 /// `None`; it is refused wherever it is read, which is the same answer
 /// upstream's revocation would give.
+#[account_type]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
 pub struct AdminAccount {
     /// The current authority, or `None` for an authority nothing can exercise.
@@ -78,6 +92,54 @@ pub fn authorise(
         None => Err(AdminError::NoAuthority),
         Some(key) if key == *admin.account_id.value() => Ok(()),
         Some(_) => Err(AdminError::Unauthorised),
+    }
+}
+
+impl AdminError {
+    /// A stable number per leaf cause, in the 800 block: this layer's own, the
+    /// way `SubmitError` numbers the layers below it.
+    #[must_use]
+    pub const fn code(&self) -> u32 {
+        match self {
+            Self::ConfigNotOurs => 801,
+            Self::ConfigUndecodable => 802,
+            Self::NotSigned => 803,
+            Self::Unauthorised => 804,
+            Self::NoAuthority => 805,
+            Self::NotGenesisAdmin => 806,
+            Self::AlreadyInitialised => 807,
+            Self::AuthorityIsZero => 808,
+        }
+    }
+}
+
+impl fmt::Display for AdminError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ConfigNotOurs => {
+                f.write_str("the account offered as the admin config is not one this program owns")
+            }
+            Self::ConfigUndecodable => {
+                f.write_str("the admin config account's data is not an authority")
+            }
+            Self::NotSigned => f.write_str("the claimed admin did not sign this transaction"),
+            Self::Unauthorised => f.write_str("the signer is not this program's admin authority"),
+            Self::NoAuthority => f.write_str("the stored authority is one no signer can exercise"),
+            Self::NotGenesisAdmin => {
+                f.write_str("the signer is not this build's genesis authority")
+            }
+            Self::AlreadyInitialised => f.write_str("the admin authority is already established"),
+            Self::AuthorityIsZero => {
+                f.write_str("the zero key is not an authority any signer could exercise")
+            }
+        }
+    }
+}
+
+/// What the guest returns, so its handler is a `?`.
+impl From<AdminError> for spel_framework::error::SpelError {
+    fn from(err: AdminError) -> Self {
+        Self::custom(err.code(), err.to_string())
     }
 }
 
@@ -148,6 +210,63 @@ pub fn transfer(
     })
 }
 
+/// [`initialise`], as the post-states LEZ is handed.
+///
+/// # Errors
+///
+/// [`AdminError`], one leaf cause per refusal.
+pub fn initialise_admin(
+    config: AccountWithMetadata,
+    admin: AccountWithMetadata,
+    genesis: &[u8; 32],
+) -> Result<Vec<AccountPostState>, AdminError> {
+    let established = initialise(&config, &admin, genesis)?;
+
+    let mut account = config.account;
+    account.data = data_of(&established);
+
+    // The claim is what makes the address the constraint checked this program's.
+    // Unconditional rather than `new_claimed_if_default`, because `initialise`
+    // has already refused every pre-state but the default one -- deciding it
+    // twice, on different rules, is how the third price-account state got
+    // through in ADR 32.
+    let claimed =
+        AutoClaim::pda_from_seeds(&[&seed_from_str(ADMIN_CONFIG_SEED)]).to_post_state(account);
+
+    Ok(vec![claimed, AccountPostState::new(admin.account)])
+}
+
+/// [`transfer`], as the post-states LEZ is handed.
+///
+/// # Errors
+///
+/// [`AdminError`], one leaf cause per refusal.
+pub fn transfer_admin(
+    config: AccountWithMetadata,
+    admin: AccountWithMetadata,
+    new_admin: [u8; 32],
+    self_program_id: ProgramId,
+) -> Result<Vec<AccountPostState>, AdminError> {
+    let moved = transfer(&config, &admin, new_admin, self_program_id)?;
+
+    let mut account = config.account;
+    account.data = data_of(&moved);
+
+    Ok(vec![
+        AccountPostState::new(account),
+        AccountPostState::new(admin.account),
+    ])
+}
+
+/// The authority as account data.
+///
+/// One `Option` and a key, so the width `Data` refuses is out of reach and the
+/// serialisation cannot fail on anything this program constructs.
+fn data_of(state: &AdminAccount) -> Data {
+    Data::try_from(borsh::to_vec(state).expect("an Option and a key serialise"))
+        .expect("thirty-three bytes fit")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +327,79 @@ mod tests {
             is_authorized: false,
             account_id: AccountId::new([0xC0; 32]),
         }
+    }
+
+    /// The state a post-state carries, read back the way a later instruction
+    /// would read it.
+    fn stored_in(post: &AccountPostState) -> AdminAccount {
+        AdminAccount::try_from_slice(post.account().data.as_ref()).expect("decodes")
+    }
+
+    #[test]
+    fn no_two_causes_share_an_error_code() {
+        // The same obligation `SubmitError` carries: a caller that cannot tell
+        // two refusals apart cannot act on either.
+        let causes = [
+            AdminError::ConfigNotOurs,
+            AdminError::ConfigUndecodable,
+            AdminError::NotSigned,
+            AdminError::Unauthorised,
+            AdminError::NoAuthority,
+            AdminError::NotGenesisAdmin,
+            AdminError::AlreadyInitialised,
+            AdminError::AuthorityIsZero,
+        ];
+
+        let mut codes: Vec<u32> = causes.iter().map(AdminError::code).collect();
+        codes.sort_unstable();
+        let before = codes.len();
+        codes.dedup();
+
+        assert_eq!(codes.len(), before, "two causes answer with one code");
+    }
+
+    #[test]
+    fn establishing_the_authority_claims_the_config_account() {
+        let posts = initialise_admin(fresh_config(), signer(ADMIN), &ADMIN).expect("genesis signs");
+
+        assert_eq!(
+            posts.len(),
+            2,
+            "config and admin, in the instruction's order"
+        );
+        assert_eq!(stored_in(&posts[0]), AdminAccount { admin: Some(ADMIN) });
+        assert!(
+            posts[0].required_claim().is_some(),
+            "a first write has to claim the address the constraint checked"
+        );
+    }
+
+    #[test]
+    fn moving_the_authority_writes_the_account_without_claiming_it_again() {
+        let config = config_account(&AdminAccount { admin: Some(ADMIN) });
+
+        let posts = transfer_admin(config, signer(ADMIN), STRANGER, OURS).expect("admin signs");
+
+        assert_eq!(
+            stored_in(&posts[0]),
+            AdminAccount {
+                admin: Some(STRANGER)
+            }
+        );
+        assert!(
+            posts[0].required_claim().is_none(),
+            "the account is already this program's; claiming it again is not an update"
+        );
+    }
+
+    #[test]
+    fn the_signer_is_handed_back_unchanged() {
+        let admin = signer(ADMIN);
+        let before = admin.account.clone();
+
+        let posts = initialise_admin(fresh_config(), admin, &ADMIN).expect("genesis signs");
+
+        assert_eq!(*posts[1].account(), before);
     }
 
     #[test]

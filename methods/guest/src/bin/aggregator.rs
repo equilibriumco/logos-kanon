@@ -10,6 +10,7 @@
 
 #![cfg_attr(not(test), no_main)]
 
+use aggregator_program::admin::AdminAccount;
 use aggregator_program::FeedAccount;
 use nssa_core::account::AccountWithMetadata;
 use spel_framework::context::ProgramContext;
@@ -17,6 +18,51 @@ use spel_framework::prelude::*;
 
 #[cfg(not(test))]
 risc0_zkvm::guest::entry!(main);
+
+/// This build's genesis authority: the only signer that may establish the admin
+/// account, and nothing afterwards.
+///
+/// A build input rather than a committed key, so devnet and mainnet do not share
+/// one. All zeros is a build nobody configured, and `initialise` refuses it —
+/// which is what stops a forgotten key becoming an open first write, the race
+/// `[M2-06:01]` records as recurring once per deployment.
+///
+/// Set it at build time:
+///
+/// ```sh
+/// KANON_GENESIS_ADMIN=<64 hex characters> cargo build
+/// ```
+const GENESIS_ADMIN: [u8; 32] = match option_env!("KANON_GENESIS_ADMIN") {
+    Some(hex) => genesis_from_hex(hex),
+    None => [0u8; 32],
+};
+
+/// Decode the genesis key at compile time, so a malformed one is a build failure
+/// rather than a program that refuses every administrator at run time.
+const fn genesis_from_hex(hex: &str) -> [u8; 32] {
+    let bytes = hex.as_bytes();
+    assert!(
+        bytes.len() == 64,
+        "KANON_GENESIS_ADMIN must be exactly 64 hexadecimal characters"
+    );
+
+    let mut key = [0u8; 32];
+    let mut i = 0;
+    while i < 32 {
+        key[i] = (nibble(bytes[i * 2]) << 4) | nibble(bytes[i * 2 + 1]);
+        i += 1;
+    }
+    key
+}
+
+const fn nibble(character: u8) -> u8 {
+    match character {
+        b'0'..=b'9' => character - b'0',
+        b'a'..=b'f' => character - b'a' + 10,
+        b'A'..=b'F' => character - b'A' + 10,
+        _ => panic!("KANON_GENESIS_ADMIN is not hexadecimal"),
+    }
+}
 
 /// What an instruction returns until the task that implements it lands.
 ///
@@ -90,9 +136,10 @@ mod kanon_aggregator {
     )]
     #[instruction]
     pub fn register_feed(
-        _ctx: ProgramContext,
+        ctx: ProgramContext,
         #[account(init)] feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
+        #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
         feed_id: Vec<u8>,
         base_asset: [u8; 32],
         quote_asset: [u8; 32],
@@ -101,9 +148,11 @@ mod kanon_aggregator {
         signers: Vec<[u8; 20]>,
         threshold: u8,
     ) -> SpelResult {
+        aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
         let _ = (
             feed,
             admin,
+            config,
             feed_id,
             base_asset,
             quote_asset,
@@ -122,13 +171,15 @@ mod kanon_aggregator {
     /// 2. `admin` — the RFP-001 authority.
     #[instruction]
     pub fn update_signer_set(
-        _ctx: ProgramContext,
+        ctx: ProgramContext,
         #[account(mut)] feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
+        #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
         signers: Vec<[u8; 20]>,
         threshold: u8,
     ) -> SpelResult {
-        let _ = (feed, admin, signers, threshold);
+        aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
+        let _ = (feed, admin, config, signers, threshold);
         Err(not_yet("update_signer_set", "M2-08"))
     }
 
@@ -139,11 +190,13 @@ mod kanon_aggregator {
     /// 2. `admin` — the RFP-001 authority.
     #[instruction]
     pub fn deregister_feed(
-        _ctx: ProgramContext,
+        ctx: ProgramContext,
         #[account(mut)] feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
+        #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
     ) -> SpelResult {
-        let _ = (feed, admin);
+        aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
+        let _ = (feed, admin, config);
         Err(not_yet("deregister_feed", "M2-09"))
     }
 
@@ -154,11 +207,13 @@ mod kanon_aggregator {
     /// 2. `admin` — the RFP-001 authority.
     #[instruction]
     pub fn pause_feed(
-        _ctx: ProgramContext,
+        ctx: ProgramContext,
         #[account(mut)] feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
+        #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
     ) -> SpelResult {
-        let _ = (feed, admin);
+        aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
+        let _ = (feed, admin, config);
         Err(not_yet("pause_feed", "M2-10"))
     }
 
@@ -169,12 +224,57 @@ mod kanon_aggregator {
     /// 2. `admin` — the RFP-001 authority.
     #[instruction]
     pub fn unpause_feed(
-        _ctx: ProgramContext,
+        ctx: ProgramContext,
         #[account(mut)] feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
+        #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
     ) -> SpelResult {
-        let _ = (feed, admin);
+        aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
+        let _ = (feed, admin, config);
         Err(not_yet("unpause_feed", "M2-10"))
+    }
+
+    /// Establishes this build's admin authority, once.
+    ///
+    /// Declared last so the two additions are appended: a variant's position in
+    /// the instruction enum is the discriminant a caller encodes, and the parity
+    /// test ties this order to that one.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — uninitialised, claimed by this program at the address the
+    ///    constraint publishes, so a client derives it rather than being told it.
+    /// 2. `admin` — the genesis authority, authorising itself. Which key that is
+    ///    comes from the build and never from the transaction.
+    #[instruction]
+    pub fn initialise_admin(
+        _ctx: ProgramContext,
+        #[account(init, pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
+        #[account(signer)] admin: AccountWithMetadata,
+    ) -> SpelResult {
+        let post_states =
+            aggregator_program::admin::initialise_admin(config, admin, &GENESIS_ADMIN)?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
+    }
+
+    /// Hands the admin authority to another key.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — the account holding the authority.
+    /// 2. `admin` — the current authority.
+    #[instruction]
+    pub fn transfer_admin(
+        ctx: ProgramContext,
+        #[account(mut, pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
+        #[account(signer)] admin: AccountWithMetadata,
+        new_admin: [u8; 32],
+    ) -> SpelResult {
+        let post_states = aggregator_program::admin::transfer_admin(
+            config,
+            admin,
+            new_admin,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 }
 
@@ -184,6 +284,9 @@ mod kanon_aggregator {
 /// naming it here is what makes a change to that type a build failure in the
 /// guest rather than a surprise at deployment.
 const _: Option<FeedAccount> = None;
+/// The authority state, for the same reason: a client that cannot decode the
+/// config account cannot tell who may administer a feed.
+const _: Option<AdminAccount> = None;
 
 /// The checks SPEL generates from the account attributes above.
 ///
@@ -194,6 +297,7 @@ const _: Option<FeedAccount> = None;
 /// them.
 #[cfg(test)]
 mod tests {
+    use aggregator_program::admin::ADMIN_CONFIG_SEED;
     use aggregator_program::submit::PRICE_ACCOUNT_SEED;
     use nssa_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
     use nssa_core::program::{InstructionData, ProgramId};
@@ -241,6 +345,59 @@ mod tests {
         // and the test hashes `PRICE_ACCOUNT_SEED`, and only one of the two is a
         // literal here.
         validate(price_account_id()).expect("the derived address is the declared one");
+    }
+
+    /// The config account's address, derived the way a client would.
+    fn admin_config_id() -> AccountId {
+        compute_pda(&OURS, &[&seed_from_str(ADMIN_CONFIG_SEED)])
+    }
+
+    /// An administrative instruction's accounts, in the order it declares them.
+    fn validate_pause(config_id: AccountId) -> Result<(), SpelError> {
+        let mut admin = account([0xAD; 32]);
+        admin.is_authorized = true;
+        let accounts = [account(FEED_ACCOUNT_ID), admin, account(*config_id.value())];
+        let instruction: InstructionData = Vec::new();
+        super::kanon_aggregator::__validate_pause_feed(&accounts, &OURS, &instruction)
+    }
+
+    #[test]
+    fn the_admin_config_address_the_constraint_accepts_is_the_derived_one() {
+        // The same double-derivation check the price account gets: the
+        // constraint hashes `r#const("KANON_ADMIN_CONFIG")` and this hashes
+        // `ADMIN_CONFIG_SEED`, and only one of the two is a literal here.
+        validate_pause(admin_config_id()).expect("the derived address is the declared one");
+    }
+
+    #[test]
+    fn an_account_that_is_not_the_admin_config_is_refused_by_the_generated_validator() {
+        // Without the constraint, any account this program owns whose bytes
+        // decode as an authority would do -- including one a caller had this
+        // program write for it. `authorise` checks ownership and cannot check
+        // which of our accounts it was handed.
+        assert!(
+            matches!(
+                validate_pause(AccountId::new([0x11; 32])),
+                Err(SpelError::PdaMismatch { .. })
+            ),
+            "an account nobody derived has to be refused"
+        );
+    }
+
+    #[test]
+    fn an_administrative_instruction_refuses_an_admin_that_did_not_sign() {
+        // The dispatcher's half of the gate. `authorise` checks the flag too,
+        // and this is the only place the generated check itself is reachable.
+        let accounts = [
+            account(FEED_ACCOUNT_ID),
+            account([0xAD; 32]),
+            account(*admin_config_id().value()),
+        ];
+        let instruction: InstructionData = Vec::new();
+        assert!(matches!(
+            super::kanon_aggregator::__validate_pause_feed(&accounts, &OURS, &instruction),
+            Err(SpelError::Unauthorized { .. })
+        ));
     }
 
     #[test]

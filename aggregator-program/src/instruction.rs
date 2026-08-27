@@ -51,7 +51,8 @@ pub enum Instruction {
     ///
     /// Expected accounts:
     /// 1. `feed` — uninitialised account for this feed, claimed by the program.
-    /// 2. `admin` — the RFP-001 authority, authorising the registration.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked against.
     RegisterFeed {
         /// The RedStone feed id, unpadded as RedStone publishes it.
         feed_id: Vec<u8>,
@@ -76,7 +77,8 @@ pub enum Instruction {
     ///
     /// Expected accounts:
     /// 1. `feed` — the registered feed's account.
-    /// 2. `admin` — the RFP-001 authority.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked against.
     UpdateSignerSet {
         /// The signer set replacing the stored one.
         signers: Vec<[u8; SignerAddress::LEN]>,
@@ -88,20 +90,47 @@ pub enum Instruction {
     ///
     /// Expected accounts:
     /// 1. `feed` — the registered feed's account.
-    /// 2. `admin` — the RFP-001 authority.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked against.
     DeregisterFeed,
 
     /// Stop a feed accepting submissions, leaving its registration intact.
     ///
     /// Expected accounts:
     /// 1. `feed` — the registered feed's account.
-    /// 2. `admin` — the RFP-001 authority.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked against.
     PauseFeed,
 
     /// Let a paused feed accept submissions again.
     ///
     /// Expected accounts:
     /// 1. `feed` — the registered feed's account.
-    /// 2. `admin` — the RFP-001 authority.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked against.
     UnpauseFeed,
+
+    /// Establish this build's admin authority, once.
+    ///
+    /// Not gated on being first. The genesis key the build carries is what
+    /// authorises it, because a rebuilt program derives a fresh config account
+    /// and an unguarded first write would be a race once per deployment rather
+    /// than once ever (`[M2-06:01]`). Appended to this enum rather than
+    /// inserted, since a variant's position is the discriminant.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — uninitialised, claimed by this program.
+    /// 2. `admin` — the genesis authority, authorising itself.
+    InitialiseAdmin,
+
+    /// Hand the admin authority to another key.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — the account holding the authority.
+    /// 2. `admin` — the current authority.
+    TransferAdmin {
+        /// The key the authority moves to. The zero key is refused, because no
+        /// signer can produce it and this is the only path out of it.
+        new_admin: [u8; 32],
+    },
 }
