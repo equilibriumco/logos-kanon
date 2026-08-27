@@ -27,6 +27,7 @@
 //! `TRACEABILITY.md` maps each to its requirement.
 #![forbid(unsafe_code)]
 
+pub mod admin;
 pub mod feed_account;
 pub mod instruction;
 pub mod publish;
