@@ -152,6 +152,7 @@ ownership is never released, so an address claimed once is claimed for that
 program build's lifetime. That is why the price account is derived from the feed
 and the feed is not derived from the asset pair — one is a binding, the other
 would be a registration that a single wrong exponent could burn.
+
 [M3-01:01] is ADR 13 reaching its second caller, and the place where pinning a
 clock turns out to guarantee less than it does in the first. In push mode a relayer
 supplies the clock and a consumer reading the account afterwards bears the risk, so

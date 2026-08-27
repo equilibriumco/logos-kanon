@@ -96,6 +96,17 @@ nothing was promised.
   Passing a signer set from the wrong data service produces
   `UnauthorisedSigner`, which names the right thing — the keys — rather than
   implying the payload was for another service.
+- **The `expected` pair is not the check it is in push mode.** `verify_feed`
+  compares the caller's pair against the one in the `FeedConfig` it was handed,
+  which ADR 16 makes a claim tested against a registration. Push mode reads that
+  configuration from a registered feed account, so the comparison spans two
+  parties. Pull mode has no registration: both operands come from the same
+  consumer, so `AssetMismatch` means it disagreed with itself. Nothing weaker was
+  available — no signer attests to which assets a feed prices — and the parameter
+  is worth keeping, because a consumer holding one `FeedConfig` per feed and one
+  expectation per call site still catches crossing them. What it does not catch is
+  the same wrong feed id in both, which is why this is stated in the module header
+  beside the other two limits of its kind rather than left to be inferred.
 - **`pull-lib` gains a dependency on `kanon-clock`.** Both are `no_std` and the
   CI `no-std` job already builds all three of `verifier-core`, `pull-lib` and
   `kanon-clock` for `riscv32im-unknown-none-elf`, so the constraint that keeps
