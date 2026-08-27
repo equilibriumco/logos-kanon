@@ -1,9 +1,16 @@
-//! The submission path, driven by payloads RedStone published.
+//! The submission path, driven by the committed RedStone capture.
 //!
 //! The unit tests beside `submit_price` cover what it refuses before any
-//! cryptography runs. These cover the other half: a real signed payload going
-//! all the way through to an account, and the create-then-update pair that only
-//! a payload can reach.
+//! cryptography runs. These cover the other half: a payload going all the way
+//! through to an account, and the create-then-update pair that only a payload
+//! can reach.
+//!
+//! What is RedStone's here is the packages and the signatures over them. The
+//! envelope around them -- the marker, the package count, the unsigned metadata
+//! -- was assembled by `scripts/capture-redstone-vectors.py`, because the gateway
+//! serves per-signer JSON with decoded values rather than a finished payload.
+//! That is the same division the conformance suite works under, and it is where
+//! the value is: the signature covers the part nobody here could have produced.
 //!
 //! The fixture is the committed capture, included by path rather than shared
 //! through a crate for the reason its own header gives -- a fixture reader has no
@@ -430,7 +437,7 @@ fn replaying_the_same_payload_cannot_move_the_price() {
 
 #[test]
 fn a_signer_outside_the_registered_set_cannot_publish() {
-    // One address replaced, so the payload is RedStone's and the roster is not.
+    // One address replaced, so the packages are RedStone's and the roster is not.
     let v = vector("BTC");
     let mut state = feed_state(&v);
     state.signers[0] = [0xAA; 20];
