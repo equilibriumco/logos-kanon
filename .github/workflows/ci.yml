@@ -11,6 +11,7 @@
 #   build-test    the product crates build and their tests pass
 #                 (`m0/` is a separate workspace; guardrails.yml runs it)
 #   no-std        the guest-reachable crates really are no_std
+#   pull-independence  pull reaches no aggregator crate, so pull-only needs no feed
 #   guest         product code cross-compiles to riscv32
 #   licenses      cargo deny, every workspace: product, m0, guests
 #   traceability  the requirement matrix resolves to real evidence
@@ -142,6 +143,46 @@ jobs:
           cargo build --release --locked \
             --target riscv32im-unknown-none-elf \
             -p verifier-core -p pull-lib -p kanon-clock
+
+  pull-independence:
+    name: pull has no aggregator dependency
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      # F9: a consumer using only pull integrates without registering a feed
+      # against the aggregator. Nothing in `pull-lib`'s signature reaches an
+      # aggregator account today, and nothing in the crate would notice if that
+      # changed -- a `use kanon_idl::OraclePriceAccount` to borrow a field
+      # layout, or an `aggregator_program::FeedAccount` to save declaring a
+      # config, would compile and pass every test. So the closure is the
+      # assertion, and it is an allow-list rather than a list of crates to
+      # refuse: a denylist only catches the reuse someone thought of.
+      #
+      # `--edges normal,build` leaves dev-dependencies out on purpose. A test
+      # comparing the two paths against each other is exactly what M3-04's
+      # error-taxonomy parity asks for, and that reaches nothing a consumer
+      # links.
+      #
+      # The consumer is checked too, and it is the half the requirement is
+      # actually about: `pull-lib` staying clean is worth nothing if the
+      # reference consumer has to register a feed anyway.
+      - name: the pull closure is the verifier and the clock, and nothing else
+        run: |
+          closure() {
+            cargo tree --locked -p "$1" --edges normal,build --prefix none \
+              | grep -F "($PWD/" | awk '{print $1}' | sort -u
+          }
+
+          diff <(printf '%s\n' kanon-clock pull-lib verifier-core) \
+               <(closure pull-lib)
+
+          diff <(printf '%s\n' kanon-clock pull-lib reference-consumer-pull verifier-core) \
+               <(closure reference-consumer-pull)
 
   guest:
     name: riscv32 guest build
