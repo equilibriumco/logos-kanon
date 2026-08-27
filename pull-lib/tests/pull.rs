@@ -111,6 +111,24 @@ fn a_clock_account_the_consumer_chose_is_refused_before_any_recovery() {
             "a consumer must not be able to supply its own clock"
         );
     }
+
+    // And the clock is settled before the payload is even framed. Bytes that are
+    // not a payload, with an account that is not the clock: a run that decodes
+    // first answers `Malformed`, so this is what pins the order rather than the
+    // refusal.
+    assert_eq!(
+        verify_price(
+            &[0xFF; 16],
+            &config,
+            &pair(),
+            &[0u8; 32],
+            &clock_data(v.timestamp_ms),
+            &InProgramBackend::new(),
+        ),
+        Err(VerifyError::NoClock(
+            verifier_core::time::TimeError::WrongAccount
+        ))
+    );
 }
 
 #[test]
