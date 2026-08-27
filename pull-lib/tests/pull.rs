@@ -217,7 +217,11 @@ fn a_clock_past_the_consumers_window_reports_a_stale_package() {
 }
 
 #[test]
-fn bytes_that_are_not_a_payload_are_reported_as_malformed() {
+fn a_consumer_handed_bytes_that_are_not_a_payload_is_told_so() {
+    // Named for the pull path rather than for the failure. The push side has a
+    // test making the same assertion, and `traceability/tests/matrix.rs` resolves
+    // a cited name by searching the concatenated source -- so two tests sharing
+    // one name means either can satisfy a row meant for the other.
     let v = vectors::named("BTC");
     let signers = v.signers.clone();
     let config = FeedConfig::try_new(
