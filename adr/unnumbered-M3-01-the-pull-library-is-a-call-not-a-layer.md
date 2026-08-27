@@ -20,10 +20,12 @@ turns out to carry a security property rather than an ergonomic one.
 
 ## Decision
 
-**One function over `verifier-core`'s own types, adding none of its own.**
-`verify_price` takes a `FeedConfig`, an `AssetPair` and a `VerifierBackend`, and
-returns `VerifiedFeed` or `VerifyError`. No wrapper config, no wrapper error, no
-builder.
+**One function over `verifier-core`'s own types, adding as little as the
+requirement allows.** `verify_price` takes a `PullConfig`, an `AssetPair` and a
+`VerifierBackend`, and returns `VerifiedFeed` or `VerifyError`. No wrapper error,
+no builder, and no second validation: `PullConfig` is two public fields, one of
+them a `FeedConfig`, and it exists only because Functionality 9 names a tuple with
+a fifth member that `FeedConfig` has no business holding — see below.
 
 That is what makes two later claims structural instead of reviewed. F9's
 independence from the aggregator holds because there is no aggregator type in the
@@ -131,8 +133,3 @@ nothing was promised.
   it moves the pinning check to the consumer's own code, where it is one line to
   forget. The account is the thing a LEZ program is handed, so the account is
   what the function takes.
-- **Carry `dataServiceId` as an unchecked label** for diagnostics. Matches the
-  RFP's wording literally, and adds a configuration field no verification reads —
-  which is the kind of field that later gets mistaken for one that does. It is
-  also asymmetric with the push path, whose stored feed has no such field, and
-  M3-04 exists to keep the two comparable.

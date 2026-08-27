@@ -14,10 +14,12 @@ license.workspace = true
 [dependencies]
 verifier-core.workspace = true
 
-# The clock, and the reason it is a dependency rather than a parameter: pull mode
-# runs inside a consumer's program, so the consumer is the caller -- and a caller
-# that can choose the clock account can make its own staleness check advisory.
-# ADR 13's pinning is enforced here for the same reason it is in the aggregator.
+# The clock, and the reason it is a dependency rather than a parameter: the
+# consumer names an account rather than handing over a time. That refuses any
+# account but the pinned every-block one, which is the mistake worth catching --
+# the other two hold plausible timestamps. It is weaker than the aggregator's
+# check, which gets id and data as fields of one account the dispatcher supplied;
+# here they are separate arguments. `src/lib.rs` has the whole of it.
 kanon-clock.workspace = true
 
 [dev-dependencies]
