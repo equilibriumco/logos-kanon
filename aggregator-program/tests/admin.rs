@@ -18,7 +18,9 @@ use aggregator_program::admin::{
 };
 use borsh::BorshDeserialize;
 use lee_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
-use lee_core::program::{validate_execution, AccountPostState, Claim, ProgramId};
+use lee_core::program::{
+    validate_execution, AccountPostState, Claim, ExecutionValidationError, ProgramId,
+};
 use spel_framework::pda::{compute_pda, seed_from_str};
 
 /// This program, in every test.
@@ -54,13 +56,40 @@ fn config_after(posts: &[AccountPostState]) -> AccountWithMetadata {
     }
 }
 
+/// Whatever owns an operator's account on chain. Not this program, and not
+/// nobody: see `an_unowned_admin_that_has_transacted_cannot_be_used` for why the
+/// distinction is the whole of this fixture.
+const WALLET_PROGRAM: ProgramId = [42u32; 8];
+
+/// An admin key as one exists on chain: owned, funded, and having signed before.
+///
+/// Deliberately not `Account::default()`. LEZ increments every signer's nonce
+/// after applying a state diff, outside program execution, so an account that
+/// has signed once is never pristine again -- and a default-*owned* account that
+/// is not pristine cannot appear in any post-state at all (rule 7). A fixture
+/// built from `Account::default()` would pass every assertion in this file while
+/// describing a state no real key is in after its first transaction.
 fn signer(id: [u8; 32]) -> AccountWithMetadata {
+    AccountWithMetadata {
+        account: Account {
+            program_owner: WALLET_PROGRAM,
+            balance: 500,
+            data: Data::try_from(Vec::new()).expect("fits"),
+            nonce: Nonce(7),
+        },
+        is_authorized: true,
+        account_id: AccountId::new(id),
+    }
+}
+
+/// The same key, unowned and having transacted: the state that cannot be used.
+fn unowned_signer(id: [u8; 32]) -> AccountWithMetadata {
     AccountWithMetadata {
         account: Account {
             program_owner: [0u32; 8],
             balance: 0,
             data: Data::try_from(Vec::new()).expect("fits"),
-            nonce: Nonce(0),
+            nonce: Nonce(1),
         },
         is_authorized: true,
         account_id: AccountId::new(id),
@@ -166,4 +195,43 @@ fn a_revocation_lands_and_leaves_nobody_able_to_administer() {
         initialise_admin(after, signer(GENESIS), &GENESIS),
         Err(AdminError::AlreadyInitialised)
     );
+}
+
+#[test]
+fn an_unowned_admin_that_has_transacted_cannot_be_used() {
+    // The deployment property this whole file rests on, asserted rather than
+    // assumed. LEZ's rule 7 refuses a post-state whose owner is the default one
+    // unless the pre-state was pristine, and rules 3 and 4 forbid changing the
+    // nonce or the owner to escape it -- so an account that is unowned *and* has
+    // signed before can never appear in a post-state again, however this program
+    // constructs one. `Claim::Authorized` does not help: the claim is honoured
+    // after validation, so the post-state still carries the default owner when
+    // rule 7 runs.
+    //
+    // The consequence for an operator: the admin key must be an account that
+    // already exists on chain, not a freshly generated address whose first
+    // transaction is the initialisation. A fresh address would initialise once
+    // and then be unusable, because LEZ would have bumped its nonce.
+    let admin = unowned_signer(GENESIS);
+    let pre = vec![fresh_config(), admin.clone()];
+
+    // The decision is fine -- this is not the program refusing.
+    let posts = initialise_admin(fresh_config(), admin, &GENESIS).expect("the genesis key signs");
+
+    let refused = validate_execution(&pre, &posts, OURS)
+        .expect_err("LEZ cannot accept an unowned signer that has transacted");
+    assert!(
+        matches!(
+            refused,
+            ExecutionValidationError::NonDefaultAccountWithDefaultOwner { .. }
+        ),
+        "expected rule 7 to refuse it, got {refused:?}"
+    );
+
+    // And the same operation with the same key, owned, is accepted -- so it is
+    // the account's ownership that decides and nothing about this program.
+    let owned = signer(GENESIS);
+    let pre = vec![fresh_config(), owned.clone()];
+    let posts = initialise_admin(fresh_config(), owned, &GENESIS).expect("the genesis key signs");
+    validate_execution(&pre, &posts, OURS).expect("an owned signer is accepted at any nonce");
 }

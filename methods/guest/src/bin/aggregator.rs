@@ -7,6 +7,12 @@
 //!
 //! The logic lives in `aggregator-program`, which the host workspace can test.
 //! This file is the seam between that and LEZ.
+//!
+//! Accounts are declared subject first: the feed on the instructions that change
+//! a feed, the config account on the ones that change the authority. So `config`
+//! is third on the five feed instructions and first on the four admin ones. The
+//! rule is worth stating because the order is positional on the wire and a
+//! caller building both has otherwise to remember which.
 
 #![cfg_attr(not(test), no_main)]
 
@@ -129,7 +135,9 @@ mod kanon_aggregator {
     ///
     /// Expected accounts:
     /// 1. `feed` — uninitialised, claimed by this program.
-    /// 2. `admin` — the RFP-001 authority.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked
+    ///    against, at the address its constraint derives.
     #[expect(
         clippy::too_many_arguments,
         reason = "a registration is the feed's whole configuration, and naming each field is what makes it checkable from the IDL"
@@ -168,7 +176,9 @@ mod kanon_aggregator {
     ///
     /// Expected accounts:
     /// 1. `feed` — the registered feed.
-    /// 2. `admin` — the RFP-001 authority.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked
+    ///    against, at the address its constraint derives.
     #[instruction]
     pub fn update_signer_set(
         ctx: ProgramContext,
@@ -187,7 +197,9 @@ mod kanon_aggregator {
     ///
     /// Expected accounts:
     /// 1. `feed` — the registered feed.
-    /// 2. `admin` — the RFP-001 authority.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked
+    ///    against, at the address its constraint derives.
     #[instruction]
     pub fn deregister_feed(
         ctx: ProgramContext,
@@ -204,7 +216,9 @@ mod kanon_aggregator {
     ///
     /// Expected accounts:
     /// 1. `feed` — the registered feed.
-    /// 2. `admin` — the RFP-001 authority.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked
+    ///    against, at the address its constraint derives.
     #[instruction]
     pub fn pause_feed(
         ctx: ProgramContext,
@@ -221,7 +235,9 @@ mod kanon_aggregator {
     ///
     /// Expected accounts:
     /// 1. `feed` — the registered feed.
-    /// 2. `admin` — the RFP-001 authority.
+    /// 2. `admin` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority `admin` is checked
+    ///    against, at the address its constraint derives.
     #[instruction]
     pub fn unpause_feed(
         ctx: ProgramContext,
@@ -326,7 +342,7 @@ const _: Option<AdminAccount> = None;
 ///
 /// They run in the dispatcher, before any handler, so nothing in
 /// `aggregator-program` can reach them and no host test in that crate can
-/// either. They exist only after macro expansion, which is why these two tests
+/// either. They exist only after macro expansion, which is why these tests
 /// live in the guest workspace — and why `cargo test --workspace` never runs
 /// them.
 #[cfg(test)]
@@ -467,7 +483,7 @@ mod tests {
         // the code is the part a caller acts on.
         assert_eq!(
             refused.error_code(),
-            SpelError::from(aggregator_program::admin::AdminError::AuthorityIsZero).error_code()
+            SpelError::from(aggregator_program::admin::AdminError::NoGenesisAuthority).error_code()
         );
     }
 

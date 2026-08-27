@@ -147,6 +147,17 @@ holds.
   moment to do it: the SDK is thirteen lines, the relayer eighteen, the CLI does not
   exist, and the only consumers of the instruction surface are two in-repo tests. The
   same change after M4 touches everything generated from the IDL.
+- **The admin key must be an account that already exists on chain, not a freshly
+  generated address.** LEZ increments every signer's nonce after applying a state diff,
+  outside program execution, and `validate_execution` rule 7 refuses a post-state whose
+  program owner is the default one unless the pre-state was pristine. Together those mean
+  an account that is unowned *and* has signed before can never appear in a post-state
+  again — so a fresh address would initialise once, have its nonce bumped by that very
+  transaction, and be unable to administer anything afterwards. `Claim::Authorized` does
+  not rescue it: the claim is honoured after validation, so rule 7 still sees the default
+  owner. `tests/admin.rs` pins both halves, the refusal and the same key succeeding once
+  owned, so the constraint is visible in the suite rather than discovered on devnet. The
+  runbook and the servicing handover both have to carry it.
 - **Deployment grows a step, and the runbook with it.** A build is not operable until
   `initialize` has landed, and the servicing handover has to carry the genesis key's
   custody alongside the operator journey.

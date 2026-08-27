@@ -164,7 +164,7 @@ exception in `deny.toml` and raised here rather than waved through. The gate its
 
 ## Open: questions outstanding with Logos
 
-Four, in descending order of how much they block delivery. All four concern
+Five, in descending order of how much they block delivery. All five concern
 repositories outside this one, which is why they are tracked here rather than resolved
 in code.
 
@@ -188,7 +188,21 @@ clarification names one crate and can be checked. This is the cheapest of the fo
 asks: a one-line `license = "..."` in each manifest removes all three entries and
 stops every downstream consumer having to make the same judgement call privately.
 
-**4. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
+**4. Can a public account still be unowned once it has transacted?** LEZ increments
+every signer's nonce after applying a state diff, outside program execution
+(`lee/state_machine/src/state.rs`), and `validate_execution` rule 7 refuses any
+post-state whose program owner is the default one unless the pre-state was
+`Account::default()`. Together those mean an account that is unowned *and* has signed
+once can never appear in a post-state again — not with `Claim::Authorized` either, since
+the claim is honoured after validation and rule 7 still sees the default owner. Every
+program that takes a signer inherits this and none of them can see it coming, which is
+the same shape as the `InstructionData` residual in ADR 26. If a public account is owned
+by a system program from its first transaction then the question is moot and the answer
+is worth stating; if it can sit unowned, this is a trap in the platform rather than in
+any one program. Measured in `aggregator-program/tests/admin.rs`, which asserts both
+directions.
+
+**5. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
 closer to a defect report than a preference: the account-type crate needs neither
 risc0 nor `uniswap_v3_math` to carry six Borsh fields. Splitting it into a standalone
 crate with relaxed pins — or at minimum loosening `=3.0.5` to `^3.0.5` — would make the

@@ -32,11 +32,10 @@ pub const ADMIN_CONFIG_SEED: &str = "KANON_ADMIN_CONFIG";
 
 /// The authority, as the config account stores it.
 ///
-/// `Option` rather than a bare key, so the layout is byte-identical to
-/// RFP-001's `AdminState` under borsh and adopting that type later is a
-/// deletion rather than a migration. No instruction in this program produces
-/// `None`; it is refused wherever it is read, which is the same answer
-/// upstream's revocation would give.
+/// `Option` rather than a bare key, so `admin` carries RFP-001's `AdminState`
+/// field shape. [`revoke`] is what produces `None`, and it is refused wherever
+/// it is read afterwards: an authority nobody can exercise, which is what
+/// revocation means.
 #[account_type]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
 pub struct AdminAccount {
@@ -72,6 +71,13 @@ pub enum AdminError {
     /// The key offered as an authority is the zero key, which nothing can sign
     /// as. Refused rather than stored, because storing it is unrecoverable.
     AuthorityIsZero,
+    /// This build carries no genesis authority, so nobody can establish one.
+    ///
+    /// A different fault from [`Self::AuthorityIsZero`] and a different number,
+    /// because they reach different people: this one says the deployment was
+    /// never configured, and that one says a caller passed a key nothing can
+    /// sign as.
+    NoGenesisAuthority,
     /// Nobody has been nominated, so there is nothing to accept.
     NoNomination,
     /// The signer is not the nominated key.
@@ -144,6 +150,7 @@ impl AdminError {
             Self::AuthorityIsZero => 808,
             Self::NoNomination => 809,
             Self::NotTheNominee => 810,
+            Self::NoGenesisAuthority => 811,
         }
     }
 }
@@ -169,6 +176,9 @@ impl fmt::Display for AdminError {
             }
             Self::NoNomination => f.write_str("no key has been nominated to take the authority"),
             Self::NotTheNominee => f.write_str("the signer is not the nominated key"),
+            Self::NoGenesisAuthority => {
+                f.write_str("this build carries no genesis authority, so none can be established")
+            }
         }
     }
 }
@@ -205,7 +215,7 @@ pub fn initialise(
     // caller who could pass any of the checks below, and saying so is a
     // different fault from a caller getting it wrong.
     if *genesis == [0u8; 32] {
-        return Err(AdminError::AuthorityIsZero);
+        return Err(AdminError::NoGenesisAuthority);
     }
     if !admin.is_authorized {
         return Err(AdminError::NotSigned);
@@ -477,6 +487,8 @@ mod tests {
     fn no_two_causes_share_an_error_code() {
         // The same obligation `SubmitError` carries: a caller that cannot tell
         // two refusals apart cannot act on either.
+        // Every variant, so adding one without a number fails here. The list is
+        // exhaustive by construction below rather than by inspection.
         let causes = [
             AdminError::ConfigNotOurs,
             AdminError::ConfigUndecodable,
@@ -486,6 +498,9 @@ mod tests {
             AdminError::NotGenesisAdmin,
             AdminError::AlreadyInitialised,
             AdminError::AuthorityIsZero,
+            AdminError::NoNomination,
+            AdminError::NotTheNominee,
+            AdminError::NoGenesisAuthority,
         ];
 
         let mut codes: Vec<u32> = causes.iter().map(AdminError::code).collect();
@@ -561,7 +576,7 @@ mod tests {
         // zero key would be the authority, and it is a key anyone can name.
         assert_eq!(
             initialise(&fresh_config(), &signer([0u8; 32]), &[0u8; 32]),
-            Err(AdminError::AuthorityIsZero)
+            Err(AdminError::NoGenesisAuthority)
         );
     }
 
