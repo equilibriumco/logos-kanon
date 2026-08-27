@@ -42,6 +42,14 @@ pub const ADMIN_CONFIG_SEED: &str = "KANON_ADMIN_CONFIG";
 pub struct AdminAccount {
     /// The current authority, or `None` for an authority nothing can exercise.
     pub admin: Option<[u8; 32]>,
+    /// A key nominated to take over, which is not the authority until it accepts.
+    ///
+    /// Why a handover is two steps: a nominee that never signs never becomes the
+    /// authority, so a mistyped key costs a second nomination rather than the
+    /// program's whole administrative surface. It also lets the servicing
+    /// handover run across two transactions and two parties, which a co-signed
+    /// transfer would not.
+    pub pending: Option<[u8; 32]>,
 }
 
 /// Why an administrative instruction was refused before it ran.
@@ -64,6 +72,10 @@ pub enum AdminError {
     /// The key offered as an authority is the zero key, which nothing can sign
     /// as. Refused rather than stored, because storing it is unrecoverable.
     AuthorityIsZero,
+    /// Nobody has been nominated, so there is nothing to accept.
+    NoNomination,
+    /// The signer is not the nominated key.
+    NotTheNominee,
 }
 
 /// Refuse unless `admin` signed and is the authority `config` stores.
@@ -76,6 +88,33 @@ pub fn authorise(
     admin: &AccountWithMetadata,
     self_program_id: ProgramId,
 ) -> Result<(), AdminError> {
+    authorised(config, admin, self_program_id).map(|_| ())
+}
+
+/// [`authorise`], returning what the account stores, for the instructions that
+/// have to write it back.
+fn authorised(
+    config: &AccountWithMetadata,
+    admin: &AccountWithMetadata,
+    self_program_id: ProgramId,
+) -> Result<AdminAccount, AdminError> {
+    let stored = stored_authority(config, admin, self_program_id)?;
+
+    match stored.admin {
+        None => Err(AdminError::NoAuthority),
+        Some(key) if key == *admin.account_id.value() => Ok(stored),
+        Some(_) => Err(AdminError::Unauthorised),
+    }
+}
+
+/// The config account's contents, once the account and the signature are known
+/// good -- without deciding whether the signer is the authority, which
+/// [`accept`] answers against a different field.
+fn stored_authority(
+    config: &AccountWithMetadata,
+    admin: &AccountWithMetadata,
+    self_program_id: ProgramId,
+) -> Result<AdminAccount, AdminError> {
     // Before the data is read, because a stored key in an account this program
     // does not own is the caller's claim and not this program's.
     if config.account.program_owner != self_program_id {
@@ -85,14 +124,8 @@ pub fn authorise(
         return Err(AdminError::NotSigned);
     }
 
-    let stored = AdminAccount::try_from_slice(config.account.data.as_ref())
-        .map_err(|_| AdminError::ConfigUndecodable)?;
-
-    match stored.admin {
-        None => Err(AdminError::NoAuthority),
-        Some(key) if key == *admin.account_id.value() => Ok(()),
-        Some(_) => Err(AdminError::Unauthorised),
-    }
+    AdminAccount::try_from_slice(config.account.data.as_ref())
+        .map_err(|_| AdminError::ConfigUndecodable)
 }
 
 impl AdminError {
@@ -109,6 +142,8 @@ impl AdminError {
             Self::NotGenesisAdmin => 806,
             Self::AlreadyInitialised => 807,
             Self::AuthorityIsZero => 808,
+            Self::NoNomination => 809,
+            Self::NotTheNominee => 810,
         }
     }
 }
@@ -132,6 +167,8 @@ impl fmt::Display for AdminError {
             Self::AuthorityIsZero => {
                 f.write_str("the zero key is not an authority any signer could exercise")
             }
+            Self::NoNomination => f.write_str("no key has been nominated to take the authority"),
+            Self::NotTheNominee => f.write_str("the signer is not the nominated key"),
         }
     }
 }
@@ -185,28 +222,82 @@ pub fn initialise(
 
     Ok(AdminAccount {
         admin: Some(*genesis),
+        pending: None,
     })
 }
 
-/// Hand the authority to `new_admin`, on the current authority's signature.
+/// Nominate `new_admin` to take the authority, on the current authority's
+/// signature. A nomination is not the authority.
+///
+/// Replaces any earlier nomination, so only the latest can be accepted.
 ///
 /// # Errors
 ///
 /// [`AdminError`], one leaf cause per refusal.
-pub fn transfer(
+pub fn nominate(
     config: &AccountWithMetadata,
     admin: &AccountWithMetadata,
     new_admin: [u8; 32],
     self_program_id: ProgramId,
 ) -> Result<AdminAccount, AdminError> {
-    authorise(config, admin, self_program_id)?;
+    let stored = authorised(config, admin, self_program_id)?;
 
     if new_admin == [0u8; 32] {
         return Err(AdminError::AuthorityIsZero);
     }
 
     Ok(AdminAccount {
-        admin: Some(new_admin),
+        admin: stored.admin,
+        pending: Some(new_admin),
+    })
+}
+
+/// Take the authority, on the nominee's own signature.
+///
+/// The second half of a handover, and what makes a mistyped nomination
+/// recoverable: a key nobody controls can never sign, so it never becomes the
+/// authority.
+///
+/// # Errors
+///
+/// [`AdminError`], one leaf cause per refusal.
+pub fn accept(
+    config: &AccountWithMetadata,
+    admin: &AccountWithMetadata,
+    self_program_id: ProgramId,
+) -> Result<AdminAccount, AdminError> {
+    // Not `authorised`: the signer here is the nominee and not the authority, so
+    // the comparison is against the other field.
+    let stored = stored_authority(config, admin, self_program_id)?;
+
+    match stored.pending {
+        None => Err(AdminError::NoNomination),
+        Some(key) if key == *admin.account_id.value() => Ok(AdminAccount {
+            admin: Some(key),
+            pending: None,
+        }),
+        Some(_) => Err(AdminError::NotTheNominee),
+    }
+}
+
+/// Give up the authority permanently, on the current authority's signature.
+///
+/// Clears any pending nomination with it: leaving one would let a nominee accept
+/// afterwards and take an authority its holder had already given up.
+///
+/// # Errors
+///
+/// [`AdminError`], one leaf cause per refusal.
+pub fn revoke(
+    config: &AccountWithMetadata,
+    admin: &AccountWithMetadata,
+    self_program_id: ProgramId,
+) -> Result<AdminAccount, AdminError> {
+    authorised(config, admin, self_program_id)?;
+
+    Ok(AdminAccount {
+        admin: None,
+        pending: None,
     })
 }
 
@@ -236,35 +327,73 @@ pub fn initialise_admin(
     Ok(vec![claimed, AccountPostState::new(admin.account)])
 }
 
-/// [`transfer`], as the post-states LEZ is handed.
+/// [`nominate`], as the post-states LEZ is handed.
 ///
 /// # Errors
 ///
 /// [`AdminError`], one leaf cause per refusal.
-pub fn transfer_admin(
+pub fn nominate_admin(
     config: AccountWithMetadata,
     admin: AccountWithMetadata,
     new_admin: [u8; 32],
     self_program_id: ProgramId,
 ) -> Result<Vec<AccountPostState>, AdminError> {
-    let moved = transfer(&config, &admin, new_admin, self_program_id)?;
+    let nominated = nominate(&config, &admin, new_admin, self_program_id)?;
+    Ok(written(config, admin, &nominated))
+}
 
+/// [`accept`], as the post-states LEZ is handed.
+///
+/// # Errors
+///
+/// [`AdminError`], one leaf cause per refusal.
+pub fn accept_admin(
+    config: AccountWithMetadata,
+    admin: AccountWithMetadata,
+    self_program_id: ProgramId,
+) -> Result<Vec<AccountPostState>, AdminError> {
+    let taken = accept(&config, &admin, self_program_id)?;
+    Ok(written(config, admin, &taken))
+}
+
+/// [`revoke`], as the post-states LEZ is handed.
+///
+/// # Errors
+///
+/// [`AdminError`], one leaf cause per refusal.
+pub fn revoke_admin(
+    config: AccountWithMetadata,
+    admin: AccountWithMetadata,
+    self_program_id: ProgramId,
+) -> Result<Vec<AccountPostState>, AdminError> {
+    let given_up = revoke(&config, &admin, self_program_id)?;
+    Ok(written(config, admin, &given_up))
+}
+
+/// The post-states every instruction but `initialise` produces: the config
+/// account written, the signer untouched, and no claim -- the account is already
+/// this program's, and claiming it again is not an update.
+fn written(
+    config: AccountWithMetadata,
+    admin: AccountWithMetadata,
+    state: &AdminAccount,
+) -> Vec<AccountPostState> {
     let mut account = config.account;
-    account.data = data_of(&moved);
+    account.data = data_of(state);
 
-    Ok(vec![
+    vec![
         AccountPostState::new(account),
         AccountPostState::new(admin.account),
-    ])
+    ]
 }
 
 /// The authority as account data.
 ///
-/// One `Option` and a key, so the width `Data` refuses is out of reach and the
-/// serialisation cannot fail on anything this program constructs.
+/// Two `Option`s and their keys, so the width `Data` refuses is out of reach and
+/// the serialisation cannot fail on anything this program constructs.
 fn data_of(state: &AdminAccount) -> Data {
-    Data::try_from(borsh::to_vec(state).expect("an Option and a key serialise"))
-        .expect("thirty-three bytes fit")
+    Data::try_from(borsh::to_vec(state).expect("two Options and their keys serialise"))
+        .expect("sixty-six bytes fit")
 }
 
 #[cfg(test)]
@@ -277,6 +406,15 @@ mod tests {
 
     const ADMIN: [u8; 32] = [0xAD; 32];
     const STRANGER: [u8; 32] = [0x5A; 32];
+    const THIRD: [u8; 32] = [0x33; 32];
+
+    /// An authority held by `admin`, with nobody nominated.
+    fn holding(admin: [u8; 32]) -> AdminAccount {
+        AdminAccount {
+            admin: Some(admin),
+            pending: None,
+        }
+    }
 
     fn config_account(stored: &AdminAccount) -> AccountWithMetadata {
         AccountWithMetadata {
@@ -306,7 +444,7 @@ mod tests {
 
     #[test]
     fn a_signer_who_is_not_the_stored_admin_is_refused() {
-        let config = config_account(&AdminAccount { admin: Some(ADMIN) });
+        let config = config_account(&holding(ADMIN));
 
         assert_eq!(
             authorise(&config, &signer(STRANGER), OURS),
@@ -316,7 +454,7 @@ mod tests {
 
     #[test]
     fn the_stored_admin_is_authorised() {
-        let config = config_account(&AdminAccount { admin: Some(ADMIN) });
+        let config = config_account(&holding(ADMIN));
 
         assert_eq!(authorise(&config, &signer(ADMIN), OURS), Ok(()));
     }
@@ -367,7 +505,7 @@ mod tests {
             2,
             "config and admin, in the instruction's order"
         );
-        assert_eq!(stored_in(&posts[0]), AdminAccount { admin: Some(ADMIN) });
+        assert_eq!(stored_in(&posts[0]), holding(ADMIN));
         assert!(
             posts[0].required_claim().is_some(),
             "a first write has to claim the address the constraint checked"
@@ -375,17 +513,16 @@ mod tests {
     }
 
     #[test]
-    fn moving_the_authority_writes_the_account_without_claiming_it_again() {
-        let config = config_account(&AdminAccount { admin: Some(ADMIN) });
+    fn nominating_writes_the_account_without_claiming_it_again() {
+        let posts = nominate_admin(
+            config_account(&holding(ADMIN)),
+            signer(ADMIN),
+            STRANGER,
+            OURS,
+        )
+        .expect("admin signs");
 
-        let posts = transfer_admin(config, signer(ADMIN), STRANGER, OURS).expect("admin signs");
-
-        assert_eq!(
-            stored_in(&posts[0]),
-            AdminAccount {
-                admin: Some(STRANGER)
-            }
-        );
+        assert_eq!(stored_in(&posts[0]).pending, Some(STRANGER));
         assert!(
             posts[0].required_claim().is_none(),
             "the account is already this program's; claiming it again is not an update"
@@ -407,7 +544,7 @@ mod tests {
         let established =
             initialise(&fresh_config(), &signer(ADMIN), &ADMIN).expect("genesis signs");
 
-        assert_eq!(established, AdminAccount { admin: Some(ADMIN) });
+        assert_eq!(established, holding(ADMIN));
     }
 
     #[test]
@@ -430,7 +567,7 @@ mod tests {
 
     #[test]
     fn an_authority_already_established_is_not_established_again() {
-        let occupied = config_account(&AdminAccount { admin: Some(ADMIN) });
+        let occupied = config_account(&holding(ADMIN));
 
         assert_eq!(
             initialise(&occupied, &signer(ADMIN), &ADMIN),
@@ -450,38 +587,135 @@ mod tests {
     }
 
     #[test]
-    fn the_authority_moves_to_the_key_the_admin_names() {
-        let config = config_account(&AdminAccount { admin: Some(ADMIN) });
+    fn a_nomination_is_recorded_without_handing_the_authority_over() {
+        let config = config_account(&holding(ADMIN));
 
-        let moved = transfer(&config, &signer(ADMIN), STRANGER, OURS).expect("admin signs");
+        let nominated = nominate(&config, &signer(ADMIN), STRANGER, OURS).expect("admin signs");
 
         assert_eq!(
-            moved,
-            AdminAccount {
-                admin: Some(STRANGER)
-            }
+            nominated.admin,
+            Some(ADMIN),
+            "the authority has not moved yet"
         );
+        assert_eq!(nominated.pending, Some(STRANGER));
     }
 
     #[test]
-    fn nobody_but_the_authority_can_move_it() {
-        let config = config_account(&AdminAccount { admin: Some(ADMIN) });
+    fn nobody_but_the_authority_can_nominate() {
+        let config = config_account(&holding(ADMIN));
 
         assert_eq!(
-            transfer(&config, &signer(STRANGER), STRANGER, OURS),
+            nominate(&config, &signer(STRANGER), STRANGER, OURS),
             Err(AdminError::Unauthorised)
         );
     }
 
     #[test]
-    fn the_authority_cannot_be_moved_to_the_zero_key() {
-        // Unrecoverable if stored: no signer can produce it, and the transfer
-        // path is the only way out of it.
-        let config = config_account(&AdminAccount { admin: Some(ADMIN) });
+    fn the_zero_key_cannot_be_nominated() {
+        let config = config_account(&holding(ADMIN));
 
         assert_eq!(
-            transfer(&config, &signer(ADMIN), [0u8; 32], OURS),
+            nominate(&config, &signer(ADMIN), [0u8; 32], OURS),
             Err(AdminError::AuthorityIsZero)
+        );
+    }
+
+    #[test]
+    fn a_second_nomination_replaces_the_first() {
+        let config = config_account(&AdminAccount {
+            admin: Some(ADMIN),
+            pending: Some(STRANGER),
+        });
+
+        let nominated = nominate(&config, &signer(ADMIN), THIRD, OURS).expect("admin signs");
+
+        assert_eq!(
+            nominated.pending,
+            Some(THIRD),
+            "only the latest can be accepted"
+        );
+    }
+
+    #[test]
+    fn the_nominee_takes_the_authority_by_signing_for_it() {
+        // The half that makes a mistyped nomination survivable: until this
+        // happens, the authority has not moved anywhere.
+        let config = config_account(&AdminAccount {
+            admin: Some(ADMIN),
+            pending: Some(STRANGER),
+        });
+
+        let taken = accept(&config, &signer(STRANGER), OURS).expect("the nominee signs");
+
+        assert_eq!(taken, holding(STRANGER), "and the nomination is spent");
+    }
+
+    #[test]
+    fn nobody_but_the_nominee_can_accept() {
+        let config = config_account(&AdminAccount {
+            admin: Some(ADMIN),
+            pending: Some(STRANGER),
+        });
+
+        assert_eq!(
+            accept(&config, &signer(THIRD), OURS),
+            Err(AdminError::NotTheNominee)
+        );
+        // Including the outgoing authority, which cannot hand itself the key it
+        // nominated somebody else for.
+        assert_eq!(
+            accept(&config, &signer(ADMIN), OURS),
+            Err(AdminError::NotTheNominee)
+        );
+    }
+
+    #[test]
+    fn there_is_nothing_to_accept_without_a_nomination() {
+        let config = config_account(&holding(ADMIN));
+
+        assert_eq!(
+            accept(&config, &signer(STRANGER), OURS),
+            Err(AdminError::NoNomination)
+        );
+    }
+
+    #[test]
+    fn the_authority_can_be_given_up_permanently() {
+        // RFP-001's contract includes this. What it costs is in `[M2-06:01]`: a
+        // revoked feed's signer set can never be rotated again.
+        let config = config_account(&holding(ADMIN));
+
+        let given_up = revoke(&config, &signer(ADMIN), OURS).expect("admin signs");
+
+        assert_eq!(given_up.admin, None);
+    }
+
+    #[test]
+    fn nobody_but_the_authority_can_give_it_up() {
+        let config = config_account(&holding(ADMIN));
+
+        assert_eq!(
+            revoke(&config, &signer(STRANGER), OURS),
+            Err(AdminError::Unauthorised)
+        );
+    }
+
+    #[test]
+    fn giving_up_the_authority_also_cancels_a_pending_nomination() {
+        // Otherwise the nominee could accept afterwards and take an authority
+        // its holder had already given up -- revocation would be undoable by
+        // whoever was nominated last.
+        let config = config_account(&AdminAccount {
+            admin: Some(ADMIN),
+            pending: Some(STRANGER),
+        });
+
+        let given_up = revoke(&config, &signer(ADMIN), OURS).expect("admin signs");
+
+        assert_eq!(given_up.pending, None);
+        assert_eq!(
+            accept(&config_account(&given_up), &signer(STRANGER), OURS),
+            Err(AdminError::NoNomination)
         );
     }
 
@@ -490,9 +724,7 @@ mod tests {
         // The attack this closes: supply any account naming yourself as admin.
         // Ownership is what makes the stored key this program's claim rather
         // than the caller's.
-        let mut forged = config_account(&AdminAccount {
-            admin: Some(STRANGER),
-        });
+        let mut forged = config_account(&holding(STRANGER));
         forged.account.program_owner = SOMEONE_ELSE;
 
         assert_eq!(
@@ -506,7 +738,7 @@ mod tests {
         // The dispatcher's `#[account(signer)]` refuses this before a handler
         // runs, so reaching it means the annotation was dropped. Checked here
         // too, because that is where a test can see it.
-        let config = config_account(&AdminAccount { admin: Some(ADMIN) });
+        let config = config_account(&holding(ADMIN));
         let mut unsigned = signer(ADMIN);
         unsigned.is_authorized = false;
 
@@ -518,7 +750,7 @@ mod tests {
 
     #[test]
     fn a_config_account_that_does_not_decode_is_refused() {
-        let mut rubbish = config_account(&AdminAccount { admin: Some(ADMIN) });
+        let mut rubbish = config_account(&holding(ADMIN));
         rubbish.account.data = Data::try_from(vec![0xFF; 3]).expect("fits");
 
         assert_eq!(
@@ -532,7 +764,10 @@ mod tests {
         // No instruction writes `None`. An account holding it is a corruption or
         // an out-of-band write, and the answer is the same one revocation would
         // give rather than an accidental accept.
-        let config = config_account(&AdminAccount { admin: None });
+        let config = config_account(&AdminAccount {
+            admin: None,
+            pending: None,
+        });
 
         assert_eq!(
             authorise(&config, &signer(ADMIN), OURS),

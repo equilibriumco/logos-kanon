@@ -14,6 +14,17 @@
                 ]
               }
             }
+          },
+          {
+            "name": "pending",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
           }
         ],
         "kind": "struct"
@@ -412,7 +423,59 @@
           }
         }
       ],
-      "name": "transfer_admin"
+      "name": "nominate_admin"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "accept_admin"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "revoke_admin"
     }
   ],
   "name": "kanon_aggregator",

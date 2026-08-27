@@ -256,24 +256,58 @@ mod kanon_aggregator {
         Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 
-    /// Hands the admin authority to another key.
+    /// Nominates a key to take the admin authority. It does not take it yet.
     ///
     /// Expected accounts:
     /// 1. `config` — the account holding the authority.
     /// 2. `admin` — the current authority.
     #[instruction]
-    pub fn transfer_admin(
+    pub fn nominate_admin(
         ctx: ProgramContext,
         #[account(mut, pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
         new_admin: [u8; 32],
     ) -> SpelResult {
-        let post_states = aggregator_program::admin::transfer_admin(
+        let post_states = aggregator_program::admin::nominate_admin(
             config,
             admin,
             new_admin,
             ctx.self_program_id,
         )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
+    }
+
+    /// Takes the admin authority, as the nominated key.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — the account holding the authority.
+    /// 2. `admin` — the nominated key, signing for itself. This is the signature
+    ///    that makes a mistyped nomination cost a second nomination rather than
+    ///    the program's whole administrative surface.
+    #[instruction]
+    pub fn accept_admin(
+        ctx: ProgramContext,
+        #[account(mut, pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
+        #[account(signer)] admin: AccountWithMetadata,
+    ) -> SpelResult {
+        let post_states =
+            aggregator_program::admin::accept_admin(config, admin, ctx.self_program_id)?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
+    }
+
+    /// Gives up the admin authority permanently, cancelling any nomination.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — the account holding the authority.
+    /// 2. `admin` — the current authority.
+    #[instruction]
+    pub fn revoke_admin(
+        ctx: ProgramContext,
+        #[account(mut, pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
+        #[account(signer)] admin: AccountWithMetadata,
+    ) -> SpelResult {
+        let post_states =
+            aggregator_program::admin::revoke_admin(config, admin, ctx.self_program_id)?;
         Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 }
@@ -398,6 +432,43 @@ mod tests {
             super::kanon_aggregator::__validate_pause_feed(&accounts, &OURS, &instruction),
             Err(SpelError::Unauthorized { .. })
         ));
+    }
+
+    #[test]
+    fn an_unconfigured_build_refuses_to_establish_an_authority() {
+        // What this covers that the host suite cannot: that the handler reads
+        // `GENESIS_ADMIN` rather than a genesis of its own, and that a build
+        // nobody configured refuses everyone instead of accepting the first
+        // caller. The host tests pass a genesis in as an argument, so only here
+        // is the constant itself on the path.
+        //
+        // It asserts the unconfigured case because that is the one CI can build.
+        // A configured build is a deployment concern, and `[M2-06:01]` records
+        // that the key is a build input.
+        assert_eq!(
+            super::GENESIS_ADMIN,
+            [0u8; 32],
+            "CI builds carry no genesis key"
+        );
+
+        let config = AccountWithMetadata {
+            account: Account::default(),
+            is_authorized: false,
+            account_id: admin_config_id(),
+        };
+        let mut admin = account([0xAD; 32]);
+        admin.is_authorized = true;
+
+        let ctx = super::ProgramContext::new(OURS, [0u32; 8]);
+        let refused = super::kanon_aggregator::initialise_admin(ctx, config, admin)
+            .expect_err("a build with no genesis authority must refuse");
+
+        // By code rather than by variant: `SpelError` carries no `PartialEq`, and
+        // the code is the part a caller acts on.
+        assert_eq!(
+            refused.error_code(),
+            SpelError::from(aggregator_program::admin::AdminError::AuthorityIsZero).error_code()
+        );
     }
 
     #[test]

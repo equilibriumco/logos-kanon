@@ -123,14 +123,37 @@ pub enum Instruction {
     /// 2. `admin` — the genesis authority, authorising itself.
     InitialiseAdmin,
 
-    /// Hand the admin authority to another key.
+    /// Nominate a key to take the admin authority. It does not take it yet.
+    ///
+    /// Two steps rather than one, so a key nobody controls never becomes the
+    /// authority: an authority that cannot sign can neither administer a feed
+    /// nor hand the job on, and rebuilding to recover strands every account the
+    /// build created. It also lets a handover run across two parties and two
+    /// transactions, which the servicing handover needs.
     ///
     /// Expected accounts:
     /// 1. `config` — the account holding the authority.
     /// 2. `admin` — the current authority.
-    TransferAdmin {
-        /// The key the authority moves to. The zero key is refused, because no
-        /// signer can produce it and this is the only path out of it.
+    NominateAdmin {
+        /// The nominated key. The zero key is refused: nothing can sign as it.
         new_admin: [u8; 32],
     },
+
+    /// Take the admin authority, as the nominated key.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — the account holding the authority.
+    /// 2. `admin` — the nominated key, signing for itself.
+    AcceptAdmin,
+
+    /// Give up the admin authority permanently, cancelling any nomination.
+    ///
+    /// RFP-001's contract includes this and `[M2-06:01]` records what it costs:
+    /// a revoked feed's signer set can never be rotated again, so under the
+    /// servicing SLA pausing is the only lever left.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — the account holding the authority.
+    /// 2. `admin` — the current authority.
+    RevokeAdmin,
 }

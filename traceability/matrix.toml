@@ -164,16 +164,27 @@ verified_by = [
   "test:a_signer_who_is_not_the_genesis_key_cannot_establish_the_authority",
   "test:a_build_with_no_genesis_authority_cannot_be_initialised_by_anyone",
   "test:an_authority_already_established_is_not_established_again",
-  "test:the_authority_moves_to_the_key_the_admin_names",
-  "test:nobody_but_the_authority_can_move_it",
-  "test:the_authority_cannot_be_moved_to_the_zero_key",
+  "test:a_nomination_is_recorded_without_handing_the_authority_over",
+  "test:nobody_but_the_authority_can_nominate",
+  "test:the_zero_key_cannot_be_nominated",
+  "test:a_second_nomination_replaces_the_first",
+  "test:the_nominee_takes_the_authority_by_signing_for_it",
+  "test:nobody_but_the_nominee_can_accept",
+  "test:there_is_nothing_to_accept_without_a_nomination",
+  "test:the_authority_can_be_given_up_permanently",
+  "test:nobody_but_the_authority_can_give_it_up",
+  "test:giving_up_the_authority_also_cancels_a_pending_nomination",
   "test:establishing_the_authority_claims_the_config_account",
-  "test:moving_the_authority_writes_the_account_without_claiming_it_again",
+  "test:an_initialisation_lands_and_claims_the_address_the_constraint_checks",
+  "test:the_authority_an_initialisation_writes_can_administer_a_feed",
+  "test:a_handover_lands_in_two_transactions_and_moves_the_authority_once",
+  "test:a_revocation_lands_and_leaves_nobody_able_to_administer",
   "test:the_admin_config_address_the_constraint_accepts_is_the_derived_one",
   "test:an_account_that_is_not_the_admin_config_is_refused_by_the_generated_validator",
   "test:an_administrative_instruction_refuses_an_admin_that_did_not_sign",
+  "test:an_unconfigured_build_refuses_to_establish_an_authority",
 ]
-note = "The gate has landed and the four operations have not. `[M2-06:01]` records what M1-07 could not settle: RFP-001's library is written but unmerged, and the surface it needs is larger than the check this row's M2-06 was scoped as -- an authority has to be stored somewhere, and none of the six instructions M2-01 declared could establish one. So the authority is an account this program owns, at an address the constraint publishes rather than the program explains, established once by whoever holds the build's genesis key and transferable afterwards without a redeploy. Genesis-gated rather than first-come because a PDA hashes the program id and the program id is the image id, so every rebuild presents a fresh default config account and an unguarded first write is a race once per deployment, whose winner sets the signer sets that decide what a price means. `authorise` is what the administrative instructions call and each now takes the config account beside the signer, so a wrong admin is refused before a body that does not exist yet is reached; the bodies are M2-07 to M2-10. The check is Rust here and not `#[require_admin]`, because a gate injected into macro-expanded dispatcher code has no reachable host test -- the two constraint tests in the guest workspace are the shape that forces -- and SEC2 asks for the unauthorised-caller reject to be tested rather than asserted. Two keys are refused rather than stored, the zero key and `None`, since no signer produces either and transfer is the only way out."
+note = "The authority has landed and the four operations it guards have not. `[M2-06:01]` records what M1-07 could not settle: RFP-001's library is written but unmerged, and the surface it needs is larger than the check M2-06 was scoped as -- an authority has to be stored somewhere, and none of the six instructions M2-01 declared could establish one. So it is an account this program owns, at an address the constraint publishes rather than the program explains, and `authorise` is what the administrative instructions call; each now takes that account beside the signer, so a wrong admin is refused before a body that does not exist yet. The bodies are M2-07 to M2-10. Establishing it is gated on a genesis key the build carries rather than on being first, because a PDA hashes the program id and the program id is the image id: every rebuild presents a fresh default config account, so an unguarded first write is a race once per deployment whose winner sets the signer sets that decide what a price means. A handover is two steps, nominate then accept, because a one-step transfer makes any mistyped key the authority immediately and that state is terminal -- every administrative instruction stops, `initialise` refuses a config account that is no longer default, and rebuilding to recover strands the accounts the build created. The nominee's own signature is what a key nobody controls can never produce. Revocation is exposed because F6 names RFP-001's authority and revocation is one of its hard requirements, and it clears any pending nomination so a nominee cannot accept an authority its holder gave up; what it costs a serviced feed is in the ADR. The check is Rust here and not `#[require_admin]`, because a gate injected into macro-expanded dispatcher code has no reachable host test -- the four tests in the guest workspace are the shape that forces -- and SEC2 asks for the unauthorised-caller reject to be tested rather than asserted. `tests/admin.rs` is the other half of that: the post-states go to LEZ's own `validate_execution`, and the claim is checked against the address the constraint derives rather than against a restatement of the rule."
 
 [[row]]
 id = "F7"

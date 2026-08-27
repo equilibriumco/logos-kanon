@@ -79,12 +79,33 @@ the aggregator: they set the signer sets that decide what a price means. The gen
 key closes that for every build rather than for the first one. Ordinary rotation does
 not touch it, because the authority that instructions check is the account's.
 
-**Transfer, and no revocation.** #212 has permanent revocation; nothing in RFP-020
-asks for it. A revoked authority is a feed whose signer set can never be rotated
-again, on infrastructure this engagement operates under an availability target through
-March 2028 — RedStone rotating its roster after a revocation would leave every feed
-permanently unverifiable, with pausing the only remaining lever. The capability's
-downside is unbounded and its upside is a requirement nobody has.
+**A handover is two steps: nominate, then accept.** A one-step transfer accepts any
+key the authority names, and nothing makes the named key prove it can sign. A typo, an
+account nobody holds, or a PDA that cannot sign becomes the authority immediately — and
+that state is terminal: registration, roster rotation, deregistration and the emergency
+pause all stop, `initialise` refuses a config account that is no longer default, and
+rebuilding to recover changes the program id and strands every account the build
+created. Refusing the zero key, which an earlier draft of this record did, guards one
+value of a hazard whose whole class is unrecoverable.
+
+So a nomination is stored and is not the authority. It becomes the authority only when
+the nominated key signs for itself, which a key nobody controls can never do; a mistyped
+nomination costs a second nomination. Two steps rather than a co-signed transfer because
+the one handover this engagement has actually committed to — the servicing handover at
+the end of the operating period — is asynchronous and between two parties, and a
+co-signature would make it a coordination exercise across organisations.
+
+**Revocation is exposed.** An earlier draft of this record omitted it: nothing in
+RFP-020's own text asks for it, and a revoked authority is a feed whose signer set can
+never be rotated again — RedStone rotating its roster afterwards would leave every feed
+permanently unverifiable with pausing the only lever left. That reasoning survives as a
+hazard to document, and it does not survive as a reason to narrow the contract: F6 names
+RFP-001's authority, and revocation is one of RFP-001's four hard functionality
+requirements. Omitting it is a scope variance to agree with Logos, not a local product
+choice — and since `None` is already a stored state every read refuses, exposing it
+costs one instruction, which is cheaper than the conversation. Revocation clears any
+pending nomination with it, or a nominee could accept afterwards and take an authority
+its holder had given up.
 
 **The check runs in `aggregator-program`, not in a macro on the guest handler.**
 `#[require_admin(config)]` injects its check into `#[lez_program]`-expanded dispatcher
@@ -99,11 +120,19 @@ from the suite a contributor runs. This is the same reason `submit_price` checks
 feed's owner in Rust rather than leaning on a constraint
 ([ADR 32](0032-one-price-account-per-feed-and-anyone-may-fill-it.md)).
 
-**Our own state type, carrying `AdminState`'s field shape and not `AdminConfig`.**
-Declared as `{ admin: Option<[u8; 32]> }`, it is byte-identical to `AdminState` under
-borsh, so adopting the upstream type later is a swap and not a migration.
-`AdminConfig` is that plus a demonstration `config_value: u64`, and the macro reads
-`AdminConfig` by name — so the macro and a program with its own config state are
+**Our own state type, and not `AdminConfig`.** `{ admin: Option<[u8; 32]>, pending:
+Option<[u8; 32]> }`. The `admin` field alone would have been byte-identical to
+`AdminState` under borsh, and an earlier draft of this record claimed that as a reason
+to keep it — adopting the upstream type later would be a deletion rather than a
+migration. The nomination field ends that: borsh consumes its input exactly, so a
+two-field account does not decode as a one-field one. The trade is worth taking, and
+plainly: byte identity bought a cheaper version of a swap this record already assesses
+as close to cosmetic, while the second field is what stops the authority being bricked
+by a typo. Pre-mainnet the migration it costs is one `initialise` on a fresh config
+account.
+
+`AdminConfig` is `AdminState` plus a demonstration `config_value: u64`, and the macro
+reads `AdminConfig` by name — so the macro and a program with its own config state are
 mutually exclusive whatever the field costs. Having declined the macro on testability,
 there is nothing left to buy the integer with.
 
@@ -127,9 +156,11 @@ holds.
 - **Losing the genesis key matters only before `initialize`.** After it, the account
   holds the authority and the constant is spent. Before it, recovery is a rebuild —
   which, this early, costs nothing but a redeploy.
-- **When #212 lands, the swap is to its library and not to its macro.** Reading
-  `AdminState` from the same slot at the same seed is an implementation change behind
-  the trait, and byte-identical state makes it a deletion rather than a migration.
+- **When #212 lands, the swap is to its library and not to its macro, and it is a
+  migration.** `AdminState` has no nomination field, so adopting it means either
+  embedding it beside our own `pending` or giving up the two-step handover. Reading it
+  from the same slot at the same seed is still an implementation change behind the
+  trait; it is no longer a deletion.
 - **And that swap would be close to cosmetic, which is worth saying rather than
   filing as an integration.** What RFP-001 was for is a shared admin convention across
   the estate — one shape that tooling, auditors and the next program recognise. Under
@@ -140,9 +171,11 @@ holds.
   #212 rather than a cost of this decision, and it is the more useful thing to send
   Logos than another ask about the merge date: not *when* does it land, but that as
   written it does not fit a program keeping its own config state, and why.
-- **ADR 14's "the same surface locally" is now false in both directions.** This
-  implements less than #212 — no revocation — and more: a bootstrap #212 has no
-  equivalent of, because its sample's `initialize` is open to whoever calls it first.
+- **ADR 14's "the same surface locally" is now false, in the direction of more rather
+  than less.** Every operation #212 has is here; on top of it are a genesis-gated
+  bootstrap, which #212 has no equivalent of because its sample's `initialize` is open
+  to whoever calls it first, and a nomination step, which #212's `transfer_admin` has
+  no equivalent of because it moves the authority on one signature.
 - **The rebuild-orphans-state problem now has a third instance**: price accounts,
   feed registrations, and the config account. That is a platform property rather than
   a decision of this repository, so it belongs in `m0/versions.md` with the questions
@@ -165,9 +198,17 @@ holds.
   registration is the operation that would need the authority it is establishing, so
   the first registration of every feed is unauthenticated and the program's
   registrations mean nothing.
-- **Mirror `AdminConfig` byte for byte, and use the macro.** The migration argument
-  for this is moot — our own type is already byte-identical to `AdminState` — so the one
-  thing mirroring buys is `#[require_admin]`, which reads `AdminConfig` by name. It
+- **A one-step transfer, refusing only the zero key.** What this record decided first,
+  and wrong: it guards one value of a hazard whose class is unrecoverable, and the
+  terminal state it admits stops every administrative instruction with no path back.
+- **A one-step transfer co-signed by the incoming authority.** Sound, and one field and
+  one instruction cheaper. Rejected on the handover: the incoming authority is another
+  organisation at the end of the operating period, and requiring both signatures in one
+  transaction makes a cross-party handover a scheduling problem rather than two
+  independent steps.
+- **Mirror `AdminConfig` byte for byte, and use the macro.** Byte identity is already
+  given up by the nomination field, so the one thing mirroring buys is
+  `#[require_admin]`, which reads `AdminConfig` by name. It
   therefore falls with the macro: six saved lines per instruction, against a security
   gate whose only test lives in the workspace `cargo test --workspace` does not reach,
   and a `config_value` on chain that nothing writes.
