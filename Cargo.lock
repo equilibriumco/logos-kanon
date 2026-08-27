@@ -2380,6 +2380,9 @@ dependencies = [
 name = "pull-lib"
 version = "0.1.0"
 dependencies = [
+ "hex",
+ "kanon-clock",
+ "serde_json",
  "verifier-core",
 ]
 

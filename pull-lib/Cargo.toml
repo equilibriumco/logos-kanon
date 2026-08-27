@@ -12,3 +12,15 @@ license.workspace = true
 
 [dependencies]
 verifier-core.workspace = true
+
+# The clock, and the reason it is a dependency rather than a parameter: pull mode
+# runs inside a consumer's program, so the consumer is the caller -- and a caller
+# that can choose the clock account can make its own staleness check advisory.
+# ADR 13's pinning is enforced here for the same reason it is in the aggregator.
+kanon-clock.workspace = true
+
+[dev-dependencies]
+# The committed RedStone capture is the fixture, read by the shared reader in
+# `verifier-core/tests/support/`, which each consumer includes by path.
+serde_json = "1"
+hex = "0.4"
