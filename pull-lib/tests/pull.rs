@@ -17,8 +17,8 @@
 // price here, which is a test's business and not part of a consumer's surface.
 use pull_lib::verifier_core::value::median;
 use pull_lib::{
-    verify_price, AssetPair, DecodeError, FeedConfig, InProgramBackend, PullConfig, SignerAddress,
-    VerifyError, CLOCK_ACCOUNT_ID,
+    verify_price, AssetPair, ConfigError, DecodeError, FeedConfig, InProgramBackend, PullConfig,
+    SignerAddress, VerifyError, CLOCK_ACCOUNT_ID, MAX_SIGNERS,
 };
 
 #[path = "../../verifier-core/tests/support/vectors.rs"]
@@ -178,6 +178,97 @@ fn a_package_the_consumer_did_not_authorise_is_refused_outright() {
             &InProgramBackend::new(),
         ),
         Err(VerifyError::UnauthorisedSigner)
+    );
+}
+
+#[test]
+fn a_roster_narrower_than_the_payload_refuses_rather_than_narrowing() {
+    // Named for the operational reading, which is what `[M3-01:01]` records: a
+    // consumer that authorises three of the five signing this feed does not
+    // verify against those three. The other two packages carry the requested
+    // feed, so they are recovered, and the first one outside the roster ends the
+    // verification.
+    //
+    // Not new coverage -- perturbing the membership check to skip a stranger
+    // rather than refuse also fails
+    // `a_package_the_consumer_did_not_authorise_is_refused_outright`, whose
+    // roster leaves four authorised signers against a threshold of three. This
+    // is the same property with the subset stated deliberately, so a reader
+    // looking for it finds it by name.
+    //
+    // The price is no help in seeing it: the median of three of these five is
+    // the median of all five, so a silent narrowing returns the same number. The
+    // refusal is the assertion.
+    let v = vectors::named("BTC");
+    let roster = &v.signers[..3];
+
+    assert_eq!(
+        verify_price(
+            &v.payload,
+            &config(&v, roster),
+            &pair(),
+            &CLOCK_ACCOUNT_ID,
+            &clock_data(v.timestamp_ms),
+            &InProgramBackend::new(),
+        ),
+        Err(VerifyError::UnauthorisedSigner)
+    );
+}
+
+#[test]
+fn a_roster_a_consumer_cannot_use_is_refused_when_it_builds_one() {
+    // Here for the re-export check, which is the part of this that is only
+    // reachable from this crate. The guards themselves are `verifier-core`'s and
+    // are asserted there -- `a_repeated_signer_is_rejected` and
+    // `more_signers_than_the_buffers_hold_is_rejected` -- and the push path
+    // reaches the same function through `FeedAccount::config`, so this is not a
+    // pull-specific behaviour and nothing here should imply it is.
+    //
+    // What is pull-specific: `ConfigError` and `MAX_SIGNERS` are re-exports a
+    // consumer needs in order to build a roster at all, the header above claims
+    // this file is what keeps such re-exports honest, and until now neither was
+    // named here. Dropping either from `pull-lib`'s `pub use` lines stops this
+    // file compiling; nothing else in this suite names them, and CI runs no
+    // rustdoc, so the intra-doc links that mention them fail no build.
+    let v = vectors::named("BTC");
+
+    // A duplicate would otherwise be a roster whose length overstates how many
+    // distinct signers can report, and the walk files a report by position, so
+    // the second copy would be a slot nothing can ever fill.
+    let mut duplicated = v.signers.clone();
+    duplicated.push(v.signers[0]);
+    assert_eq!(
+        FeedConfig::try_new(
+            v.feed_id.as_bytes(),
+            pair(),
+            DECIMALS,
+            MAX_AGE_MS,
+            &duplicated,
+            THRESHOLD,
+        ),
+        Err(ConfigError::DuplicateSigner)
+    );
+
+    // From one rather than zero, so the roster is invalid for exactly the reason
+    // asserted: `SignerAddress([0; 20])` is refused as the zero address, and a
+    // refactor checking address shape before length would fail this test while
+    // `MAX_SIGNERS` was still perfectly enforced.
+    let too_many: Vec<SignerAddress> = (1..=MAX_SIGNERS + 1)
+        .map(|i| SignerAddress([u8::try_from(i).expect("at most 33"); 20]))
+        .collect();
+    assert_eq!(
+        FeedConfig::try_new(
+            v.feed_id.as_bytes(),
+            pair(),
+            DECIMALS,
+            MAX_AGE_MS,
+            &too_many,
+            THRESHOLD,
+        ),
+        Err(ConfigError::TooManySigners {
+            signers: MAX_SIGNERS + 1,
+            max: MAX_SIGNERS,
+        })
     );
 }
 
