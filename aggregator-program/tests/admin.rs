@@ -268,10 +268,12 @@ fn an_unowned_admin_that_has_transacted_cannot_be_used() {
 fn a_pristine_admin_cannot_establish_the_authority() {
     // The case `an_unowned_admin_that_has_transacted_cannot_be_used` cannot
     // reach: LEZ accepts a pristine signer's first transaction, so nothing
-    // downstream refuses it. Without this guard the genesis key would establish
-    // the authority once and be unusable from the next transaction on -- and
-    // unusable in every other program too, with whatever balance it holds
-    // frozen.
+    // downstream refuses it. And it is terminal, not merely wasteful --
+    // `initialise_admin` writes and claims the config before the key is
+    // stranded, so the authority ends up on an account that can never appear in
+    // a post-state again and `initialise` answers `AlreadyInitialised`
+    // afterwards. The account cannot even be funded, since receiving a balance
+    // means appearing in a post-state.
     assert_eq!(
         initialise_admin(fresh_config(), pristine(GENESIS), &GENESIS),
         Err(AdminError::AdminUnowned)
@@ -280,10 +282,10 @@ fn a_pristine_admin_cannot_establish_the_authority() {
 
 #[test]
 fn a_pristine_nominee_cannot_accept_the_authority() {
-    // The unrecoverable half. Acceptance moves the authority before the nominee
-    // is ever used, so a stranded nominee takes the administrative surface with
-    // it: `initialise` refuses a config account that is no longer default, and
-    // no other key can take the authority back.
+    // Terminal in the same way, and with a wider window: this is reachable
+    // during normal operation rather than once at deployment, and it strands an
+    // authority the previous holder has already given up. Neither entry point is
+    // the milder one.
     let admin = signer(GENESIS);
     let posts = initialise_admin(fresh_config(), admin.clone(), &GENESIS).expect("genesis signs");
     let config = config_after(&posts);

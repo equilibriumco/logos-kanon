@@ -154,14 +154,15 @@ holds.
   balance and still be owned by nobody, in which case it is already stranded. LEZ
   increments every signer's nonce after applying a state diff, outside program execution
   (`state.rs:212-216`), and rule 7 refuses a post-state whose program owner is the
-  default one unless the pre-state was pristine (`program.rs:725`). So a default-owned
-  key passes exactly once, while it is still pristine, and is refused in every
-  post-state afterwards — of any program, not only this one, with whatever balance it
-  holds frozen with it. `initialise` and `accept` therefore refuse a default-owned
-  account with `AdminUnowned`, because the alternative was establishing an authority
-  that could never be exercised, and on `accept` doing it irreversibly: acceptance moves
-  the authority first, and `initialise` refuses a config account that is no longer
-  default. `Claim::Authorized` would rescue a *pristine* key — the claim is honoured
+  default one unless the pre-state was pristine (`program.rs:725`). So a default-owned key passes exactly once, while it is still pristine, and afterwards
+  cannot appear in a valid post-state of any program — which freezes whatever it
+  already holds and means it can never be funded either. `initialise` and `accept`
+  therefore refuse a default-owned account with `AdminUnowned`. Both were terminal,
+  not just `accept`: `initialise_admin` writes the config and claims it before the key
+  is stranded, so `initialise` answers `AlreadyInitialised` from then on exactly as it
+  does after an acceptance. What is specific to `accept` is the width of the window —
+  reachable during normal operation rather than once at deployment, and stranding an
+  authority the previous holder has already given up. `Claim::Authorized` would rescue a *pristine* key — the claim is honoured
   before the nonce bump, so the account comes out program-owned — and this program
   deliberately does not take that route: rule 4 would make that ownership permanent and
   rule 5 would let this program move the operator's balance. What the claim does not

@@ -171,7 +171,7 @@ out per bullet rather than by a count:
   one-line manifest change would fix for every downstream consumer (ADR 9). The
   second half is `m0/versions.md` item 3; the LGPL question is stated in
   `deny.toml` beside the exceptions it justifies rather than there.
-- **Is a program obliged to claim the signers it takes** (`[M2-06:01]`). LEZ strands a
+- **Must a program claim or reject a default-owned signer** (`[M2-06:01]`). LEZ strands a
   default-owned signer after its first transaction, chain-wide, and the claim mechanism
   is the escape a program has to take deliberately. This one declines to — it will not
   take ownership of an operator's wallet — and refuses such a key instead.

@@ -188,7 +188,7 @@ clarification names one crate and can be checked. This is the cheapest of the fi
 asks: a one-line `license = "..."` in each manifest removes all three entries and
 stops every downstream consumer having to make the same judgement call privately.
 
-**4. Is a program obliged to claim the signers it takes?** LEZ increments every signer's
+**4. Must a program claim or reject a default-owned signer?** LEZ increments every signer's
 nonce after applying a state diff, outside program execution
 (`lee/state_machine/src/state.rs:212-216`), and `validate_execution` rule 7 refuses any
 post-state whose program owner is the default one unless the pre-state was
@@ -204,8 +204,10 @@ that has already transacted unclaimed. That one is unrecoverable.
 
 So the question is not whether a public account can sit unowned — it can, and then it is
 dead. It is whether first-touch claiming is the intended route by which a public account
-acquires an owner, and whether it is intended that a program which takes a signer and
-declines to claim it destroys that account permanently. This program is one of those: it
+acquires an owner, and whether a program that takes a default-owned signer is obliged to
+claim it *or* refuse it. That form is the one whose answer is actionable: "you must
+claim" would be a change to every program that takes a signer, while "claim or reject"
+is satisfied by a guard. This program is one of those: it
 refuses a default-owned admin key with `AdminUnowned` rather than claim the operator's
 wallet, because rule 4 would make that ownership permanent and rule 5 would let this
 program move the balance. Measured both directions in

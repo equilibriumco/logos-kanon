@@ -87,12 +87,21 @@ pub enum AdminError {
     ///
     /// Rule 7 refuses a post-state whose owner is the default one unless the
     /// pre-state was pristine, and LEZ bumps every signer's nonce after applying
-    /// a state diff. A default-owned key therefore passes once, while it is
-    /// still pristine, and is refused in every post-state afterwards -- of any
-    /// program, not only this one. Establishing or accepting the authority with
-    /// such a key would work exactly once. On [`accept`] there is no way back:
-    /// the authority has already moved, and [`initialise`] refuses a config
-    /// account that is no longer default.
+    /// a state diff, outside program execution. A default-owned key therefore
+    /// passes exactly once, while it is still pristine, and afterwards cannot
+    /// appear in a valid post-state of any program -- which freezes whatever it
+    /// already holds and means it can never be funded either, since receiving a
+    /// balance is itself appearing in a post-state. The key still signs; it is
+    /// the account that is finished.
+    ///
+    /// **Both entry points are terminal**, not only [`accept`].
+    /// [`initialise_admin`] writes the config and claims it before the key is
+    /// stranded, so [`initialise`] afterwards answers
+    /// [`Self::AlreadyInitialised`] exactly as it does after an acceptance. What
+    /// is specific to [`accept`] is the width of the window rather than the
+    /// outcome: it is reachable during normal operation instead of once at
+    /// deployment, and it strands an authority the previous holder has already
+    /// given up.
     ///
     /// Refused here so that a runbook slip is a typed refusal rather than a
     /// silent and irreversible one. The key must be an account some program
@@ -569,9 +578,13 @@ mod tests {
             AdminError::AdminUnowned,
         ];
 
-        // No wildcard arm, so a twelfth variant fails to compile here rather
-        // than being added to the enum and silently missed by the list above.
-        // The length assertion is what makes it appear in the list too.
+        // No wildcard arm, so a twelfth variant fails to compile here. That
+        // does not prove the list above is complete -- an author can add the arm
+        // and forget the entry -- so the list is maintained by hand. What the
+        // match buys is that the omission is loud: `code()` forces a new variant
+        // to be given a number, and nothing else forces anyone to come here at
+        // all. Earning "by construction" would mean generating the enum and an
+        // iterable list of its variants from one macro.
         for cause in &causes {
             match cause {
                 AdminError::ConfigNotOurs
@@ -879,10 +892,12 @@ mod tests {
 
     #[test]
     fn a_pristine_key_cannot_establish_the_authority() {
-        // The state a runbook produces by default. LEZ accepts it once -- rule 7
-        // only guards a pre-state that is not pristine -- and then bumps its
-        // nonce, after which the account is refused in every post-state of every
-        // program. Refusing it here is what turns that into a typed error.
+        // The state a runbook produces by default, and terminal rather than
+        // merely wasteful: `initialise_admin` writes the config and claims it
+        // before LEZ bumps the key's nonce, so the authority is established on an
+        // account that can never appear in a post-state again, and `initialise`
+        // answers `AlreadyInitialised` from then on. Refusing it here is what
+        // turns that into a typed error.
         assert_eq!(
             initialise(&fresh_config(), &pristine(ADMIN), &ADMIN),
             Err(AdminError::AdminUnowned)
@@ -891,10 +906,11 @@ mod tests {
 
     #[test]
     fn a_pristine_nominee_cannot_accept_the_authority() {
-        // The unrecoverable half: acceptance moves the authority first. If a
-        // pristine nominee could accept, the authority would land on a key LEZ
-        // strands one transaction later, and `initialise` refuses a config
-        // account that is no longer default -- so nothing could take it back.
+        // Terminal in the same way `initialise` is, and reachable during normal
+        // operation rather than once at deployment. Acceptance moves the
+        // authority onto a key LEZ strands one transaction later, and
+        // `initialise` refuses a config account that is no longer default, so
+        // nothing could take it back.
         let config = config_account(&AdminAccount {
             admin: Some(ADMIN),
             pending: Some(STRANGER),
