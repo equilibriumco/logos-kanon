@@ -43,6 +43,12 @@ fn every_variant() -> Vec<Instruction> {
         Instruction::DeregisterFeed,
         Instruction::PauseFeed,
         Instruction::UnpauseFeed,
+        Instruction::InitialiseAdmin,
+        Instruction::NominateAdmin {
+            new_admin: [5u8; 32],
+        },
+        Instruction::AcceptAdmin,
+        Instruction::RevokeAdmin,
     ]
 }
 

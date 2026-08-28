@@ -164,7 +164,7 @@ exception in `deny.toml` and raised here rather than waved through. The gate its
 
 ## Open: questions outstanding with Logos
 
-Four, in descending order of how much they block delivery. All four concern
+Five, in descending order of how much they block delivery. All five concern
 repositories outside this one, which is why they are tracked here rather than resolved
 in code.
 
@@ -184,11 +184,36 @@ cargo-deny reports them as unlicensed. They are not: `lez-programs` ships a LICE
 file (MIT) and `spel` ships LICENSE-MIT and LICENSE-APACHE-v2, and the terms are
 permissive and compatible with the delivery licences. `deny.toml` carries three
 `[[licenses.clarify]]` entries rather than a widened allowlist, because a
-clarification names one crate and can be checked. This is the cheapest of the four
+clarification names one crate and can be checked. This is the cheapest of the five
 asks: a one-line `license = "..."` in each manifest removes all three entries and
 stops every downstream consumer having to make the same judgement call privately.
 
-**4. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
+**4. Must a program claim or reject a default-owned signer?** LEZ increments every signer's
+nonce after applying a state diff, outside program execution
+(`lee/state_machine/src/state.rs:212-216`), and `validate_execution` rule 7 refuses any
+post-state whose program owner is the default one unless the pre-state was
+`Account::default()` (`lee/state_machine/core/src/program.rs:725`). So a default-owned
+signer passes exactly once, while it is still pristine, and is refused in every
+post-state afterwards — of any program, with whatever balance it holds frozen with it.
+
+The claim mechanism is the platform's answer and it does work: `Claim::Authorized` on a
+pristine signer is honoured before the nonce bump, so the account comes out
+program-owned and is usable from then on, which is how `simple_balance_transfer` gives a
+public account an owner on its first transfer. What it does not rescue is an account
+that has already transacted unclaimed. That one is unrecoverable.
+
+So the question is not whether a public account can sit unowned — it can, and then it is
+dead. It is whether first-touch claiming is the intended route by which a public account
+acquires an owner, and whether a program that takes a default-owned signer is obliged to
+claim it *or* refuse it. That form is the one whose answer is actionable: "you must
+claim" would be a change to every program that takes a signer, while "claim or reject"
+is satisfied by a guard. This program is one of those: it
+refuses a default-owned admin key with `AdminUnowned` rather than claim the operator's
+wallet, because rule 4 would make that ownership permanent and rule 5 would let this
+program move the balance. Measured both directions in
+`aggregator-program/tests/admin.rs`.
+
+**5. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
 closer to a defect report than a preference: the account-type crate needs neither
 risc0 nor `uniswap_v3_math` to carry six Borsh fields. Splitting it into a standalone
 crate with relaxed pins — or at minimum loosening `=3.0.5` to `^3.0.5` — would make the

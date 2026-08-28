@@ -151,11 +151,43 @@ note = "The account is RFP-019's, re-exported rather than forked (M1-09), and `p
 
 [[row]]
 id = "F6"
-status = "planned"
+status = "partial"
 tasks = ["M1-07", "M2-06", "M2-07", "M2-08", "M2-09", "M2-10"]
-implemented_in = ["aggregator-program"]
-verified_by = []
-note = "Gated on RFP-001 having merged an admin-authority interface; M1-07 establishes what to build against, M2-06 is the shim if nothing has."
+implemented_in = ["aggregator-program", "methods/guest/src/bin/aggregator.rs"]
+verified_by = [
+  "test:the_stored_admin_is_authorised",
+  "test:a_signer_who_is_not_the_stored_admin_is_refused",
+  "test:a_config_account_this_program_does_not_own_is_refused",
+  "test:an_admin_that_did_not_sign_is_refused",
+  "test:an_authority_nothing_can_exercise_refuses_everyone",
+  "test:the_genesis_key_holder_establishes_the_authority",
+  "test:a_signer_who_is_not_the_genesis_key_cannot_establish_the_authority",
+  "test:a_build_with_no_genesis_authority_cannot_be_initialised_by_anyone",
+  "test:an_authority_already_established_is_not_established_again",
+  "test:a_nomination_is_recorded_without_handing_the_authority_over",
+  "test:nobody_but_the_authority_can_nominate",
+  "test:the_zero_key_cannot_be_nominated",
+  "test:a_second_nomination_replaces_the_first",
+  "test:the_nominee_takes_the_authority_by_signing_for_it",
+  "test:nobody_but_the_nominee_can_accept",
+  "test:there_is_nothing_to_accept_without_a_nomination",
+  "test:the_authority_can_be_given_up_permanently",
+  "test:nobody_but_the_authority_can_give_it_up",
+  "test:giving_up_the_authority_also_cancels_a_pending_nomination",
+  "test:establishing_the_authority_claims_the_config_account",
+  "test:an_initialisation_lands_and_claims_the_address_the_constraint_checks",
+  "test:the_authority_an_initialisation_writes_can_administer_a_feed",
+  "test:a_handover_lands_in_two_transactions_and_moves_the_authority_once",
+  "test:a_revocation_lands_and_leaves_nobody_able_to_administer",
+  "test:an_unowned_admin_that_has_transacted_cannot_be_used",
+  "test:a_pristine_admin_cannot_establish_the_authority",
+  "test:a_pristine_nominee_cannot_accept_the_authority",
+  "test:the_admin_config_address_the_constraint_accepts_is_the_derived_one",
+  "test:an_account_that_is_not_the_admin_config_is_refused_by_the_generated_validator",
+  "test:an_administrative_instruction_refuses_an_admin_that_did_not_sign",
+  "test:an_unconfigured_build_refuses_to_establish_an_authority",
+]
+note = "The authority has landed and the four operations it guards have not. `[M2-06:01]` records what M1-07 could not settle: RFP-001's library is written but unmerged, and the surface it needs is larger than the check M2-06 was scoped as -- an authority has to be stored somewhere, and none of the six instructions M2-01 declared could establish one. So it is an account this program owns, at an address the constraint publishes rather than the program explains, and `authorise` is what the administrative instructions call; each now takes that account beside the signer, so a wrong admin is refused before a body that does not exist yet. The bodies are M2-07 to M2-10. Establishing it is gated on a genesis key the build carries rather than on being first, because a PDA hashes the program id and the program id is the image id: every rebuild presents a fresh default config account, so an unguarded first write is a race once per deployment whose winner sets the signer sets that decide what a price means. A handover is two steps, nominate then accept, because a one-step transfer makes any mistyped key the authority immediately and that state is terminal -- every administrative instruction stops, `initialise` refuses a config account that is no longer default, and rebuilding to recover strands the accounts the build created. The nominee's own signature is what a key nobody controls can never produce. Revocation is exposed because F6 names RFP-001's authority and revocation is one of its hard requirements, and it clears any pending nomination so a nominee cannot accept an authority its holder gave up; what it costs a serviced feed is in the ADR. The check is Rust here and not `#[require_admin]`, because a gate injected into macro-expanded dispatcher code has no reachable host test -- the four admin tests in the guest workspace, six in all, are the shape that forces -- and SEC2 asks for the unauthorised-caller reject to be tested rather than asserted. `tests/admin.rs` is the other half of that: the post-states go to LEZ's own `validate_execution`, and the claim is checked against the address the constraint derives rather than against a restatement of the rule. Its signer fixture is an account some program owns -- owned, funded, having signed before -- because a fixture built from `Account::default()` would pass every assertion while describing a state no real key is in after its first transaction. Ownership is the property and not existence, so `initialise` and `accept` refuse a default-owned key outright (`AdminUnowned`): LEZ strands such an account after one transaction, and on `accept` the authority has already moved by then: LEZ bumps every signer's nonce outside program execution, and rule 7 refuses a post-state whose owner is the default one unless the pre-state was pristine. `an_unowned_admin_that_has_transacted_cannot_be_used` pins both directions, so the deployment property the ADR states -- the admin key is an existing account and not a fresh address -- is asserted here rather than assumed."
 
 [[row]]
 id = "F7"
