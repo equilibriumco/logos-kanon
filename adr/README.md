@@ -176,7 +176,7 @@ out per bullet rather than by a count:
   One rule pair, met twice: it strands a signer a program declines to claim, and it lets
   anyone put one unit of balance on a publicly derivable PDA and make that address
   permanently unwritable — including the admin config account, whose address takes no
-  per-deployment input. `m0/versions.md` item 4.
+  input an attacker cannot predict. `m0/versions.md` item 4.
 - **`OraclePriceAccount` is harder to depend on than it needs to be** (ADR 8,
   ADR 9): the account-type crate pulls risc0 and `uniswap_v3_math` in to carry six
   Borsh fields, and `=3.0.5` is an exact pin, which is what makes the canonical

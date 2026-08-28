@@ -185,6 +185,13 @@ fn a_derived_address_can_be_squatted_and_this_pins_the_refusal() {
 
     // Step two: the feed id is now unusable. Neither branch of the three-state
     // check admits it -- it is not default, and it is not ours.
+    //
+    // This is the host-side half. In a transaction the generated `init` check
+    // refuses first, with `AccountAlreadyInitialized`, because it runs in the
+    // dispatcher before any body here -- so that is the error an operator would
+    // be diagnosing, and it is pinned where it is reachable, by
+    // `a_squatted_feed_account_is_refused_by_the_generated_validator` in the
+    // guest suite.
     let blocked = AccountWithMetadata {
         account: squatted,
         is_authorized: false,

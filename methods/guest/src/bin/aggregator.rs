@@ -528,10 +528,20 @@ mod tests {
     /// `register_feed`'s accounts, in the order it declares them, with the
     /// instruction data the `arg("feed_id")` seed is read from.
     fn validate_register(feed_id: [u8; 32], feed_at: AccountId) -> Result<(), SpelError> {
+        validate_register_feed_account(feed_id, feed_at, Account::default())
+    }
+
+    /// The same, with the feed account's pre-state chosen: what the dispatcher
+    /// does with an address that is right and an account that is not pristine.
+    fn validate_register_feed_account(
+        feed_id: [u8; 32],
+        feed_at: AccountId,
+        pre: Account,
+    ) -> Result<(), SpelError> {
         let mut admin = account([0xAD; 32]);
         admin.is_authorized = true;
         let mut feed = account(*feed_at.value());
-        feed.account = Account::default();
+        feed.account = pre;
         let accounts = [feed, admin, account(*admin_config_id().value())];
         // The seed argument is handed to the validator directly rather than
         // decoded from the instruction: the generated claims function and the
@@ -579,6 +589,65 @@ mod tests {
                 Err(SpelError::PdaMismatch { .. })
             ),
             "the address has to follow the id in the instruction"
+        );
+    }
+
+    #[test]
+    fn a_squatted_feed_account_is_refused_by_the_generated_validator() {
+        // The error an operator actually meets when someone has put one unit of
+        // balance on a feed's derived address. `#[account(init)]` makes SPEL emit
+        // `accounts[0].account != Account::default()` in the dispatcher, so the
+        // refusal happens before `aggregator_program::register::register_feed`
+        // runs and `RegisterError::AlreadyRegistered` -- the pure function's
+        // answer, pinned by `tests/register_feed.rs` -- is never reached on
+        // chain. Both refusals are permanent; this is the one to look for.
+        let feed_id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        let squatted = Account {
+            balance: 1,
+            ..Account::default()
+        };
+
+        let refused = validate_register_feed_account(feed_id, feed_account_id(&feed_id), squatted)
+            .expect_err("a squatted address cannot be registered");
+
+        assert!(
+            matches!(
+                refused,
+                SpelError::AccountAlreadyInitialized { account_index: 0 }
+            ),
+            "expected the init check to refuse it, got {refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_squatted_admin_config_is_refused_by_the_generated_validator() {
+        // The worst case of the same attack, recorded here because the config
+        // address takes no input an attacker cannot predict -- the program id and
+        // a compile-time constant, both readable from this repository -- so it
+        // can be squatted before the operator ever runs the bootstrap. `initialise_admin`
+        // declares `#[account(init, ...)] config`, so the dispatcher answers
+        // first and `AdminError::AlreadyInitialised` is again only the pure
+        // function's answer. Not M2-07's to fix; `m0/versions.md` question 4.
+        let mut admin = account([0xAD; 32]);
+        admin.is_authorized = true;
+        let mut config = account(*admin_config_id().value());
+        config.account = Account {
+            balance: 1,
+            ..Account::default()
+        };
+        let accounts = [config, admin];
+        let instruction: InstructionData = Vec::new();
+
+        let refused =
+            super::kanon_aggregator::__validate_initialise_admin(&accounts, &OURS, &instruction)
+                .expect_err("a squatted config cannot be initialised");
+
+        assert!(
+            matches!(
+                refused,
+                SpelError::AccountAlreadyInitialized { account_index: 0 }
+            ),
+            "expected the init check to refuse it, got {refused:?}"
         );
     }
 }

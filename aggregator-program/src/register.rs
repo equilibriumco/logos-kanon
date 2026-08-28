@@ -460,9 +460,12 @@ mod tests {
 
     #[test]
     fn no_two_causes_share_an_error_code() {
-        // The convention `SubmitError` and `AdminError` both carry. No collision
-        // is reachable at two variants plus a delegated block; this is here so
-        // the third error type does not be the one that drops it.
+        // `a_config_error_keeps_the_number_it_has_everywhere_else` already pins
+        // every code this type answers with. What it does not do is fail when a
+        // fourth variant arrives unnumbered, or assert the codes differ from one
+        // another -- the two halves of the convention `SubmitError` and
+        // `AdminError` carry. No collision is reachable at two variants plus a
+        // delegated block, so this is maintenance rather than a defect.
         let causes = [
             RegisterError::AlreadyRegistered,
             RegisterError::FeedTooLarge,

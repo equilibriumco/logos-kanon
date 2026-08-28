@@ -9,9 +9,10 @@
 ## Context
 
 M2-01 declared `register_feed` with `#[account(init)] feed` and no seeds, which
-left the feed account's address to M2-07. It is not that nothing had decided it.
-**ADR 32 decided it the other way**, and named this task as the place to
-reconsider:
+left the feed account's address to M2-07. It is not that nothing had been said
+about it: **ADR 32 rejected deriving the feed account from the asset pair, for a
+reason that reaches any derived address**, and named this task as the place to
+weigh it:
 
 > Rejected because the enforcement is permanent and unrecoverable: ownership can
 > never be released, `deregister_feed` can zero a feed's data but not un-own its
@@ -23,9 +24,11 @@ reconsider:
 > would change**"
 
 That objection is correct and it survives this decision: deriving from the feed
-id carries the same permanence. **This ADR supersedes ADR 32 on that point**, and
-the cost is stated in the consequences rather than left implicit. A reader who
-finds ADR 32 first should read this paragraph as the answer to it.
+id carries the same permanence. What ADR 32 rejected was the pair as the seed,
+partly on ADR 16's grounds, so there is no decision here to overturn — what is
+new is that **the trade-off is now taken deliberately**, with the cost stated in
+the consequences rather than left implicit. A reader who finds ADR 32 first
+should read this paragraph as the answer to it.
 
 `#[account(init)]` is not neutral here. The macro generates `Claim::Pda` when the
 declared account carries seeds and `Claim::Authorized` when it does not, so the
@@ -108,10 +111,14 @@ not the other fails.
   rule 6 refuses a data change while rule 7 refuses any post-state keeping the default
   owner. A claim cannot rescue it, because the claim loop runs after
   `validate_execution`. That kills the feed id for the life of the build, and the same
-  attack lands on the admin config account, whose address takes no per-deployment
-  input at all. Not M2-07's to fix and not fixed here: recorded in `m0/versions.md`
-  question 4 and pinned by
-  `a_derived_address_can_be_squatted_and_this_pins_the_refusal`.
+  attack lands on the admin config account, whose address takes no input an attacker
+  cannot predict. **The refusal a caller meets is SPEL's, not this program's:**
+  `#[account(init)]` emits `AccountAlreadyInitialized` in the dispatcher, so
+  `RegisterError::AlreadyRegistered` is the pure function's answer and never the
+  on-chain one. Not M2-07's to fix and not fixed here: recorded in `m0/versions.md`
+  question 4 and pinned at both layers, by
+  `a_derived_address_can_be_squatted_and_this_pins_the_refusal` and by
+  `a_squatted_feed_account_is_refused_by_the_generated_validator`.
 - **One registration, one signer set.** Combined with ADR 30, a rotation is one
   `update_signer_set` per feed against an address the operator can derive, which
   is what makes the runbook writable.
@@ -124,8 +131,8 @@ not the other fails.
   claiming one id. The last of those is the one that decided it: a signer set is
   what a price means, and two accounts able to answer for BTC/USD is a
   registration that means nothing.
-- **Derive the feed account from the asset pair.** Rejected already, by ADR 16,
-  and for a reason that has not changed: it needs a canonical symbol table with
-  no authority behind it.
+- **Derive the feed account from the asset pair.** Rejected already, by ADR 16 and
+  again by ADR 32, and for a reason that has not changed: it needs a canonical
+  symbol table with no authority behind it.
 - **`String` as the seed type.** The natural IDL surface, and it panics above 32
   bytes in generated code. Ruled out by ADR 4 rather than by taste.

@@ -122,7 +122,7 @@ Refuse-on-unavailable is the pattern being demonstrated: a consumer must never f
 | Requirement | Status | Tasks | Implemented in | Verified by |
 | --- | --- | --- | --- | --- |
 | **R1** | planned | `M2‑04` | `aggregator‑program` | — |
-| **R2** | verified | `M2‑07` | `aggregator‑program` | `a_derived_address_can_be_squatted_and_this_pins_the_refusal`, `registering_the_same_feed_id_twice_is_refused`, `a_feed_id_that_is_already_registered_is_refused`, `a_registration_lands_and_claims_the_address_the_constraint_checks` |
+| **R2** | verified | `M2‑07` | `aggregator‑program` | `a_derived_address_can_be_squatted_and_this_pins_the_refusal`, `a_squatted_feed_account_is_refused_by_the_generated_validator`, `registering_the_same_feed_id_twice_is_refused`, `a_feed_id_that_is_already_registered_is_refused`, `a_registration_lands_and_claims_the_address_the_constraint_checks` |
 | **R3** | planned | `M2‑05` | `aggregator‑program` | — |
 | **R4** | planned | `M4‑05`, `M4‑08` | `kanon‑relayer` | — |
 
@@ -130,7 +130,7 @@ Refuse-on-unavailable is the pattern being demonstrated: a consumer must never f
 
 **R2** — Feed registration is atomic: partial failure leaves existing registrations intact
 
-Atomicity is structural rather than engineered: LEZ applies a state diff whole, so a body that returns `Err` writes nothing at all and no registration can fail after writing part of itself. That is what R2 asks for and it holds for every instruction in this program, not only this one. Uniqueness is a separate property the address decision buys -- a feed lives at the address its id derives (ADR 33), so a second registration of one id is refused before anything is written and two ids cannot collide -- and it is why `register_feed` needs no rollback path. Both are asserted below; the atomicity reading is the one a reader checking the requirement should find first. What neither covers is a squatted address: the account can be made permanently unwritable by anyone, which is a platform question rather than this program's, recorded in `m0/versions.md` question 4 and pinned by `a_derived_address_can_be_squatted_and_this_pins_the_refusal`.
+Atomicity is structural rather than engineered: LEZ applies a state diff whole, so a body that returns `Err` writes nothing at all and no registration can fail after writing part of itself. That is what R2 asks for and it holds for every instruction in this program, not only this one. Uniqueness is a separate property the address decision buys -- a feed lives at the address its id derives (ADR 33), so a second registration of one id is refused before anything is written and two ids cannot collide -- and it is why `register_feed` needs no rollback path. Both are asserted below; the atomicity reading is the one a reader checking the requirement should find first. What neither covers is a squatted address: the account can be made permanently unwritable by anyone, which is a platform question rather than this program's, recorded in `m0/versions.md` question 4 and pinned at both layers by `a_derived_address_can_be_squatted_and_this_pins_the_refusal` and `a_squatted_feed_account_is_refused_by_the_generated_validator` -- the second being the refusal an operator actually meets, since `#[account(init)]` answers `AccountAlreadyInitialized` in the dispatcher before any body here runs.
 
 **R3** — An upstream error on one feed does not affect push mode for other feeds handled by the same node
 

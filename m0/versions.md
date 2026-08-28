@@ -213,26 +213,31 @@ change to every program that takes one; "claim or reject" is satisfied by a guar
 *decreases* only, so anyone may *increase* the balance of an account they do not own,
 and rule 7 admits a pristine target. One unit of balance on a publicly derivable PDA
 therefore puts that address into the unwritable state for good, before the program that
-owns the derivation has ever run. Measured on this branch: the transfer validates,
-`register_feed` then answers `AlreadyRegistered` forever, and any post-state writing the
-account is refused by rule 6.
+owns the derivation has ever run. Measured on this branch: the transfer validates, the
+generated `init` check then answers `AccountAlreadyInitialized` forever — with
+`RegisterError::AlreadyRegistered` one layer further in, which is what a host test sees
+— and any post-state writing the account is refused by rule 6.
 
 The reach is the whole of this adaptor's account model. Feed accounts derive from the
 feed id, and the five production ids are published in `FEEDS.md`. The **admin config
-account is the worst case**: its address derives from the program id and a constant with
-no per-deployment input, so squatting it makes `initialise` answer `AlreadyInitialised`
-forever and the deployment is dead before the operator can bootstrap it. Price accounts
-derive from the feed account's id and go the same way. Rebuilding is not an escape
-either: the program id is the image id and ADR 8's exact pins make the build
+account is the worst case**: its address derives from the program id and a constant,
+both of which an attacker can compute, so squatting it makes the generated `init` check
+answer `AccountAlreadyInitialized` forever — `AlreadyInitialised` is what the pure
+function returns, one layer further in — and the deployment is dead before the operator
+can bootstrap it. Price accounts derive from the feed account's id and go the same way.
+Rebuilding is not an escape either: the program id is the image id and ADR 8's exact pins make the build
 reproducible, so the next build's addresses are computable from published source too.
 
 **So the question is whether a program may claim a non-default, default-owned account.**
 If it may, both problems close at once — the squatted address becomes recoverable and
 the signer trap stops being a trap. If it may not, then every program in the estate
 using derived addresses can be denied for one unit of balance by anyone who can read its
-source, and that is worth knowing before mainnet. Pinned here by
-`aggregator-program/tests/register_feed.rs::a_derived_address_can_be_squatted_and_this_pins_the_refusal`
-and by `tests/admin.rs`, which assert the refusals rather than assume them.
+source, and that is worth knowing before mainnet. Pinned at both layers rather than
+assumed: `aggregator-program/tests/register_feed.rs::a_derived_address_can_be_squatted_and_this_pins_the_refusal`
+and `tests/admin.rs` for the pure functions,
+`a_squatted_feed_account_is_refused_by_the_generated_validator` and
+`a_squatted_admin_config_is_refused_by_the_generated_validator` in
+`methods/guest/src/bin/aggregator.rs` for the dispatcher.
 
 **5. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
 closer to a defect report than a preference: the account-type crate needs neither
