@@ -97,15 +97,17 @@ co-signature would make it a coordination exercise across organisations.
 
 **Revocation is exposed.** An earlier draft of this record omitted it: nothing in
 RFP-020's own text asks for it, and a revoked authority is a feed whose signer set can
-never be rotated again — RedStone rotating its roster afterwards would leave every feed
-permanently unverifiable, and pausing is gated on the same authority, so no lever is
-left at all. That reasoning survives as a hazard to document, and it does not survive as
-a reason to narrow the contract: F6 names RFP-001's authority, and revocation is one of
-RFP-001's four hard functionality requirements. Omitting it is a scope variance to agree
-with Logos, not a local product choice — and since `None` is already a stored state
-every read refuses, exposing it costs one instruction, which is cheaper than the
-conversation. Revocation clears any pending nomination with it, or a nominee could
-accept afterwards and take an authority its holder had given up.
+never be rotated again. Nor does the feed go quiet, which is the half that earns this
+paragraph its place: `submit_price` is permissionless and ungated, so it keeps
+publishing against a set nobody can change, and it cannot be paused or deregistered
+either — pausing is gated on the authority that was given up. What has been lost control
+of is still running. That reasoning survives as a hazard to document, and it does not
+survive as a reason to narrow the contract: F6 names RFP-001's authority, and revocation
+is one of RFP-001's four hard functionality requirements. Omitting it is a scope
+variance to agree with Logos, not a local product choice — and since `None` is already a
+stored state every read refuses, exposing it costs one instruction, which is cheaper
+than the conversation. Revocation clears any pending nomination with it, or a nominee
+could accept afterwards and take an authority its holder had given up.
 
 **The check runs in `aggregator-program`, not in a macro on the guest handler.**
 `#[require_admin(config)]` injects its check into `#[lez_program]`-expanded dispatcher
@@ -147,17 +149,26 @@ holds.
   moment to do it: the SDK is thirteen lines, the relayer eighteen, the CLI does not
   exist, and the only consumers of the instruction surface are two in-repo tests. The
   same change after M4 touches everything generated from the IDL.
-- **The admin key must be an account that already exists on chain, not a freshly
-  generated address.** LEZ increments every signer's nonce after applying a state diff,
-  outside program execution, and `validate_execution` rule 7 refuses a post-state whose
-  program owner is the default one unless the pre-state was pristine. Together those mean
-  an account that is unowned *and* has signed before can never appear in a post-state
-  again — so a fresh address would initialise once, have its nonce bumped by that very
-  transaction, and be unable to administer anything afterwards. `Claim::Authorized` does
-  not rescue it: the claim is honoured after validation, so rule 7 still sees the default
-  owner. `tests/admin.rs` pins both halves, the refusal and the same key succeeding once
-  owned, so the constraint is visible in the suite rather than discovered on devnet. The
-  runbook and the servicing handover both have to carry it.
+- **The admin key must be an account some program owns, and the program refuses one that
+  is not.** Ownership is the property, not existence: an account can exist and hold a
+  balance and still be owned by nobody, in which case it is already stranded. LEZ
+  increments every signer's nonce after applying a state diff, outside program execution
+  (`state.rs:212-216`), and rule 7 refuses a post-state whose program owner is the
+  default one unless the pre-state was pristine (`program.rs:725`). So a default-owned
+  key passes exactly once, while it is still pristine, and is refused in every
+  post-state afterwards — of any program, not only this one, with whatever balance it
+  holds frozen with it. `initialise` and `accept` therefore refuse a default-owned
+  account with `AdminUnowned`, because the alternative was establishing an authority
+  that could never be exercised, and on `accept` doing it irreversibly: acceptance moves
+  the authority first, and `initialise` refuses a config account that is no longer
+  default. `Claim::Authorized` would rescue a *pristine* key — the claim is honoured
+  before the nonce bump, so the account comes out program-owned — and this program
+  deliberately does not take that route: rule 4 would make that ownership permanent and
+  rule 5 would let this program move the operator's balance. What the claim does not
+  rescue is a key that has already transacted unclaimed, which is the case
+  `an_unowned_admin_that_has_transacted_cannot_be_used` pins. The runbook and the
+  servicing handover still have to carry the requirement, because a typed refusal at
+  deployment time is cheaper than a diagnosis.
 - **Deployment grows a step, and the runbook with it.** A build is not operable until
   `initialize` has landed, and the servicing handover has to carry the genesis key's
   custody alongside the operator journey.
@@ -175,8 +186,8 @@ holds.
 - **And that swap would be close to cosmetic, which is worth saying rather than
   filing as an integration.** What RFP-001 was for is a shared admin convention across
   the estate — one shape that tooling, auditors and the next program recognise. Under
-  this decision we decline the config type, the macro, the bootstrap and the
-  revocation, and adopt a struct of one `Option` and three functions. F6 names RFP-001,
+  this decision we decline the config type, the macro and the bootstrap, and adopt a
+  struct of two `Option`s with four lifecycle functions plus `authorise`. F6 names RFP-001,
   and this satisfies the naming; it does not deliver the standardisation, because the
   parts carrying the convention are the parts that do not fit. That is a finding about
   #212 rather than a cost of this decision, and it is the more useful thing to send
@@ -187,10 +198,13 @@ holds.
   bootstrap, which #212 has no equivalent of because its sample's `initialize` is open
   to whoever calls it first, and a nomination step, which #212's `transfer_admin` has
   no equivalent of because it moves the authority on one signature.
-- **The rebuild-orphans-state problem now has a third instance**: price accounts,
-  feed registrations, and the config account. That is a platform property rather than
-  a decision of this repository, so it belongs in `m0/versions.md` with the questions
-  outstanding with Logos, not here.
+- **The rebuild-orphans-state problem now has a third instance**: price accounts, feed
+  registrations, and the config account. A PDA hashes the program id and the program id
+  is the image id, so a rebuild presents fresh addresses and strands everything the
+  previous build created. That is a platform property rather than a decision of this
+  repository, and it is not yet written down anywhere: `m0/versions.md` carries the
+  questions outstanding with Logos but has no section on this one, so it is recorded
+  here until it does.
 - **One feed per pair stays operational rather than structural.** [ADR
   32](0032-one-price-account-per-feed-and-anyone-may-fill-it.md) left that property to
   the admin path; this decision is what makes it enforceable at all, and it is enforced

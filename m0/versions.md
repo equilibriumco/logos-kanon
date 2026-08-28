@@ -184,23 +184,32 @@ cargo-deny reports them as unlicensed. They are not: `lez-programs` ships a LICE
 file (MIT) and `spel` ships LICENSE-MIT and LICENSE-APACHE-v2, and the terms are
 permissive and compatible with the delivery licences. `deny.toml` carries three
 `[[licenses.clarify]]` entries rather than a widened allowlist, because a
-clarification names one crate and can be checked. This is the cheapest of the four
+clarification names one crate and can be checked. This is the cheapest of the five
 asks: a one-line `license = "..."` in each manifest removes all three entries and
 stops every downstream consumer having to make the same judgement call privately.
 
-**4. Can a public account still be unowned once it has transacted?** LEZ increments
-every signer's nonce after applying a state diff, outside program execution
-(`lee/state_machine/src/state.rs`), and `validate_execution` rule 7 refuses any
+**4. Is a program obliged to claim the signers it takes?** LEZ increments every signer's
+nonce after applying a state diff, outside program execution
+(`lee/state_machine/src/state.rs:212-216`), and `validate_execution` rule 7 refuses any
 post-state whose program owner is the default one unless the pre-state was
-`Account::default()`. Together those mean an account that is unowned *and* has signed
-once can never appear in a post-state again — not with `Claim::Authorized` either, since
-the claim is honoured after validation and rule 7 still sees the default owner. Every
-program that takes a signer inherits this and none of them can see it coming, which is
-the same shape as the `InstructionData` residual in ADR 26. If a public account is owned
-by a system program from its first transaction then the question is moot and the answer
-is worth stating; if it can sit unowned, this is a trap in the platform rather than in
-any one program. Measured in `aggregator-program/tests/admin.rs`, which asserts both
-directions.
+`Account::default()` (`lee/state_machine/core/src/program.rs:725`). So a default-owned
+signer passes exactly once, while it is still pristine, and is refused in every
+post-state afterwards — of any program, with whatever balance it holds frozen with it.
+
+The claim mechanism is the platform's answer and it does work: `Claim::Authorized` on a
+pristine signer is honoured before the nonce bump, so the account comes out
+program-owned and is usable from then on, which is how `simple_balance_transfer` gives a
+public account an owner on its first transfer. What it does not rescue is an account
+that has already transacted unclaimed. That one is unrecoverable.
+
+So the question is not whether a public account can sit unowned — it can, and then it is
+dead. It is whether first-touch claiming is the intended route by which a public account
+acquires an owner, and whether it is intended that a program which takes a signer and
+declines to claim it destroys that account permanently. This program is one of those: it
+refuses a default-owned admin key with `AdminUnowned` rather than claim the operator's
+wallet, because rule 4 would make that ownership permanent and rule 5 would let this
+program move the balance. Measured both directions in
+`aggregator-program/tests/admin.rs`.
 
 **5. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
 closer to a defect report than a preference: the account-type crate needs neither
