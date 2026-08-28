@@ -98,14 +98,14 @@ co-signature would make it a coordination exercise across organisations.
 **Revocation is exposed.** An earlier draft of this record omitted it: nothing in
 RFP-020's own text asks for it, and a revoked authority is a feed whose signer set can
 never be rotated again — RedStone rotating its roster afterwards would leave every feed
-permanently unverifiable with pausing the only lever left. That reasoning survives as a
-hazard to document, and it does not survive as a reason to narrow the contract: F6 names
-RFP-001's authority, and revocation is one of RFP-001's four hard functionality
-requirements. Omitting it is a scope variance to agree with Logos, not a local product
-choice — and since `None` is already a stored state every read refuses, exposing it
-costs one instruction, which is cheaper than the conversation. Revocation clears any
-pending nomination with it, or a nominee could accept afterwards and take an authority
-its holder had given up.
+permanently unverifiable, and pausing is gated on the same authority, so no lever is
+left at all. That reasoning survives as a hazard to document, and it does not survive as
+a reason to narrow the contract: F6 names RFP-001's authority, and revocation is one of
+RFP-001's four hard functionality requirements. Omitting it is a scope variance to agree
+with Logos, not a local product choice — and since `None` is already a stored state
+every read refuses, exposing it costs one instruction, which is cheaper than the
+conversation. Revocation clears any pending nomination with it, or a nominee could
+accept afterwards and take an authority its holder had given up.
 
 **The check runs in `aggregator-program`, not in a macro on the guest handler.**
 `#[require_admin(config)]` injects its check into `#[lez_program]`-expanded dispatcher
