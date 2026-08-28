@@ -54,8 +54,15 @@ pub enum Instruction {
     /// 2. `admin` — the signer claiming to be the authority.
     /// 3. `config` — the account holding the authority `admin` is checked against.
     RegisterFeed {
-        /// The RedStone feed id, unpadded as RedStone publishes it.
-        feed_id: Vec<u8>,
+        /// The RedStone feed id, right-padded to the wire's field width.
+        ///
+        /// Padded and fixed-width because it is the feed account's PDA seed, and
+        /// SPEL's `ToSeed` is implemented for `[u8; 32]` but not for `Vec<u8>`.
+        /// `String` is implemented and routes through `seed_from_str`, which
+        /// panics above 32 bytes in generated code that runs before any body
+        /// here -- a caller-triggerable guest panic, which ADR 4 makes a defect.
+        /// So the caller pads, exactly as the wire does.
+        feed_id: [u8; 32],
         /// The base asset of the pair.
         base_asset: [u8; 32],
         /// The quote asset of the pair.

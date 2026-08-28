@@ -19,11 +19,13 @@
 //!
 //! # Not yet implemented
 //!
-//! The admin-gated instruction bodies. `submit_price` is built; the rest still
-//! refuse with the task that fills them — the admin gate is M2-06, and
-//! registration, signer-set updates, deregistration and pausing are M2-07 to
-//! M2-10. Until M2-07 lands there is no in-repository way to register the feed
-//! `submit_price` reads, so the push path is testable and not yet operable.
+//! Three of the four admin-gated bodies. `submit_price` is built, the admin gate
+//! is M2-06, and `register_feed` is M2-07 — so a feed can be created and read,
+//! and the push path is operable end to end for one feed. Signer-set updates,
+//! deregistration and pausing still refuse with their task: M2-08 to M2-10.
+//!
+//! [`register`] is registration: what a feed's configuration is, where its
+//! account lives, and why the address is the feed id's (ADR 33).
 //! `TRACEABILITY.md` maps each to its requirement.
 #![forbid(unsafe_code)]
 
@@ -31,10 +33,12 @@ pub mod admin;
 pub mod feed_account;
 pub mod instruction;
 pub mod publish;
+pub mod register;
 pub mod submit;
 
 pub use feed_account::FeedAccount;
 pub use instruction::Instruction;
+pub use register::{register_feed, RegisterError};
 pub use submit::{submit_price, SubmitError};
 
 pub use kanon_idl;

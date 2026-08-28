@@ -48,6 +48,7 @@ they describe the design being proposed for acceptance.
 | [30](0030-the-signer-set-stays-per-feed.md) | The signer set stays per feed, though every feed currently shares one | accepted |
 | [31](0031-the-aggregator-pins-spel-and-lez-as-one-decision.md) | The aggregator pins SPEL and LEZ as one decision, spelled as the graph resolves them | accepted |
 | [32](0032-one-price-account-per-feed-and-anyone-may-fill-it.md) | One price account per feed, at a derived address, and anyone may fill it | accepted |
+| [33](0033-a-feed-lives-at-the-address-its-id-derives.md) | A feed lives at the address its id derives, so a client can find one | accepted |
 | [M2-06:01](unnumbered-M2-06-where-the-admin-authority-comes-from.md) | Where the admin authority comes from, and how it is established | accepted, unnumbered |
 
 ## How they fit together
@@ -171,11 +172,11 @@ out per bullet rather than by a count:
   one-line manifest change would fix for every downstream consumer (ADR 9). The
   second half is `m0/versions.md` item 3; the LGPL question is stated in
   `deny.toml` beside the exceptions it justifies rather than there.
-- **Must a program claim or reject a default-owned signer** (`[M2-06:01]`). LEZ strands a
-  default-owned signer after its first transaction, chain-wide, and the claim mechanism
-  is the escape a program has to take deliberately. This one declines to — it will not
-  take ownership of an operator's wallet — and refuses such a key instead.
-  `m0/versions.md` item 4.
+- **May a program claim a non-default, default-owned account** (`[M2-06:01]`, ADR 33).
+  One rule pair, met twice: it strands a signer a program declines to claim, and it lets
+  anyone put one unit of balance on a publicly derivable PDA and make that address
+  permanently unwritable — including the admin config account, whose address takes no
+  input an attacker cannot predict. `m0/versions.md` item 4.
 - **`OraclePriceAccount` is harder to depend on than it needs to be** (ADR 8,
   ADR 9): the account-type crate pulls risc0 and `uniswap_v3_math` in to carry six
   Borsh fields, and `=3.0.5` is an exact pin, which is what makes the canonical

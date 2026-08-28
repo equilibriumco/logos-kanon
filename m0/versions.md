@@ -188,30 +188,56 @@ clarification names one crate and can be checked. This is the cheapest of the fi
 asks: a one-line `license = "..."` in each manifest removes all three entries and
 stops every downstream consumer having to make the same judgement call privately.
 
-**4. Must a program claim or reject a default-owned signer?** LEZ increments every signer's
-nonce after applying a state diff, outside program execution
-(`lee/state_machine/src/state.rs:212-216`), and `validate_execution` rule 7 refuses any
-post-state whose program owner is the default one unless the pre-state was
-`Account::default()` (`lee/state_machine/core/src/program.rs:725`). So a default-owned
-signer passes exactly once, while it is still pristine, and is refused in every
-post-state afterwards — of any program, with whatever balance it holds frozen with it.
+**4. The rule pair that makes a default-owned account permanently unwritable, and what
+it costs.** LEZ increments every signer's nonce after applying a state diff, outside
+program execution (`lee/state_machine/src/state.rs:212-216`); rule 6 refuses a data
+change unless the executing program owns the account or the pre-state is default; and
+rule 7 refuses any post-state whose program owner is the default one unless the
+pre-state was `Account::default()` (`lee/state_machine/core/src/program.rs:711-731`).
+The claim mechanism cannot undo either, because the claim loop runs *after*
+`validate_execution` (`lee/state_machine/src/validated_state_diff.rs:215` then `:267`).
 
-The claim mechanism is the platform's answer and it does work: `Claim::Authorized` on a
-pristine signer is honoured before the nonce bump, so the account comes out
-program-owned and is usable from then on, which is how `simple_balance_transfer` gives a
-public account an owner on its first transfer. What it does not rescue is an account
-that has already transacted unclaimed. That one is unrecoverable.
+Together those make an account that is non-default and default-owned permanently
+unwritable by any program. We have now met it twice, from opposite directions, and the
+second is the sharper one.
 
-So the question is not whether a public account can sit unowned — it can, and then it is
-dead. It is whether first-touch claiming is the intended route by which a public account
-acquires an owner, and whether a program that takes a default-owned signer is obliged to
-claim it *or* refuse it. That form is the one whose answer is actionable: "you must
-claim" would be a change to every program that takes a signer, while "claim or reject"
-is satisfied by a guard. This program is one of those: it
-refuses a default-owned admin key with `AdminUnowned` rather than claim the operator's
-wallet, because rule 4 would make that ownership permanent and rule 5 would let this
-program move the balance. Measured both directions in
-`aggregator-program/tests/admin.rs`.
+**As a trap.** A program that takes a signer and does not claim it strands that account:
+the signer passes once while it is still pristine, LEZ bumps its nonce, and every later
+post-state naming it is refused. `aggregator-program` refuses a default-owned admin key
+rather than claim the operator's wallet (`AdminUnowned`), because rule 4 would make that
+ownership permanent and rule 5 would let the program move the balance. So: **is a
+program obliged to claim or reject a default-owned signer?** "You must claim" is a
+change to every program that takes one; "claim or reject" is satisfied by a guard.
+
+**As a griefing vector, which is the part worth answering.** Rule 5 guards balance
+*decreases* only, so anyone may *increase* the balance of an account they do not own,
+and rule 7 admits a pristine target. One unit of balance on a publicly derivable PDA
+therefore puts that address into the unwritable state for good, before the program that
+owns the derivation has ever run. Measured on this branch: the transfer validates, the
+generated `init` check then answers `AccountAlreadyInitialized` forever — with
+`RegisterError::AlreadyRegistered` one layer further in, which is what a host test sees
+— and any post-state writing the account is refused by rule 6.
+
+The reach is the whole of this adaptor's account model. Feed accounts derive from the
+feed id, and the five production ids are published in `FEEDS.md`. The **admin config
+account is the worst case**: its address derives from the program id and a constant,
+both of which an attacker can compute, so squatting it makes the generated `init` check
+answer `AccountAlreadyInitialized` forever — `AlreadyInitialised` is what the pure
+function returns, one layer further in — and the deployment is dead before the operator
+can bootstrap it. Price accounts derive from the feed account's id and go the same way.
+Rebuilding is not an escape either: the program id is the image id and ADR 8's exact pins make the build
+reproducible, so the next build's addresses are computable from published source too.
+
+**So the question is whether a program may claim a non-default, default-owned account.**
+If it may, both problems close at once — the squatted address becomes recoverable and
+the signer trap stops being a trap. If it may not, then every program in the estate
+using derived addresses can be denied for one unit of balance by anyone who can read its
+source, and that is worth knowing before mainnet. Pinned at both layers rather than
+assumed: `aggregator-program/tests/register_feed.rs::a_derived_address_can_be_squatted_and_this_pins_the_refusal`
+and `tests/admin.rs` for the pure functions,
+`a_squatted_feed_account_is_refused_by_the_generated_validator` and
+`a_squatted_admin_config_is_refused_by_the_generated_validator` in
+`methods/guest/src/bin/aggregator.rs` for the dispatcher.
 
 **5. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
 closer to a defect report than a preference: the account-type crate needs neither
