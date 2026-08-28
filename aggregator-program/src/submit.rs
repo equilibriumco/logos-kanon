@@ -112,7 +112,7 @@ const fn clock_code(err: TimeError) -> u32 {
     }
 }
 
-const fn config_code(err: ConfigError) -> u32 {
+pub(crate) const fn config_code(err: ConfigError) -> u32 {
     match err {
         ConfigError::NoSigners => 301,
         ConfigError::ThresholdZero => 302,

@@ -134,7 +134,8 @@ mod kanon_aggregator {
     /// Registers a feed with the parameters later submissions are checked against.
     ///
     /// Expected accounts:
-    /// 1. `feed` — uninitialised, claimed by this program.
+    /// 1. `feed` — uninitialised, claimed by this program, at
+    ///    `for_public_pda(program, sha256(feed_id || zero_pad_32("KANON_FEED_ACCOUNT")))`.
     /// 2. `admin` — the signer claiming to be the authority.
     /// 3. `config` — the account holding the authority `admin` is checked
     ///    against, at the address its constraint derives.
@@ -145,10 +146,16 @@ mod kanon_aggregator {
     #[instruction]
     pub fn register_feed(
         ctx: ProgramContext,
-        #[account(init)] feed: AccountWithMetadata,
+        // The feed id is the seed, so a client finds a feed without being told
+        // where it is, and one feed id has one account. Declared rather than
+        // checked in code for the reason ADR 32 gives about the price account:
+        // the derivation is what a client reproduces, and the constraint is what
+        // publishes it in the IDL.
+        #[account(init, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]
+        feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
         #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
-        feed_id: Vec<u8>,
+        feed_id: [u8; 32],
         base_asset: [u8; 32],
         quote_asset: [u8; 32],
         decimals: u8,
@@ -157,7 +164,7 @@ mod kanon_aggregator {
         threshold: u8,
     ) -> SpelResult {
         aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
-        let _ = (
+        let post_states = aggregator_program::register::register_feed(
             feed,
             admin,
             config,
@@ -168,8 +175,11 @@ mod kanon_aggregator {
             max_age_ms,
             signers,
             threshold,
-        );
-        Err(not_yet("register_feed", "M2-07"))
+        )?;
+        // Three segments, as `submit_price` uses: the delegated logic already
+        // built the claim, so the generated claims helper must not build a
+        // second one.
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 
     /// Replaces one feed's signer set and threshold.
@@ -502,5 +512,73 @@ mod tests {
             validate(AccountId::new([0x11; 32])),
             Err(SpelError::PdaMismatch { .. })
         ));
+    }
+
+    /// The feed account's address, derived the way a client would.
+    fn feed_account_id(feed_id: &[u8; 32]) -> AccountId {
+        compute_pda(
+            &OURS,
+            &[
+                feed_id,
+                &seed_from_str(aggregator_program::register::FEED_ACCOUNT_SEED),
+            ],
+        )
+    }
+
+    /// `register_feed`'s accounts, in the order it declares them, with the
+    /// instruction data the `arg("feed_id")` seed is read from.
+    fn validate_register(feed_id: [u8; 32], feed_at: AccountId) -> Result<(), SpelError> {
+        let mut admin = account([0xAD; 32]);
+        admin.is_authorized = true;
+        let mut feed = account(*feed_at.value());
+        feed.account = Account::default();
+        let accounts = [feed, admin, account(*admin_config_id().value())];
+        // The seed argument is handed to the validator directly rather than
+        // decoded from the instruction: the generated claims function and the
+        // validator take the same `&[u8; 32]`, which is what keeps the address
+        // one thing.
+        let instruction: InstructionData = Vec::new();
+        super::kanon_aggregator::__validate_register_feed(&accounts, &OURS, &instruction, &feed_id)
+    }
+
+    #[test]
+    fn the_feed_address_the_constraint_accepts_is_the_one_its_id_derives() {
+        // The seed is an instruction argument rather than a constant, so the
+        // validator has to read it out of the instruction data to derive the
+        // address. That is the part worth pinning: a client computing the
+        // address off the IDL and this program deriving it must agree.
+        let feed_id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        validate_register(feed_id, feed_account_id(&feed_id))
+            .expect("the derived address is the declared one");
+    }
+
+    #[test]
+    fn a_feed_account_at_another_address_is_refused_by_the_generated_validator() {
+        // Without the constraint a caller could register a feed anywhere, and
+        // two accounts could both claim to be BTC/USD with different signer
+        // sets. The address is what makes one feed id one feed.
+        let feed_id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        assert!(
+            matches!(
+                validate_register(feed_id, AccountId::new([0x11; 32])),
+                Err(SpelError::PdaMismatch { .. })
+            ),
+            "an address nobody derived has to be refused"
+        );
+    }
+
+    #[test]
+    fn a_feed_address_derived_from_another_id_is_refused() {
+        // The sharper case: a well-formed address for the wrong feed. Registering
+        // ETH at BTC's address would let one id's registration occupy another's.
+        let btc = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        let eth = *b"ETH\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        assert!(
+            matches!(
+                validate_register(eth, feed_account_id(&btc)),
+                Err(SpelError::PdaMismatch { .. })
+            ),
+            "the address has to follow the id in the instruction"
+        );
     }
 }

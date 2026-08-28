@@ -22,13 +22,20 @@ use serde_json::Value;
 /// One value per variant. Order is deliberately not meaningful: each variant's
 /// discriminant is read out of its own encoding, so this list only has to be
 /// complete, and the count assertion is what checks that it is.
+/// A feed id as the wire pads it, which is what the instruction now takes.
+fn padded(name: &[u8]) -> [u8; 32] {
+    let mut id = [0u8; 32];
+    id[..name.len()].copy_from_slice(name);
+    id
+}
+
 fn every_variant() -> Vec<Instruction> {
     vec![
         Instruction::SubmitPrice {
             payload: vec![1, 2, 3],
         },
         Instruction::RegisterFeed {
-            feed_id: b"BTC".to_vec(),
+            feed_id: padded(b"BTC"),
             base_asset: [1u8; 32],
             quote_asset: [2u8; 32],
             decimals: 8,
