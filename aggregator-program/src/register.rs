@@ -459,6 +459,35 @@ mod tests {
     }
 
     #[test]
+    fn no_two_causes_share_an_error_code() {
+        // The convention `SubmitError` and `AdminError` both carry. No collision
+        // is reachable at two variants plus a delegated block; this is here so
+        // the third error type does not be the one that drops it.
+        let causes = [
+            RegisterError::AlreadyRegistered,
+            RegisterError::FeedTooLarge,
+        ];
+
+        // No wildcard arm, so a new variant fails to compile here. It does not
+        // prove the list is complete -- an author can add the arm and forget the
+        // entry -- so the list is kept by hand; what this buys is that the
+        // omission is loud.
+        for cause in &causes {
+            match cause {
+                RegisterError::AlreadyRegistered
+                | RegisterError::FeedTooLarge
+                | RegisterError::Config(_) => {}
+            }
+        }
+
+        let mut codes: Vec<u32> = causes.iter().map(RegisterError::code).collect();
+        codes.sort_unstable();
+        let before = codes.len();
+        codes.dedup();
+        assert_eq!(codes.len(), before, "two causes answer with one code");
+    }
+
+    #[test]
     fn a_config_error_keeps_the_number_it_has_everywhere_else() {
         // The 900 block is this instruction's own; a cause that already has a
         // number keeps it, so an operator reading a code off a failed

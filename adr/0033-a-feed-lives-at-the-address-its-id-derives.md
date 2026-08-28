@@ -9,11 +9,23 @@
 ## Context
 
 M2-01 declared `register_feed` with `#[account(init)] feed` and no seeds, which
-left the feed account's address undecided. Nothing had decided it: ADR 32 settled
-the *price* account's address as a derivation from the feed account's own, and
-ADR 16 rejected deriving the feed id from the asset pair, but every fixture in
-the repository used an arbitrary constant. M2-07 could not be written without an
-answer, because the answer decides what SPEL claims.
+left the feed account's address to M2-07. It is not that nothing had decided it.
+**ADR 32 decided it the other way**, and named this task as the place to
+reconsider:
+
+> Rejected because the enforcement is permanent and unrecoverable: ownership can
+> never be released, `deregister_feed` can zero a feed's data but not un-own its
+> account, and `init` compares against a default *account*, which an owned one
+> with zeroed data still fails. One registration with the wrong exponent would
+> burn that pair for the lifetime of the program build.
+>
+> — ADR 32, which adds that it is "worth raising against **M2-07, whose shape
+> would change**"
+
+That objection is correct and it survives this decision: deriving from the feed
+id carries the same permanence. **This ADR supersedes ADR 32 on that point**, and
+the cost is stated in the consequences rather than left implicit. A reader who
+finds ADR 32 first should read this paragraph as the answer to it.
 
 `#[account(init)]` is not neutral here. The macro generates `Claim::Pda` when the
 declared account carries seeds and `Claim::Authorized` when it does not, so the
@@ -66,11 +78,21 @@ not the other fails.
   arrives at an account that is no longer default and is refused before anything
   is written, and two ids cannot collide. The deliverable for R2 is therefore the
   test that says so, not a rollback path.
-- **A feed cannot be moved or re-created.** The address is the id's, so a
-  registration is final for that id until `deregister_feed` (M2-09) empties it.
-  What "empties" has to mean is now M2-09's question rather than an open one:
-  anything short of `Account::default()` leaves the id unregisterable, because
-  `register_feed` refuses a non-default account.
+- **A registration is permanent for that feed id, and no implementation can change
+  that.** `Account::default()` requires `program_owner == DEFAULT_PROGRAM_ID`, and
+  rule 4 forbids a program changing an account's owner, so once a registration claims
+  the account it can never equal `Account::default()` again whatever a later
+  deregistration writes. M2-09 therefore has no design space here and should not begin
+  by looking for it: the most it can do is empty the data and keep the account, which
+  means `register_feed` will have to admit a third pre-state. What is genuinely
+  permanent is the *configuration set at registration*: only `signers` and `threshold`
+  are scheduled for an update path (M2-08), so a wrong `decimals` or `max_age_ms`
+  burns that feed id for the life of the build. Deriving the address also removes the
+  one escape `Claim::Authorized` had, which was to abandon the account and re-create
+  the feed at a fresh address under the same id. That is the cost ADR 32 named, paid
+  knowingly: two accounts able to answer for BTC/USD with different signer sets is the
+  worse hazard, and an update path for the remaining fields is the mitigation if it is
+  ever wanted.
 - **`registered` is not a state anyone stores.** Whether a feed exists is whether
   its derived account is non-default, which is a read a client can do without
   this program.
@@ -78,6 +100,18 @@ not the other fails.
   build the seed and `FeedAccount` stores the padded form.
   `FeedConfig::try_new` still refuses an all-zero or over-width id, so the
   validation is M1's and not restated.
+- **A derived address can be squatted, and this program cannot prevent it.** The
+  address is publicly derivable; rule 5 guards balance *decreases* only and rule 7's
+  guard is `pre != default`, so anyone may put one unit of balance on a pristine
+  derived account. It is then non-default and default-owned — the third state ADR 32
+  identified at the price account, arriving by choice rather than by accident — and
+  rule 6 refuses a data change while rule 7 refuses any post-state keeping the default
+  owner. A claim cannot rescue it, because the claim loop runs after
+  `validate_execution`. That kills the feed id for the life of the build, and the same
+  attack lands on the admin config account, whose address takes no per-deployment
+  input at all. Not M2-07's to fix and not fixed here: recorded in `m0/versions.md`
+  question 4 and pinned by
+  `a_derived_address_can_be_squatted_and_this_pins_the_refusal`.
 - **One registration, one signer set.** Combined with ADR 30, a rotation is one
   `update_signer_set` per feed against an address the operator can derive, which
   is what makes the runbook writable.

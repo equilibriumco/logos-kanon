@@ -9,7 +9,9 @@ use aggregator_program::register::{register_feed, RegisterError, FEED_ACCOUNT_SE
 use aggregator_program::FeedAccount;
 use borsh::BorshDeserialize;
 use lee_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
-use lee_core::program::{validate_execution, AccountPostState, ProgramId};
+use lee_core::program::{
+    validate_execution, AccountPostState, ExecutionValidationError, ProgramId,
+};
 use spel_framework::pda::{compute_pda, seed_from_str};
 
 const OURS: ProgramId = [7u32; 8];
@@ -145,4 +147,69 @@ fn two_feeds_are_two_accounts() {
         let posts = register(feed, id).expect("a usable feed");
         validate_execution(&pre, &posts, OURS).expect("each lands on its own");
     }
+}
+
+#[test]
+fn a_derived_address_can_be_squatted_and_this_pins_the_refusal() {
+    // Not a property this program can fix, and the test says so rather than
+    // implying otherwise. Recorded because the refusal is what an operator will
+    // meet, and because a change in LEZ's rules should show up here.
+    //
+    // The attack: the address is publicly derivable, rule 5 guards balance
+    // *decreases* only, and rule 7's guard is `pre != default` -- so a pristine
+    // target is a legal recipient and anyone may put one unit on it. After that
+    // the account is non-default and default-owned, which is the third state ADR
+    // 32 identified at the price account, arriving by someone's choice.
+    let id = feed_id(b"BTC");
+    let target = unregistered(&id);
+
+    // Step one: the squat itself is a transaction LEZ accepts, by a program that
+    // owns its source and not its target.
+    const WALLET: ProgramId = WALLET_PROGRAM;
+    let source = on_chain(0x50, true);
+    let mut spent = source.account.clone();
+    spent.balance -= 1;
+    let squatted = Account {
+        balance: 1,
+        ..Account::default()
+    };
+    validate_execution(
+        &[source, target.clone()],
+        &[
+            AccountPostState::new(spent),
+            AccountPostState::new(squatted.clone()),
+        ],
+        WALLET,
+    )
+    .expect("increasing the balance of an account you do not own is permitted");
+
+    // Step two: the feed id is now unusable. Neither branch of the three-state
+    // check admits it -- it is not default, and it is not ours.
+    let blocked = AccountWithMetadata {
+        account: squatted,
+        is_authorized: false,
+        account_id: feed_address(&id),
+    };
+    assert_eq!(
+        register(blocked.clone(), id),
+        Err(RegisterError::AlreadyRegistered),
+        "one unit of balance is enough to refuse the registration"
+    );
+
+    // Step three: and removing the check would not help, which is why this is
+    // pinned rather than patched. Any post-state that writes the feed is refused
+    // by LEZ itself -- rule 6, because the pre-state is not default and this
+    // program does not own it.
+    let mut written = blocked.account.clone();
+    written.data = Data::try_from(vec![1u8; 8]).expect("fits");
+    let refused = validate_execution(&[blocked], &[AccountPostState::new(written)], OURS)
+        .expect_err("this program cannot write an account it does not own");
+    assert!(
+        matches!(
+            refused,
+            ExecutionValidationError::UnauthorizedDataModification { .. }
+                | ExecutionValidationError::NonDefaultAccountWithDefaultOwner { .. }
+        ),
+        "expected rule 6 or rule 7 to refuse it, got {refused:?}"
+    );
 }

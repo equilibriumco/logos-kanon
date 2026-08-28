@@ -172,11 +172,11 @@ out per bullet rather than by a count:
   one-line manifest change would fix for every downstream consumer (ADR 9). The
   second half is `m0/versions.md` item 3; the LGPL question is stated in
   `deny.toml` beside the exceptions it justifies rather than there.
-- **Must a program claim or reject a default-owned signer** (`[M2-06:01]`). LEZ strands a
-  default-owned signer after its first transaction, chain-wide, and the claim mechanism
-  is the escape a program has to take deliberately. This one declines to — it will not
-  take ownership of an operator's wallet — and refuses such a key instead.
-  `m0/versions.md` item 4.
+- **May a program claim a non-default, default-owned account** (`[M2-06:01]`, ADR 33).
+  One rule pair, met twice: it strands a signer a program declines to claim, and it lets
+  anyone put one unit of balance on a publicly derivable PDA and make that address
+  permanently unwritable — including the admin config account, whose address takes no
+  per-deployment input. `m0/versions.md` item 4.
 - **`OraclePriceAccount` is harder to depend on than it needs to be** (ADR 8,
   ADR 9): the account-type crate pulls risc0 and `uniswap_v3_math` in to carry six
   Borsh fields, and `=3.0.5` is an exact pin, which is what makes the canonical
