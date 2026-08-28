@@ -48,7 +48,9 @@ fn every_variant() -> Vec<Instruction> {
             signers: vec![[4u8; 20]],
             threshold: 2,
         },
-        Instruction::DeregisterFeed,
+        Instruction::DeregisterFeed {
+            feed_id: padded(b"BTC"),
+        },
         Instruction::PauseFeed,
         Instruction::UnpauseFeed,
         Instruction::InitialiseAdmin,

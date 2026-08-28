@@ -1,10 +1,9 @@
 //! The admin-gated operations on a feed that already exists.
 //!
 //! [`register_feed`](crate::register::register_feed) creates a feed; these change
-//! one. Signer-set updates are M2-08 and land here; deregistration (M2-09) and
-//! pausing (M2-10) join them, because all three are the same shape — an
-//! authorised caller naming a registered feed and changing one part of it — and
-//! three modules of one function each would say less than one module of three.
+//! one. Signer-set updates are M2-08, deregistration M2-09, pausing M2-10 — all
+//! the same shape, an authorised caller naming a registered feed and changing one
+//! part of it, so they share a module and the answer to "which feed is this".
 //!
 //! # Naming the feed
 //!
@@ -195,6 +194,50 @@ pub fn update_signer_set(
     };
 
     rewritten(feed, admin, config, &updated)
+}
+
+/// Retires a feed, leaving its account able to hold a new registration.
+///
+/// # What "retired" can mean
+///
+/// Not `Account::default()`. LEZ's rule 4 forbids a program giving up ownership
+/// and rule 3 forbids resetting the nonce, so a feed account is this program's
+/// from its first registration onwards and cannot be handed back. Since the
+/// address is the feed id's (ADR 33), a deregistration that could not be undone
+/// would spend the feed id permanently — and RedStone's ids are fixed strings, so
+/// losing `BTC` once would mean losing it for the life of the deployment.
+///
+/// So the account stays ours and empties: `Data::default()`, which is a state
+/// nothing else this program writes produces. `register_feed` accepts it as a
+/// re-registration, and `submit_price` refuses it as `FeedDeregistered` rather
+/// than as undecodable bytes.
+///
+/// A paused feed can be deregistered. Requiring an unpause first would mean
+/// briefly accepting prices for a feed being retired, which is the opposite of
+/// what pausing is for.
+///
+/// # Errors
+///
+/// [`ManageError`] when the account is not the named feed.
+pub fn deregister_feed(
+    feed: AccountWithMetadata,
+    admin: AccountWithMetadata,
+    config: AccountWithMetadata,
+    feed_id: [u8; 32],
+    self_program_id: ProgramId,
+) -> Result<Vec<AccountPostState>, ManageError> {
+    // Read for its side effect: this refuses unless the account is the feed the
+    // caller named, which is the whole of what deregistration decides.
+    let _ = named_feed(&feed, &feed_id, self_program_id)?;
+
+    let mut account = feed.account;
+    account.data = Data::default();
+
+    Ok(vec![
+        AccountPostState::new(account),
+        AccountPostState::new(admin.account),
+        AccountPostState::new(config.account),
+    ])
 }
 
 #[cfg(test)]
@@ -461,6 +504,100 @@ mod tests {
         assert_eq!(
             ManageError::Config(ConfigError::ThresholdZero).code(),
             crate::submit::config_code(ConfigError::ThresholdZero)
+        );
+    }
+    #[test]
+    fn a_deregistration_empties_the_account_and_keeps_it() {
+        // Rule 4 forbids giving up ownership and rule 3 forbids resetting the
+        // nonce, so this is the most a program can do: the account stays ours,
+        // at its nonce, holding nothing.
+        let before = feed_account(&registered(BTC, 5, 3, false), OURS);
+        let owner = before.account.program_owner;
+        let nonce = before.account.nonce;
+
+        let posts = deregister_feed(
+            before,
+            passthrough(0xAD),
+            passthrough(0xC0),
+            feed_id(BTC),
+            OURS,
+        )
+        .expect("the named feed");
+
+        assert!(
+            posts[0].account().data.as_ref().is_empty(),
+            "no feed is left"
+        );
+        assert_eq!(
+            posts[0].account().program_owner,
+            owner,
+            "still ours (rule 4)"
+        );
+        assert_eq!(posts[0].account().nonce, nonce, "unchanged (rule 3)");
+        assert!(posts[0].required_claim().is_none(), "already claimed");
+    }
+
+    #[test]
+    fn a_paused_feed_can_be_deregistered() {
+        // Requiring an unpause first would mean briefly accepting prices for a
+        // feed being retired, which is the opposite of what pausing is for.
+        let posts = deregister_feed(
+            feed_account(&registered(BTC, 3, 2, true), OURS),
+            passthrough(0xAD),
+            passthrough(0xC0),
+            feed_id(BTC),
+            OURS,
+        )
+        .expect("a paused feed retires");
+        assert!(posts[0].account().data.as_ref().is_empty());
+    }
+
+    #[test]
+    fn a_deregistration_refuses_a_feed_it_was_not_named() {
+        let btc = feed_account(&registered(BTC, 5, 3, false), OURS);
+        assert_eq!(
+            deregister_feed(
+                btc,
+                passthrough(0xAD),
+                passthrough(0xC0),
+                feed_id(ETH),
+                OURS
+            ),
+            Err(ManageError::FeedMismatch)
+        );
+    }
+
+    #[test]
+    fn a_deregistration_refuses_an_account_that_is_not_ours() {
+        let feed = feed_account(&registered(BTC, 3, 2, false), SOMEONE_ELSE);
+        assert_eq!(
+            deregister_feed(
+                feed,
+                passthrough(0xAD),
+                passthrough(0xC0),
+                feed_id(BTC),
+                OURS
+            ),
+            Err(ManageError::FeedNotOurs)
+        );
+    }
+
+    #[test]
+    fn an_already_deregistered_feed_cannot_be_deregistered_again() {
+        // The account is ours and empty, so there is no feed to name. Reported
+        // as undecodable rather than as a mismatch, because that is what an
+        // empty account is: no feed at all.
+        let mut feed = feed_account(&registered(BTC, 3, 2, false), OURS);
+        feed.account.data = Data::default();
+        assert_eq!(
+            deregister_feed(
+                feed,
+                passthrough(0xAD),
+                passthrough(0xC0),
+                feed_id(BTC),
+                OURS
+            ),
+            Err(ManageError::FeedUndecodable)
         );
     }
 }

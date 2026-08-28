@@ -134,7 +134,7 @@ mod kanon_aggregator {
     /// Registers a feed with the parameters later submissions are checked against.
     ///
     /// Expected accounts:
-    /// 1. `feed` — uninitialised, claimed by this program, at
+    /// 1. `feed` — default or emptied-and-ours, at
     ///    `for_public_pda(program, sha256(feed_id || zero_pad_32("KANON_FEED_ACCOUNT")))`.
     /// 2. `admin` — the signer claiming to be the authority.
     /// 3. `config` — the account holding the authority `admin` is checked
@@ -151,7 +151,16 @@ mod kanon_aggregator {
         // checked in code for the reason ADR 32 gives about the price account:
         // the derivation is what a client reproduces, and the constraint is what
         // publishes it in the IDL.
-        #[account(init, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]
+        //
+        // `mut` and not `init`, which it was until M2-09 gave the account a third
+        // pre-state. `init` emits `accounts[0] != Account::default()` in the
+        // dispatcher, and a deregistered account is ours and empty rather than
+        // default -- so the constraint would refuse every re-registration with
+        // `AccountAlreadyInitialized` before the body could accept it, and a feed
+        // id would be spent by its first retirement after all. The body decides
+        // the pre-state, on one discriminator, because it is the only layer that
+        // can tell the three apart.
+        #[account(mut, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]
         feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
         #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
@@ -175,6 +184,7 @@ mod kanon_aggregator {
             max_age_ms,
             signers,
             threshold,
+            ctx.self_program_id,
         )?;
         // Three segments, as `submit_price` uses: the delegated logic already
         // built the claim, so the generated claims helper must not build a
@@ -226,13 +236,21 @@ mod kanon_aggregator {
     #[instruction]
     pub fn deregister_feed(
         ctx: ProgramContext,
-        #[account(mut)] feed: AccountWithMetadata,
+        #[account(mut, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]
+        feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
         #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
+        feed_id: [u8; 32],
     ) -> SpelResult {
         aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
-        let _ = (feed, admin, config);
-        Err(not_yet("deregister_feed", "M2-09"))
+        let post_states = aggregator_program::manage::deregister_feed(
+            feed,
+            admin,
+            config,
+            feed_id,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 
     /// Stops a feed accepting submissions, leaving its registration intact.
@@ -606,30 +624,42 @@ mod tests {
     }
 
     #[test]
-    fn a_squatted_feed_account_is_refused_by_the_generated_validator() {
-        // The error an operator actually meets when someone has put one unit of
-        // balance on a feed's derived address. `#[account(init)]` makes SPEL emit
-        // `accounts[0].account != Account::default()` in the dispatcher, so the
-        // refusal happens before `aggregator_program::register::register_feed`
-        // runs and `RegisterError::AlreadyRegistered` -- the pure function's
-        // answer, pinned by `tests/register_feed.rs` -- is never reached on
-        // chain. Both refusals are permanent; this is the one to look for.
+    fn a_deregistered_feed_account_reaches_the_body() {
+        // What `#[account(mut)]` buys over `#[account(init)]`, and the reason the
+        // declaration changed in M2-09. `init` emits
+        // `accounts[0] != Account::default()` in the dispatcher; a deregistered
+        // account is ours and empty rather than default, so under `init` every
+        // re-registration died as `AccountAlreadyInitialized` before
+        // `register_feed` could accept it -- and a feed id would be spent by its
+        // first retirement, which is the outcome M2-09 exists to avoid.
+        let feed_id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        let emptied = Account {
+            program_owner: OURS,
+            balance: 0,
+            data: Data::default(),
+            nonce: Nonce(3),
+        };
+
+        validate_register_feed_account(feed_id, feed_account_id(&feed_id), emptied)
+            .expect("a deregistered feed account has to reach the body");
+    }
+
+    #[test]
+    fn a_squatted_feed_account_passes_the_validator_and_the_body_refuses_it() {
+        // The squat from `m0/versions.md` question 4, and where its refusal lives
+        // now. Dropping `init` moved it from the dispatcher into the body, which
+        // is the only layer that can tell a squat (not ours, not default) from a
+        // deregistration (ours, empty). The refusal is unchanged in effect and
+        // still permanent -- `AlreadyRegistered`, pinned by
+        // `tests/register_feed.rs::a_derived_address_can_be_squatted_and_this_pins_the_refusal`.
         let feed_id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
         let squatted = Account {
             balance: 1,
             ..Account::default()
         };
 
-        let refused = validate_register_feed_account(feed_id, feed_account_id(&feed_id), squatted)
-            .expect_err("a squatted address cannot be registered");
-
-        assert!(
-            matches!(
-                refused,
-                SpelError::AccountAlreadyInitialized { account_index: 0 }
-            ),
-            "expected the init check to refuse it, got {refused:?}"
-        );
+        validate_register_feed_account(feed_id, feed_account_id(&feed_id), squatted)
+            .expect("the constraint checks the address, not the pre-state");
     }
 
     #[test]
@@ -637,10 +667,12 @@ mod tests {
         // The worst case of the same attack, recorded here because the config
         // address takes no input an attacker cannot predict -- the program id and
         // a compile-time constant, both readable from this repository -- so it
-        // can be squatted before the operator ever runs the bootstrap. `initialise_admin`
-        // declares `#[account(init, ...)] config`, so the dispatcher answers
-        // first and `AdminError::AlreadyInitialised` is again only the pure
-        // function's answer. Not M2-07's to fix; `m0/versions.md` question 4.
+        // can be squatted before the operator ever runs the bootstrap.
+        // `initialise_admin` still declares `#[account(init, ...)] config` -- the
+        // config account has no third pre-state, so it keeps the constraint
+        // `register_feed` had to give up -- and the dispatcher therefore answers
+        // first, with `AdminError::AlreadyInitialised` only the pure function's
+        // answer. Not M2-07's to fix; `m0/versions.md` question 4.
         let mut admin = account([0xAD; 32]);
         admin.is_authorized = true;
         let mut config = account(*admin_config_id().value());
@@ -721,5 +753,32 @@ mod tests {
             ),
             "the address has to follow the id"
         );
+    }
+
+    #[test]
+    fn a_deregistration_accepts_only_the_feed_at_the_derived_address() {
+        // Same constraint as the other two, so every operation on a feed reaches
+        // the account `register_feed` claimed and nothing else.
+        let id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        let mut admin = account([0xAD; 32]);
+        admin.is_authorized = true;
+        let ok = [
+            account(*feed_account_id(&id).value()),
+            admin.clone(),
+            account(*admin_config_id().value()),
+        ];
+        let instruction: InstructionData = Vec::new();
+        super::kanon_aggregator::__validate_deregister_feed(&ok, &OURS, &instruction, &id)
+            .expect("the derived address is the declared one");
+
+        let wrong = [
+            account([0x11; 32]),
+            admin,
+            account(*admin_config_id().value()),
+        ];
+        assert!(matches!(
+            super::kanon_aggregator::__validate_deregister_feed(&wrong, &OURS, &instruction, &id),
+            Err(SpelError::PdaMismatch { .. })
+        ));
     }
 }

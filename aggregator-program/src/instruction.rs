@@ -110,7 +110,12 @@ pub enum Instruction {
     /// 1. `feed` — the registered feed's account.
     /// 2. `admin` — the signer claiming to be the authority.
     /// 3. `config` — the account holding the authority `admin` is checked against.
-    DeregisterFeed,
+    DeregisterFeed {
+        /// Which feed to retire, right-padded to the wire's field width.
+        ///
+        /// Named as well as addressed, for the reason `UpdateSignerSet` is.
+        feed_id: [u8; 32],
+    },
 
     /// Stop a feed accepting submissions, leaving its registration intact.
     ///

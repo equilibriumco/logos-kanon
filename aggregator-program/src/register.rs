@@ -23,12 +23,37 @@
 //! Two things follow from the address being the feed id's. A client can find a
 //! feed without being told where it is, which is what the SDK, the CLI, the
 //! relayer and every consumer need. And one feed id has one account, so a second
-//! registration of the same feed arrives at an account that is no longer default
-//! and is refused -- which is the whole of R2's atomicity, and a property of the
+//! registration of the same feed arrives at an account that already holds one and
+//! is refused -- which is the whole of R2's atomicity, and a property of the
 //! address space rather than a check anyone has to remember.
+//!
+//! # Three states, not two
+//!
+//! Because the address is fixed, re-registering after
+//! [`deregister_feed`](crate::manage::deregister_feed) has to work, or a feed id
+//! would be spent the first time it was retired. LEZ makes that a question about
+//! data rather than about the account: rule 4 forbids a program giving up
+//! ownership and rule 3 forbids resetting the nonce, so a deregistered account
+//! stays this program's forever and cannot be handed back as
+//! `Account::default()`.
+//!
+//! So a feed account arrives in one of three states, which is the same shape
+//! `submit_price` faces at the price account:
+//!
+//! - **fully default** -- never registered, and the claim makes it ours;
+//! - **ours, with no data** -- deregistered, and re-registering rewrites it
+//!   without claiming, because it is already claimed;
+//! - **anything else** -- a feed is there, or the account is not one this program
+//!   can write, and either way the registration is refused.
+//!
+//! The third state is also why the guest declares the feed account `mut` rather
+//! than `init`. `init` emits `accounts[0] != Account::default()` in the
+//! dispatcher, which is the two-state question, and it would refuse every
+//! re-registration as `AccountAlreadyInitialized` before this function ran. The
+//! check below is therefore the only gate, on chain as well as in a test.
 
 use lee_core::account::{Account, AccountWithMetadata, Data};
-use lee_core::program::AccountPostState;
+use lee_core::program::{AccountPostState, ProgramId};
 use spel_framework::pda::seed_from_str;
 use spel_framework::spel_output::AutoClaim;
 use verifier_core::SignerAddress;
@@ -50,6 +75,10 @@ pub enum RegisterError {
     /// `validate_execution`, which reports it against the post-state rather
     /// than against the input. ADR 32 records the same trap at the price
     /// account.
+    ///
+    /// Nothing upstream repeats this check: the declaration is `mut` rather than
+    /// `init`, so a squatted address reaches here rather than being turned away
+    /// by the dispatcher.
     AlreadyRegistered,
     /// The parameters do not describe a usable feed.
     ///
@@ -132,8 +161,17 @@ pub fn register_feed(
     max_age_ms: u64,
     signers: Vec<[u8; SignerAddress::LEN]>,
     threshold: u8,
+    self_program_id: ProgramId,
 ) -> Result<Vec<AccountPostState>, RegisterError> {
-    if feed.account != Account::default() {
+    // Decided once, on one discriminator, for the reason ADR 32 records about the
+    // price account: an account with data and a default owner has a claimable
+    // owner and an unwritable body, and deciding the claim separately is what
+    // lets that state through.
+    let first = feed.account == Account::default();
+    let deregistered = !first
+        && feed.account.program_owner == self_program_id
+        && feed.account.data.as_ref().is_empty();
+    if !first && !deregistered {
         return Err(RegisterError::AlreadyRegistered);
     }
 
@@ -168,15 +206,19 @@ pub fn register_feed(
     account.data = Data::try_from(borsh::to_vec(&stored).map_err(|_| RegisterError::FeedTooLarge)?)
         .map_err(|_| RegisterError::FeedTooLarge)?;
 
-    // Unconditional rather than `new_claimed_if_default`, because the check
-    // above has already refused every pre-state but the default one. Deciding it
-    // twice, on different rules, is how the third price-account state got
-    // through in ADR 32.
-    let claimed = AutoClaim::pda_from_seeds(&[&feed_id, &seed_from_str(FEED_ACCOUNT_SEED)])
-        .to_post_state(account);
+    // From the same discriminator the check used, and not from the account's
+    // owner. A re-registration must not claim: LEZ refuses a claim on an account
+    // whose owner is not the default one, so claiming again would fail the
+    // transaction rather than be ignored.
+    let feed_post = if first {
+        AutoClaim::pda_from_seeds(&[&feed_id, &seed_from_str(FEED_ACCOUNT_SEED)])
+            .to_post_state(account)
+    } else {
+        AccountPostState::new(account)
+    };
 
     Ok(vec![
-        claimed,
+        feed_post,
         AccountPostState::new(admin.account),
         AccountPostState::new(config.account),
     ])
@@ -252,6 +294,7 @@ mod tests {
             MAX_AGE_MS,
             set,
             threshold,
+            OURS,
         )
     }
 
@@ -322,6 +365,7 @@ mod tests {
             MAX_AGE_MS,
             signers(3),
             2,
+            OURS,
         )
         .expect("a usable feed");
 

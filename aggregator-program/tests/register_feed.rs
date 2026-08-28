@@ -77,6 +77,7 @@ fn register(
         MAX_AGE_MS,
         signers(5),
         3,
+        OURS,
     )
 }
 

@@ -65,6 +65,7 @@ fn registered(id: &[u8; 32]) -> AccountWithMetadata {
         60_000,
         signers(5),
         3,
+        OURS,
     )
     .expect("a usable feed");
 

@@ -58,6 +58,14 @@ pub enum SubmitError {
     /// the caller's choosing. An unregistered account is the same refusal: it
     /// carries the default owner.
     FeedNotOurs,
+    /// The feed account is this program's and empty, so the feed was retired.
+    ///
+    /// Its own cause and not [`Self::FeedUndecodable`]: an operator reading a
+    /// failed submission needs to know the feed was deregistered rather than
+    /// that its bytes were unreadable, and the two go to different people.
+    /// Deregistration cannot hand the account back (rule 4), so empty is what
+    /// retired looks like.
+    FeedDeregistered,
     /// The feed account is owned by this program but its data is not a feed.
     FeedUndecodable,
     /// The feed is paused, so it accepts no submissions.
@@ -92,6 +100,7 @@ impl SubmitError {
         match self {
             Self::FeedNotOurs => 101,
             Self::FeedUndecodable => 102,
+            Self::FeedDeregistered => 106,
             Self::FeedPaused => 103,
             Self::PriceAccountNotOurs => 104,
             Self::PriceAccountUndecodable => 105,
@@ -183,6 +192,9 @@ impl fmt::Display for SubmitError {
         match self {
             Self::FeedNotOurs => f.write_str("the feed account is not one this program registered"),
             Self::FeedUndecodable => f.write_str("the feed account's data is not a feed"),
+            Self::FeedDeregistered => {
+                f.write_str("this feed was deregistered, so its account holds no feed")
+            }
             Self::FeedPaused => f.write_str("the feed is paused and accepts no submissions"),
             Self::PriceAccountNotOurs => {
                 f.write_str("the price account exists and this program does not own it")
@@ -289,6 +301,9 @@ pub fn submit_price(
     // that would make every staleness check downstream a formality.
     let now = LezClock::from_account(clock.account_id.value(), clock.account.data.as_ref())?;
 
+    if feed.account.data.as_ref().is_empty() {
+        return Err(SubmitError::FeedDeregistered);
+    }
     let stored = FeedAccount::try_from_slice(feed.account.data.as_ref())
         .map_err(|_| SubmitError::FeedUndecodable)?;
     // Administrative rather than cryptographic, so it is decided here and not in
