@@ -185,22 +185,35 @@ mod kanon_aggregator {
     /// Replaces one feed's signer set and threshold.
     ///
     /// Expected accounts:
-    /// 1. `feed` — the registered feed.
+    /// 1. `feed` — the registered feed, at the address `feed_id` derives.
     /// 2. `admin` — the signer claiming to be the authority.
     /// 3. `config` — the account holding the authority `admin` is checked
     ///    against, at the address its constraint derives.
     #[instruction]
     pub fn update_signer_set(
         ctx: ProgramContext,
-        #[account(mut)] feed: AccountWithMetadata,
+        // Constrained to the address its id derives, as `register_feed` claims
+        // it. Without this an admin could hand any account this program owns
+        // whose bytes decode as a feed.
+        #[account(mut, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]
+        feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
         #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
+        feed_id: [u8; 32],
         signers: Vec<[u8; 20]>,
         threshold: u8,
     ) -> SpelResult {
         aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
-        let _ = (feed, admin, config, signers, threshold);
-        Err(not_yet("update_signer_set", "M2-08"))
+        let post_states = aggregator_program::manage::update_signer_set(
+            feed,
+            admin,
+            config,
+            feed_id,
+            signers,
+            threshold,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 
     /// Removes a feed's registration.
@@ -648,6 +661,65 @@ mod tests {
                 SpelError::AccountAlreadyInitialized { account_index: 0 }
             ),
             "expected the init check to refuse it, got {refused:?}"
+        );
+    }
+
+    /// `update_signer_set`'s accounts, in the order it declares them.
+    fn validate_rotation(feed_id: [u8; 32], feed_at: AccountId) -> Result<(), SpelError> {
+        let mut admin = account([0xAD; 32]);
+        admin.is_authorized = true;
+        let accounts = [
+            account(*feed_at.value()),
+            admin,
+            account(*admin_config_id().value()),
+        ];
+        let instruction: InstructionData = Vec::new();
+        super::kanon_aggregator::__validate_update_signer_set(
+            &accounts,
+            &OURS,
+            &instruction,
+            &feed_id,
+        )
+    }
+
+    #[test]
+    fn a_rotation_accepts_the_feed_at_the_address_its_id_derives() {
+        // The same constraint `register_feed` claims under, so the account a
+        // registration created is the only one a rotation reaches.
+        let id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        validate_rotation(id, feed_account_id(&id))
+            .expect("the derived address is the declared one");
+    }
+
+    #[test]
+    fn a_rotation_refuses_a_feed_account_at_another_address() {
+        // Without the constraint an admin could hand any account this program
+        // owns whose bytes decode as a feed. `update_signer_set` checks the
+        // stored id too, and this is the half the constraint carries.
+        let id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        assert!(
+            matches!(
+                validate_rotation(id, AccountId::new([0x11; 32])),
+                Err(SpelError::PdaMismatch { .. })
+            ),
+            "an address nobody derived has to be refused"
+        );
+    }
+
+    #[test]
+    fn a_rotation_refuses_one_feeds_account_under_another_feeds_id() {
+        // The address follows the id in the instruction, so naming ETH while
+        // handing BTC's account is refused before the body runs -- and the body
+        // refuses it again on the stored id, which is the check that does not
+        // depend on this constraint being right.
+        let btc = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        let eth = *b"ETH\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        assert!(
+            matches!(
+                validate_rotation(eth, feed_account_id(&btc)),
+                Err(SpelError::PdaMismatch { .. })
+            ),
+            "the address has to follow the id"
         );
     }
 }

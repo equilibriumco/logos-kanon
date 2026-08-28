@@ -44,6 +44,7 @@ fn every_variant() -> Vec<Instruction> {
             threshold: 1,
         },
         Instruction::UpdateSignerSet {
+            feed_id: padded(b"BTC"),
             signers: vec![[4u8; 20]],
             threshold: 2,
         },

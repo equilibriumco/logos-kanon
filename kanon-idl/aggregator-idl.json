@@ -239,6 +239,18 @@
         {
           "init": false,
           "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
           "signer": false,
           "writable": true
         },
@@ -264,6 +276,15 @@
         }
       ],
       "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
         {
           "name": "signers",
           "type": {

@@ -87,9 +87,20 @@ pub enum Instruction {
     /// 2. `admin` — the signer claiming to be the authority.
     /// 3. `config` — the account holding the authority `admin` is checked against.
     UpdateSignerSet {
+        /// Which feed to rotate, right-padded to the wire's field width.
+        ///
+        /// Named as well as addressed: the account's address is derived from
+        /// this id (ADR 33) and the id it stores is compared against it, so an
+        /// operator rotating several feeds cannot hand the wrong account and
+        /// move the wrong signer set. ADR 16 set the same rule for the asset
+        /// pair.
+        feed_id: [u8; 32],
         /// The signer set replacing the stored one.
         signers: Vec<[u8; SignerAddress::LEN]>,
         /// The threshold replacing the stored one.
+        ///
+        /// Moves with the set because it is one decision: a threshold is only
+        /// meaningful against the set it counts.
         threshold: u8,
     },
 

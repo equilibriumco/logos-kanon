@@ -19,25 +19,28 @@
 //!
 //! # Not yet implemented
 //!
-//! Three of the four admin-gated bodies. `submit_price` is built, the admin gate
-//! is M2-06, and `register_feed` is M2-07 — so a feed can be created and read,
-//! and the push path is operable end to end for one feed. Signer-set updates,
-//! deregistration and pausing still refuse with their task: M2-08 to M2-10.
+//! `submit_price` is built, the admin gate is M2-06, `register_feed` is M2-07 and
+//! `update_signer_set` is M2-08 — so a feed can be created, read and rotated,
+//! which is the operating loop the servicing commitment needs. Deregistration
+//! and pausing still refuse with their task: M2-09 and M2-10.
 //!
 //! [`register`] is registration: what a feed's configuration is, where its
-//! account lives, and why the address is the feed id's (ADR 33).
+//! account lives, and why the address is the feed id's (ADR 33). [`manage`] is
+//! the admin-gated operations on a feed that already exists.
 //! `TRACEABILITY.md` maps each to its requirement.
 #![forbid(unsafe_code)]
 
 pub mod admin;
 pub mod feed_account;
 pub mod instruction;
+pub mod manage;
 pub mod publish;
 pub mod register;
 pub mod submit;
 
 pub use feed_account::FeedAccount;
 pub use instruction::Instruction;
+pub use manage::{update_signer_set, ManageError};
 pub use register::{register_feed, RegisterError};
 pub use submit::{submit_price, SubmitError};
 

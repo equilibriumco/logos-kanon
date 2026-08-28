@@ -119,6 +119,13 @@ not the other fails.
   question 4 and pinned at both layers, by
   `a_derived_address_can_be_squatted_and_this_pins_the_refusal` and by
   `a_squatted_feed_account_is_refused_by_the_generated_validator`.
+- **Every later operation names the feed as well as addressing it.** The constraint
+  checks the address; the body checks the id the account stores. Two checks for one
+  property, because an account this program owns is not necessarily the feed the
+  caller meant — an operator rotating five feeds could otherwise hand the wrong
+  account and move the wrong signer set, which is not a mistake anyone notices.
+  `update_signer_set` (M2-08) takes `feed_id` for that reason, and M2-09 and M2-10
+  will. It is ADR 16's rule about the asset pair applied to the feed itself.
 - **One registration, one signer set.** Combined with ADR 30, a rotation is one
   `update_signer_set` per feed against an address the operator can derive, which
   is what makes the runbook writable.
