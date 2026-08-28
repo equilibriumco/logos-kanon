@@ -51,8 +51,12 @@ fn every_variant() -> Vec<Instruction> {
         Instruction::DeregisterFeed {
             feed_id: padded(b"BTC"),
         },
-        Instruction::PauseFeed,
-        Instruction::UnpauseFeed,
+        Instruction::PauseFeed {
+            feed_id: padded(b"BTC"),
+        },
+        Instruction::UnpauseFeed {
+            feed_id: padded(b"BTC"),
+        },
         Instruction::InitialiseAdmin,
         Instruction::NominateAdmin {
             new_admin: [5u8; 32],

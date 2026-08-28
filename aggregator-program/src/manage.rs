@@ -51,6 +51,14 @@ pub enum ManageError {
     FeedMismatch,
     /// The new parameters do not describe a usable feed.
     Config(ConfigError),
+    /// The feed is already paused, so pausing it changes nothing.
+    ///
+    /// A typed refusal rather than silence: an operator pausing during an
+    /// incident learns the feed is already safe, which is what they wanted to
+    /// know. Silence would leave them wondering whether the instruction landed.
+    AlreadyPaused,
+    /// The feed is not paused, so there is nothing to resume.
+    NotPaused,
     /// The serialised feed does not fit an account's data.
     ///
     /// Unreachable while [`ConfigError::TooManySigners`] bounds the signer list.
@@ -76,6 +84,8 @@ impl core::fmt::Display for ManageError {
                 f.write_str("the feed account does not hold the feed id the caller named")
             }
             Self::FeedTooLarge => f.write_str("the serialised feed does not fit an account's data"),
+            Self::AlreadyPaused => f.write_str("this feed is already paused"),
+            Self::NotPaused => f.write_str("this feed is not paused"),
             Self::Config(err) => write!(f, "{err:?}"),
         }
     }
@@ -99,6 +109,8 @@ impl ManageError {
             Self::FeedUndecodable => 102,
             Self::FeedMismatch => 1001,
             Self::FeedTooLarge => 1002,
+            Self::AlreadyPaused => 1003,
+            Self::NotPaused => 1004,
             Self::Config(err) => crate::submit::config_code(*err),
         }
     }
@@ -238,6 +250,71 @@ pub fn deregister_feed(
         AccountPostState::new(admin.account),
         AccountPostState::new(config.account),
     ])
+}
+
+/// Stops a feed accepting submissions, leaving everything else about it in place.
+///
+/// Pausing is the one administrative lever that does not change what a price
+/// means: the signer set, the threshold, the window and the pair are all
+/// untouched, so resuming restores exactly the feed that was paused. That is why
+/// it is the right response to an incident and `update_signer_set` is not.
+///
+/// `submit_price` is what enforces it, and it does so before any cryptography, so
+/// a paused feed does not pay to discover it is paused.
+///
+/// # Errors
+///
+/// [`ManageError`] when the account is not the named feed, or when the feed is
+/// already paused.
+pub fn pause_feed(
+    feed: AccountWithMetadata,
+    admin: AccountWithMetadata,
+    config: AccountWithMetadata,
+    feed_id: [u8; 32],
+    self_program_id: ProgramId,
+) -> Result<Vec<AccountPostState>, ManageError> {
+    set_paused(feed, admin, config, feed_id, self_program_id, true)
+}
+
+/// Lets a paused feed accept submissions again.
+///
+/// # Errors
+///
+/// [`ManageError`] when the account is not the named feed, or when the feed is
+/// not paused.
+pub fn unpause_feed(
+    feed: AccountWithMetadata,
+    admin: AccountWithMetadata,
+    config: AccountWithMetadata,
+    feed_id: [u8; 32],
+    self_program_id: ProgramId,
+) -> Result<Vec<AccountPostState>, ManageError> {
+    set_paused(feed, admin, config, feed_id, self_program_id, false)
+}
+
+/// The body both pause and unpause are, so they cannot disagree about anything
+/// but the value they are setting.
+fn set_paused(
+    feed: AccountWithMetadata,
+    admin: AccountWithMetadata,
+    config: AccountWithMetadata,
+    feed_id: [u8; 32],
+    self_program_id: ProgramId,
+    paused: bool,
+) -> Result<Vec<AccountPostState>, ManageError> {
+    let stored = named_feed(&feed, &feed_id, self_program_id)?;
+
+    // Refused rather than written again. A no-op write would cost a transaction
+    // and tell the operator nothing about the state they were trying to reach.
+    if stored.paused == paused {
+        return Err(if paused {
+            ManageError::AlreadyPaused
+        } else {
+            ManageError::NotPaused
+        });
+    }
+
+    rewritten(feed, admin, config, &FeedAccount { paused, ..stored })
 }
 
 #[cfg(test)]
@@ -599,5 +676,130 @@ mod tests {
             ),
             Err(ManageError::FeedUndecodable)
         );
+    }
+    #[test]
+    fn pausing_stops_submissions_and_changes_nothing_else() {
+        // The one lever that does not change what a price means, which is why it
+        // is the right response to an incident.
+        let before = registered(BTC, 5, 3, false);
+        let posts = pause_feed(
+            feed_account(&before, OURS),
+            passthrough(0xAD),
+            passthrough(0xC0),
+            feed_id(BTC),
+            OURS,
+        )
+        .expect("a live feed pauses");
+
+        let after = stored_in(&posts[0]);
+        assert!(after.paused);
+        assert_eq!(after.signers, before.signers, "the set is untouched");
+        assert_eq!(after.threshold, before.threshold);
+        assert_eq!(after.max_age_ms, before.max_age_ms);
+        assert_eq!(after.feed_id, before.feed_id);
+    }
+
+    #[test]
+    fn unpausing_restores_exactly_the_feed_that_was_paused() {
+        let live = registered(BTC, 5, 3, false);
+        let paused = stored_in(
+            &pause_feed(
+                feed_account(&live, OURS),
+                passthrough(0xAD),
+                passthrough(0xC0),
+                feed_id(BTC),
+                OURS,
+            )
+            .expect("pauses")[0],
+        );
+
+        let resumed = stored_in(
+            &unpause_feed(
+                feed_account(&paused, OURS),
+                passthrough(0xAD),
+                passthrough(0xC0),
+                feed_id(BTC),
+                OURS,
+            )
+            .expect("resumes")[0],
+        );
+
+        assert_eq!(resumed, live, "a pause and an unpause is a round trip");
+    }
+
+    #[test]
+    fn pausing_a_paused_feed_says_so() {
+        // Silence would leave an operator wondering whether the instruction
+        // landed; this tells them the feed is already safe.
+        assert_eq!(
+            pause_feed(
+                feed_account(&registered(BTC, 3, 2, true), OURS),
+                passthrough(0xAD),
+                passthrough(0xC0),
+                feed_id(BTC),
+                OURS
+            ),
+            Err(ManageError::AlreadyPaused)
+        );
+    }
+
+    #[test]
+    fn unpausing_a_live_feed_says_so() {
+        assert_eq!(
+            unpause_feed(
+                feed_account(&registered(BTC, 3, 2, false), OURS),
+                passthrough(0xAD),
+                passthrough(0xC0),
+                feed_id(BTC),
+                OURS
+            ),
+            Err(ManageError::NotPaused)
+        );
+    }
+
+    #[test]
+    fn pausing_refuses_a_feed_it_was_not_named() {
+        assert_eq!(
+            pause_feed(
+                feed_account(&registered(BTC, 5, 3, false), OURS),
+                passthrough(0xAD),
+                passthrough(0xC0),
+                feed_id(ETH),
+                OURS
+            ),
+            Err(ManageError::FeedMismatch)
+        );
+    }
+
+    #[test]
+    fn every_cause_in_this_module_has_its_own_number() {
+        let causes = [
+            ManageError::FeedNotOurs,
+            ManageError::FeedUndecodable,
+            ManageError::FeedMismatch,
+            ManageError::FeedTooLarge,
+            ManageError::AlreadyPaused,
+            ManageError::NotPaused,
+        ];
+        // No wildcard arm, so a new variant fails to compile here. It does not
+        // prove the list is complete -- an author can add the arm and forget the
+        // entry -- so the list is kept by hand; what this buys is that the
+        // omission is loud.
+        for cause in &causes {
+            match cause {
+                ManageError::FeedNotOurs
+                | ManageError::FeedUndecodable
+                | ManageError::FeedMismatch
+                | ManageError::FeedTooLarge
+                | ManageError::AlreadyPaused
+                | ManageError::NotPaused
+                | ManageError::Config(_) => {}
+            }
+        }
+        let mut codes: Vec<u32> = causes.iter().map(ManageError::code).collect();
+        codes.sort_unstable();
+        let before = codes.len();
+        codes.dedup();
+        assert_eq!(codes.len(), before, "two causes answer with one code");
     }
 }

@@ -99,8 +99,8 @@ fn a_registration_lands_and_claims_the_address_the_constraint_checks() {
 
 #[test]
 fn the_registered_feed_is_the_one_a_submission_reads() {
-    // The seam between this instruction and `submit_price`: what registration
-    // writes has to decode as the feed the submission path reads, and configure.
+    // What registration writes has to decode as the feed the submission path
+    // reads, and configure.
     let id = feed_id(b"ETH");
 
     let posts = register(unregistered(&id), id).expect("a usable feed");

@@ -1,8 +1,8 @@
 //! A rotation as a transaction, from a feed that was really registered.
 //!
-//! The unit tests beside `manage.rs` cover what a rotation decides. These cover
-//! the seam: that the account `register_feed` produced is one `update_signer_set`
-//! accepts, and that the post-states LEZ is handed are ones it takes.
+//! The unit tests beside `manage.rs` cover what a rotation decides. These check
+//! that the account `register_feed` produced is one `update_signer_set` accepts,
+//! and that the post-states LEZ is handed are ones it takes.
 
 use aggregator_program::manage::{update_signer_set, ManageError};
 use aggregator_program::register::{register_feed, FEED_ACCOUNT_SEED};
@@ -108,8 +108,8 @@ fn a_rotation_lands_on_a_feed_that_was_registered() {
 
 #[test]
 fn the_rotated_feed_verifies_against_the_new_set() {
-    // The seam that matters: what a rotation writes has to be what the
-    // submission path reads, with the new set in force.
+    // What a rotation writes has to be what the submission path reads, with the
+    // new set in force.
     let id = feed_id(b"ETH");
 
     let posts = rotate(registered(&id), id, rotated(4), 3).expect("a usable set");
@@ -155,5 +155,78 @@ fn a_registered_feed_cannot_be_rotated_under_another_id() {
     assert_eq!(
         rotate(registered(&btc), feed_id(b"ETH"), rotated(5), 3),
         Err(ManageError::FeedMismatch)
+    );
+}
+
+#[test]
+fn a_paused_feed_is_refused_by_the_submission_path() {
+    // Pausing is administrative, and `submit_price` is what enforces it -- before
+    // any cryptography, so a paused feed does not pay to discover it is paused.
+    use aggregator_program::manage::{pause_feed, unpause_feed};
+    use aggregator_program::submit::submit_price;
+    use aggregator_program::SubmitError;
+    use kanon_clock::CLOCK_ACCOUNT_ID;
+
+    const CLOCK_PROGRAM: ProgramId = [88u32; 8];
+    let clock = AccountWithMetadata {
+        account: Account {
+            program_owner: CLOCK_PROGRAM,
+            balance: 0,
+            data: Data::try_from({
+                let mut d = [0u8; 16];
+                d[8..].copy_from_slice(&1_700_000_000_000u64.to_le_bytes());
+                d.to_vec()
+            })
+            .expect("fits"),
+            nonce: Nonce(0),
+        },
+        is_authorized: false,
+        account_id: AccountId::new(CLOCK_ACCOUNT_ID),
+    };
+
+    let id = feed_id(b"BTC");
+    let live = registered(&id);
+
+    let paused =
+        pause_feed(live, on_chain(0xAD, true), on_chain(0xC0, false), id, OURS).expect("pauses");
+    let mut account = paused[0].account().clone();
+    account.program_owner = OURS;
+    let paused_feed = AccountWithMetadata {
+        account,
+        is_authorized: false,
+        account_id: feed_address(&id),
+    };
+
+    let price = AccountWithMetadata {
+        account: Account::default(),
+        is_authorized: false,
+        account_id: AccountId::new([0x9E; 32]),
+    };
+    assert_eq!(
+        submit_price(paused_feed.clone(), price.clone(), clock.clone(), &[], OURS),
+        Err(SubmitError::FeedPaused),
+        "a paused feed refuses before it decodes a payload"
+    );
+
+    // And resuming puts it back, so an incident is recoverable.
+    let resumed = unpause_feed(
+        paused_feed,
+        on_chain(0xAD, true),
+        on_chain(0xC0, false),
+        id,
+        OURS,
+    )
+    .expect("resumes");
+    let mut account = resumed[0].account().clone();
+    account.program_owner = OURS;
+    let live_again = AccountWithMetadata {
+        account,
+        is_authorized: false,
+        account_id: feed_address(&id),
+    };
+    assert_ne!(
+        submit_price(live_again, price, clock, &[], OURS),
+        Err(SubmitError::FeedPaused),
+        "a resumed feed is past the pause check"
     );
 }

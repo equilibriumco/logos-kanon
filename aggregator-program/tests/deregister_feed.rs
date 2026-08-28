@@ -6,7 +6,7 @@
 //! could not hold a new registration, retiring `BTC` once would spend the id for
 //! the life of the deployment.
 
-use aggregator_program::manage::{deregister_feed, ManageError};
+use aggregator_program::manage::deregister_feed;
 use aggregator_program::register::{register_feed, FEED_ACCOUNT_SEED};
 use aggregator_program::submit::submit_price;
 use aggregator_program::{FeedAccount, SubmitError};

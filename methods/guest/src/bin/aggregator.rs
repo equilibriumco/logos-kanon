@@ -70,15 +70,6 @@ const fn nibble(character: u8) -> u8 {
     }
 }
 
-/// What an instruction returns until the task that implements it lands.
-///
-/// A refusal rather than a panic: a program that aborts tells a caller nothing,
-/// and the error carries the task id so an integrator reading a failed
-/// transaction knows this is unbuilt rather than broken.
-fn not_yet(instruction: &str, task: &str) -> SpelError {
-    SpelError::custom(0, format!("{instruction} is not implemented yet ({task})"))
-}
-
 #[lez_program(instruction = "aggregator_program::Instruction")]
 mod kanon_aggregator {
     #[allow(unused_imports)]
@@ -263,13 +254,21 @@ mod kanon_aggregator {
     #[instruction]
     pub fn pause_feed(
         ctx: ProgramContext,
-        #[account(mut)] feed: AccountWithMetadata,
+        #[account(mut, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]
+        feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
         #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
+        feed_id: [u8; 32],
     ) -> SpelResult {
         aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
-        let _ = (feed, admin, config);
-        Err(not_yet("pause_feed", "M2-10"))
+        let post_states = aggregator_program::manage::pause_feed(
+            feed,
+            admin,
+            config,
+            feed_id,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 
     /// Lets a paused feed accept submissions again.
@@ -282,13 +281,21 @@ mod kanon_aggregator {
     #[instruction]
     pub fn unpause_feed(
         ctx: ProgramContext,
-        #[account(mut)] feed: AccountWithMetadata,
+        #[account(mut, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]
+        feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
         #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
+        feed_id: [u8; 32],
     ) -> SpelResult {
         aggregator_program::admin::authorise(&config, &admin, ctx.self_program_id)?;
-        let _ = (feed, admin, config);
-        Err(not_yet("unpause_feed", "M2-10"))
+        let post_states = aggregator_program::manage::unpause_feed(
+            feed,
+            admin,
+            config,
+            feed_id,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 
     /// Establishes this build's admin authority, once.
@@ -443,13 +450,25 @@ mod tests {
         compute_pda(&OURS, &[&seed_from_str(ADMIN_CONFIG_SEED)])
     }
 
+    /// A feed id used only to satisfy the feed constraint, so these tests are
+    /// about the *config* account and nothing else.
+    const SOME_FEED: [u8; 32] = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+
     /// An administrative instruction's accounts, in the order it declares them.
+    ///
+    /// The feed is at its derived address (ADR 33), because otherwise the feed
+    /// constraint would refuse before the config account was ever looked at and
+    /// these tests would pass for the wrong reason.
     fn validate_pause(config_id: AccountId) -> Result<(), SpelError> {
         let mut admin = account([0xAD; 32]);
         admin.is_authorized = true;
-        let accounts = [account(FEED_ACCOUNT_ID), admin, account(*config_id.value())];
+        let accounts = [
+            account(*feed_account_id(&SOME_FEED).value()),
+            admin,
+            account(*config_id.value()),
+        ];
         let instruction: InstructionData = Vec::new();
-        super::kanon_aggregator::__validate_pause_feed(&accounts, &OURS, &instruction)
+        super::kanon_aggregator::__validate_pause_feed(&accounts, &OURS, &instruction, &SOME_FEED)
     }
 
     #[test]
@@ -480,13 +499,18 @@ mod tests {
         // The dispatcher's half of the gate. `authorise` checks the flag too,
         // and this is the only place the generated check itself is reachable.
         let accounts = [
-            account(FEED_ACCOUNT_ID),
+            account(*feed_account_id(&SOME_FEED).value()),
             account([0xAD; 32]),
             account(*admin_config_id().value()),
         ];
         let instruction: InstructionData = Vec::new();
         assert!(matches!(
-            super::kanon_aggregator::__validate_pause_feed(&accounts, &OURS, &instruction),
+            super::kanon_aggregator::__validate_pause_feed(
+                &accounts,
+                &OURS,
+                &instruction,
+                &SOME_FEED
+            ),
             Err(SpelError::Unauthorized { .. })
         ));
     }
@@ -778,6 +802,40 @@ mod tests {
         ];
         assert!(matches!(
             super::kanon_aggregator::__validate_deregister_feed(&wrong, &OURS, &instruction, &id),
+            Err(SpelError::PdaMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn pausing_and_resuming_accept_only_the_feed_at_the_derived_address() {
+        // The last two of the five feed operations, under the same constraint, so
+        // no administrative instruction can reach an account `register_feed` did
+        // not claim.
+        let id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+        let mut admin = account([0xAD; 32]);
+        admin.is_authorized = true;
+        let ok = [
+            account(*feed_account_id(&id).value()),
+            admin.clone(),
+            account(*admin_config_id().value()),
+        ];
+        let wrong = [
+            account([0x11; 32]),
+            admin,
+            account(*admin_config_id().value()),
+        ];
+        let instruction: InstructionData = Vec::new();
+
+        super::kanon_aggregator::__validate_pause_feed(&ok, &OURS, &instruction, &id)
+            .expect("pause accepts the derived address");
+        super::kanon_aggregator::__validate_unpause_feed(&ok, &OURS, &instruction, &id)
+            .expect("unpause accepts the derived address");
+        assert!(matches!(
+            super::kanon_aggregator::__validate_pause_feed(&wrong, &OURS, &instruction, &id),
+            Err(SpelError::PdaMismatch { .. })
+        ));
+        assert!(matches!(
+            super::kanon_aggregator::__validate_unpause_feed(&wrong, &OURS, &instruction, &id),
             Err(SpelError::PdaMismatch { .. })
         ));
     }
