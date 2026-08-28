@@ -96,6 +96,19 @@ fn unowned_signer(id: [u8; 32]) -> AccountWithMetadata {
     }
 }
 
+/// A freshly generated key: signs, and no program owns it.
+///
+/// What a deployment runbook produces by default. LEZ's rule 7 guards only a
+/// pre-state that is *not* pristine, so this account passes validation once and
+/// is stranded the moment LEZ bumps its nonce.
+fn pristine(id: [u8; 32]) -> AccountWithMetadata {
+    AccountWithMetadata {
+        account: Account::default(),
+        is_authorized: true,
+        account_id: AccountId::new(id),
+    }
+}
+
 fn stored(posts: &[AccountPostState]) -> AdminAccount {
     AdminAccount::try_from_slice(posts[0].account().data.as_ref()).expect("decodes")
 }
@@ -204,20 +217,35 @@ fn an_unowned_admin_that_has_transacted_cannot_be_used() {
     // unless the pre-state was pristine, and rules 3 and 4 forbid changing the
     // nonce or the owner to escape it -- so an account that is unowned *and* has
     // signed before can never appear in a post-state again, however this program
-    // constructs one. `Claim::Authorized` does not help: the claim is honoured
-    // after validation, so the post-state still carries the default owner when
-    // rule 7 runs.
+    // constructs one. `Claim::Authorized` does not help *here*: on an account
+    // that has already transacted unclaimed the claim is honoured after
+    // validation, so the post-state still carries the default owner when rule 7
+    // runs. On a pristine account the claim would be honoured -- which is a
+    // route this program deliberately does not take, because rule 4 would make
+    // that ownership permanent and rule 5 would let this program move the
+    // operator's balance.
     //
-    // The consequence for an operator: the admin key must be an account that
-    // already exists on chain, not a freshly generated address whose first
-    // transaction is the initialisation. A fresh address would initialise once
-    // and then be unusable, because LEZ would have bumped its nonce.
+    // The consequence for an operator: what matters is that some program owns
+    // the admin key, not that the account exists. An account can exist, hold a
+    // balance, and still be owned by nobody, in which case it is already in the
+    // state this test refuses. Receiving a balance transfer is one way a key
+    // acquires an owner. `initialise` and `accept` refuse an unowned key
+    // outright -- see the two tests below -- so this asserts the platform
+    // behaviour that makes those refusals necessary.
     let admin = unowned_signer(GENESIS);
-    let pre = vec![fresh_config(), admin.clone()];
 
-    // The decision is fine -- this is not the program refusing.
-    let posts = initialise_admin(fresh_config(), admin, &GENESIS).expect("the genesis key signs");
+    // This program refuses it first, which is the point of the guard.
+    assert_eq!(
+        initialise_admin(fresh_config(), admin.clone(), &GENESIS),
+        Err(AdminError::AdminUnowned)
+    );
 
+    // And the platform behaviour the guard exists for, pinned directly rather
+    // than through an operation that now refuses before reaching it. Any
+    // post-state for this account keeps the default owner, because rule 4
+    // forbids changing it, so rule 7 refuses whatever a program writes.
+    let pre = vec![admin.clone()];
+    let posts = vec![AccountPostState::new(admin.account.clone())];
     let refused = validate_execution(&pre, &posts, OURS)
         .expect_err("LEZ cannot accept an unowned signer that has transacted");
     assert!(
@@ -234,4 +262,42 @@ fn an_unowned_admin_that_has_transacted_cannot_be_used() {
     let pre = vec![fresh_config(), owned.clone()];
     let posts = initialise_admin(fresh_config(), owned, &GENESIS).expect("the genesis key signs");
     validate_execution(&pre, &posts, OURS).expect("an owned signer is accepted at any nonce");
+}
+
+#[test]
+fn a_pristine_admin_cannot_establish_the_authority() {
+    // The case `an_unowned_admin_that_has_transacted_cannot_be_used` cannot
+    // reach: LEZ accepts a pristine signer's first transaction, so nothing
+    // downstream refuses it. Without this guard the genesis key would establish
+    // the authority once and be unusable from the next transaction on -- and
+    // unusable in every other program too, with whatever balance it holds
+    // frozen.
+    assert_eq!(
+        initialise_admin(fresh_config(), pristine(GENESIS), &GENESIS),
+        Err(AdminError::AdminUnowned)
+    );
+}
+
+#[test]
+fn a_pristine_nominee_cannot_accept_the_authority() {
+    // The unrecoverable half. Acceptance moves the authority before the nominee
+    // is ever used, so a stranded nominee takes the administrative surface with
+    // it: `initialise` refuses a config account that is no longer default, and
+    // no other key can take the authority back.
+    let admin = signer(GENESIS);
+    let posts = initialise_admin(fresh_config(), admin.clone(), &GENESIS).expect("genesis signs");
+    let config = config_after(&posts);
+
+    let posts = nominate_admin(config.clone(), admin, NEXT, OURS).expect("the authority signs");
+    let nominated = config_after(&posts);
+    assert_eq!(
+        stored(&posts).pending,
+        Some(NEXT),
+        "the nomination is stored"
+    );
+
+    assert_eq!(
+        accept_admin(nominated, pristine(NEXT), OURS),
+        Err(AdminError::AdminUnowned)
+    );
 }

@@ -15,7 +15,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use core::fmt;
 use lee_core::account::{Account, AccountWithMetadata, Data};
-use lee_core::program::{AccountPostState, ProgramId};
+use lee_core::program::{AccountPostState, ProgramId, DEFAULT_PROGRAM_ID};
 use serde::{Deserialize, Serialize};
 use spel_framework::pda::seed_from_str;
 use spel_framework::spel_output::AutoClaim;
@@ -82,6 +82,22 @@ pub enum AdminError {
     NoNomination,
     /// The signer is not the nominated key.
     NotTheNominee,
+    /// The account offered as the authority is owned by no program, which LEZ
+    /// strands after one transaction.
+    ///
+    /// Rule 7 refuses a post-state whose owner is the default one unless the
+    /// pre-state was pristine, and LEZ bumps every signer's nonce after applying
+    /// a state diff. A default-owned key therefore passes once, while it is
+    /// still pristine, and is refused in every post-state afterwards -- of any
+    /// program, not only this one. Establishing or accepting the authority with
+    /// such a key would work exactly once. On [`accept`] there is no way back:
+    /// the authority has already moved, and [`initialise`] refuses a config
+    /// account that is no longer default.
+    ///
+    /// Refused here so that a runbook slip is a typed refusal rather than a
+    /// silent and irreversible one. The key must be an account some program
+    /// already owns; receiving a balance transfer is one way it acquires that.
+    AdminUnowned,
 }
 
 /// Refuse unless `admin` signed and is the authority `config` stores.
@@ -151,6 +167,7 @@ impl AdminError {
             Self::NoNomination => 809,
             Self::NotTheNominee => 810,
             Self::NoGenesisAuthority => 811,
+            Self::AdminUnowned => 812,
         }
     }
 }
@@ -179,6 +196,10 @@ impl fmt::Display for AdminError {
             Self::NoGenesisAuthority => {
                 f.write_str("this build carries no genesis authority, so none can be established")
             }
+            Self::AdminUnowned => f.write_str(
+                "the key offered as the authority is owned by no program, and LEZ strands \
+                 such an account after one transaction",
+            ),
         }
     }
 }
@@ -188,6 +209,19 @@ impl From<AdminError> for spel_framework::error::SpelError {
     fn from(err: AdminError) -> Self {
         Self::custom(err.code(), err.to_string())
     }
+}
+
+/// Refuse an admin account that no program owns.
+///
+/// Checked where the authority is established rather than where it is used: LEZ
+/// pins an account's owner once it has one (rule 4), so an account that is owned
+/// at that moment stays owned. See [`AdminError::AdminUnowned`] for what an
+/// unowned key costs.
+fn owned(admin: &AccountWithMetadata) -> Result<(), AdminError> {
+    if admin.account.program_owner == DEFAULT_PROGRAM_ID {
+        return Err(AdminError::AdminUnowned);
+    }
+    Ok(())
 }
 
 /// Establish the authority, once, for whoever holds this build's genesis key.
@@ -229,6 +263,9 @@ pub fn initialise(
     if admin.account_id.value() != genesis {
         return Err(AdminError::NotGenesisAdmin);
     }
+    // Last, so only the genesis key holder -- the one who can act on it -- ever
+    // sees this refusal.
+    owned(admin)?;
 
     Ok(AdminAccount {
         admin: Some(*genesis),
@@ -282,10 +319,18 @@ pub fn accept(
 
     match stored.pending {
         None => Err(AdminError::NoNomination),
-        Some(key) if key == *admin.account_id.value() => Ok(AdminAccount {
-            admin: Some(key),
-            pending: None,
-        }),
+        Some(key) if key == *admin.account_id.value() => {
+            // After the nominee is known, and before the authority moves. A
+            // pristine key can be nominated -- `nominate` cannot see the
+            // nominee's account, because the nominee does not sign it -- so this
+            // is the first point the account is visible, and the last point
+            // before accepting it becomes irreversible.
+            owned(admin)?;
+            Ok(AdminAccount {
+                admin: Some(key),
+                pending: None,
+            })
+        }
         Some(_) => Err(AdminError::NotTheNominee),
     }
 }
@@ -439,14 +484,35 @@ mod tests {
         }
     }
 
+    /// Whatever owns an operator's key on chain -- not this program, and not
+    /// nobody.
+    const WALLET_PROGRAM: ProgramId = [42u32; 8];
+
+    /// An admin key as one exists on chain: owned, and having signed before.
+    ///
+    /// Deliberately not default-owned. A default-owned key is refused by
+    /// [`owned`], and a fixture built from one would have described a state no
+    /// key survives its first transaction in.
     fn signer(id: [u8; 32]) -> AccountWithMetadata {
         AccountWithMetadata {
             account: Account {
-                program_owner: [0u32; 8],
-                balance: 0,
+                program_owner: WALLET_PROGRAM,
+                balance: 500,
                 data: Data::try_from(Vec::new()).expect("fits"),
-                nonce: Nonce(0),
+                nonce: Nonce(7),
             },
+            is_authorized: true,
+            account_id: AccountId::new(id),
+        }
+    }
+
+    /// A freshly generated key: signs, and no program owns it.
+    ///
+    /// The state a deployment runbook produces by default, and the one LEZ
+    /// strands after one transaction.
+    fn pristine(id: [u8; 32]) -> AccountWithMetadata {
+        AccountWithMetadata {
+            account: Account::default(),
             is_authorized: true,
             account_id: AccountId::new(id),
         }
@@ -487,8 +553,7 @@ mod tests {
     fn no_two_causes_share_an_error_code() {
         // The same obligation `SubmitError` carries: a caller that cannot tell
         // two refusals apart cannot act on either.
-        // Every variant, so adding one without a number fails here. The list is
-        // exhaustive by construction below rather than by inspection.
+        // Every variant, so adding one without a number fails here.
         let causes = [
             AdminError::ConfigNotOurs,
             AdminError::ConfigUndecodable,
@@ -501,7 +566,29 @@ mod tests {
             AdminError::NoNomination,
             AdminError::NotTheNominee,
             AdminError::NoGenesisAuthority,
+            AdminError::AdminUnowned,
         ];
+
+        // No wildcard arm, so a twelfth variant fails to compile here rather
+        // than being added to the enum and silently missed by the list above.
+        // The length assertion is what makes it appear in the list too.
+        for cause in &causes {
+            match cause {
+                AdminError::ConfigNotOurs
+                | AdminError::ConfigUndecodable
+                | AdminError::NotSigned
+                | AdminError::Unauthorised
+                | AdminError::NoAuthority
+                | AdminError::NotGenesisAdmin
+                | AdminError::AlreadyInitialised
+                | AdminError::AuthorityIsZero
+                | AdminError::NoGenesisAuthority
+                | AdminError::NoNomination
+                | AdminError::NotTheNominee
+                | AdminError::AdminUnowned => {}
+            }
+        }
+        assert_eq!(causes.len(), 12, "every variant is in the list above");
 
         let mut codes: Vec<u32> = causes.iter().map(AdminError::code).collect();
         codes.sort_unstable();
@@ -788,5 +875,46 @@ mod tests {
             authorise(&config, &signer(ADMIN), OURS),
             Err(AdminError::NoAuthority)
         );
+    }
+
+    #[test]
+    fn a_pristine_key_cannot_establish_the_authority() {
+        // The state a runbook produces by default. LEZ accepts it once -- rule 7
+        // only guards a pre-state that is not pristine -- and then bumps its
+        // nonce, after which the account is refused in every post-state of every
+        // program. Refusing it here is what turns that into a typed error.
+        assert_eq!(
+            initialise(&fresh_config(), &pristine(ADMIN), &ADMIN),
+            Err(AdminError::AdminUnowned)
+        );
+    }
+
+    #[test]
+    fn a_pristine_nominee_cannot_accept_the_authority() {
+        // The unrecoverable half: acceptance moves the authority first. If a
+        // pristine nominee could accept, the authority would land on a key LEZ
+        // strands one transaction later, and `initialise` refuses a config
+        // account that is no longer default -- so nothing could take it back.
+        let config = config_account(&AdminAccount {
+            admin: Some(ADMIN),
+            pending: Some(STRANGER),
+        });
+
+        assert_eq!(
+            accept(&config, &pristine(STRANGER), OURS),
+            Err(AdminError::AdminUnowned)
+        );
+    }
+
+    #[test]
+    fn a_pristine_key_may_still_be_nominated() {
+        // `nominate` never sees the nominee's account, because the nominee does
+        // not sign the nomination. That is safe: a nomination is not the
+        // authority, and `accept` is where the account becomes visible.
+        let config = config_account(&holding(ADMIN));
+
+        let nominated = nominate(&config, &signer(ADMIN), STRANGER, OURS).expect("admin signs");
+
+        assert_eq!(nominated.pending, Some(STRANGER));
     }
 }
