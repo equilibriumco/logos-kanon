@@ -13,9 +13,26 @@
 //! # What a consumer supplies
 //!
 //! The signer set, the threshold and `maxAge` come from the consumer and never
-//! from the payload (SEC1). That is the whole security model of pull mode: a
-//! payload is a set of signed claims, and which signatures count is the
-//! consumer's decision.
+//! from the payload (SEC2; SEC1 is the membership check the set is then used
+//! for). That is the whole security model of pull mode: a payload is a set of
+//! signed claims, and which signatures count is the consumer's decision.
+//!
+//! Verification does read signers out of the payload — recovering one from each
+//! package that carries the requested feed is the whole mechanism, and packages
+//! carrying only other feeds are skipped before that cost — but a recovered
+//! address is only ever a lookup key. It is accepted when it already appears in
+//! the roster you supplied, and is otherwise
+//! [`VerifyError::UnauthorisedSigner`]. Nothing a payload carries joins
+//! the roster, or the set of addresses the next package is checked against.
+//!
+//! **Where your roster came from is yours to guarantee, and this library cannot
+//! check it.** The roster arrives as a slice, and one built from the transaction's
+//! own instruction data is indistinguishable here from one built from a constant.
+//! A consumer program that lets its caller supply the signer set has handed that
+//! caller the whole security model, and every check in this crate will still pass.
+//! Source it from constants compiled into the program, or from an account the
+//! program owns — the reference consumer (M3-06) is where that boundary is
+//! demonstrated rather than asserted.
 //!
 //! **The `dataServiceId` is carried and authenticates nothing.** RFP-020 puts it
 //! in this configuration and it is there, on [`PullConfig`]. What it cannot do is
@@ -31,6 +48,44 @@
 //! own error paths — and verification never reads it. `FEEDS.md` records which
 //! addresses served which service when this was measured, and ADR 30 records why
 //! the set stays per feed.
+//!
+//! # A roster narrower than the payload refuses rather than narrowing
+//!
+//! The set being the consumer's does not mean the consumer can pick any subset of
+//! it and keep verifying the same payloads. Every package carrying the *requested
+//! feed* is recovered, and the first signer outside the roster ends the
+//! verification with [`VerifyError::UnauthorisedSigner`] (ADR 15). So authorising
+//! three of the five that signed for this feed does not verify against those
+//! three: it refuses the payload.
+//!
+//! The scope is the requested feed and only that. Packages carrying other feeds
+//! are skipped before their signer is ever recovered, so a stranger reporting
+//! something else in the same payload is not a refusal —
+//! `strangers_reporting_only_another_feed_do_not_report_unauthorised_signer` in
+//! `verifier-core` is where that is pinned.
+//!
+//! Read the other way, which is the way an operator needs it: **a roster has to
+//! cover every signer of every package carrying the requested feed.** Dropping a
+//! signer is not a narrowing of who counts, it is a refusal of every payload in
+//! which that signer reports this feed — so a roster change and the payloads a
+//! relayer is already assembling are one operational step, not two.
+//!
+//! The other direction is backward-compatible rather than free. Adding a valid
+//! signer does not invalidate any payload that already verified, and an added
+//! signer that did not report contributes nothing towards the threshold:
+//! [`VerifyError::ThresholdNotMet`] reports what was met, not what was listed, and
+//! the median is taken over the signers that reported rather than over the roster.
+//! Both are `verifier-core`'s, tested there once for both modes. But adding is
+//! still a change to who may speak for this feed, because that signer's report can
+//! count towards an unchanged threshold from then on, and the roster has a ceiling
+//! ([`MAX_SIGNERS`]) it is refused for exceeding. Adding is the safe order of
+//! operations, not a free one.
+//!
+//! Order is not part of it. The roster's order is bookkeeping inside the walk — a
+//! report is filed by the signer's position in it, which is what stops one signer
+//! filling two slots — and a consumer writing the same addresses in a different
+//! order is not configuring a different feed. A duplicate is refused outright, by
+//! [`ConfigError::DuplicateSigner`] when the configuration is built.
 //!
 //! # The expected pair is checked against your own configuration
 //!

@@ -2,7 +2,7 @@
 
 - **Status**: accepted
 - **Milestone**: M3 (`M3-01`)
-- **Requirements**: F9, U6, SEC1
+- **Requirements**: F9, U6, SEC1, SEC2
 - **Artefacts**: `pull-lib/src/lib.rs`, `pull-lib/tests/pull.rs`
 
 ## Context
@@ -122,6 +122,26 @@ nothing was promised.
   from it (ADR 17), so a consumer that omits it cannot get a price at all. It is
   in `FeedConfig` for both modes and documented here rather than being treated as
   an extra.
+- **A roster is a floor, not a dial.** Because the walk refuses at the first signer
+  outside the configured set (ADR 15), a consumer's roster has to cover every signer of
+  every package carrying the requested feed. Authorising a subset does not verify against
+  the subset; it refuses the payload. The scope is that feed and only that — packages for
+  other feeds are skipped before their signer is recovered, so a stranger reporting
+  something else alongside is not a refusal.
+- **And the two directions are asymmetric.** Removing a signer refuses every payload in
+  which that signer reports this feed, so a roster change in pull mode is coordinated
+  with whoever assembles payloads and is not the local decision "the set is the
+  consumer's" suggests. `a_roster_narrower_than_the_payload_refuses_rather_than_narrowing`
+  is that direction, named. Adding a valid signer is backward-compatible instead. An
+  added signer that did not report contributes nothing towards the threshold, which is
+  `verifier-core`'s `three_of_five_is_enough_and_the_median_is_over_the_signers_that_reported`
+  — five configured, three signing, the median over the three — tested once for both
+  modes rather than restated per mode (ADR 23). That no payload which already verified
+  stops verifying follows from it rather than being separately asserted: widening the
+  roster cannot change which authorised signers reported, and `median` sorts, so neither
+  the count nor the value can move. No test compares one payload across two roster
+  widths. It is still not free: adding widens who may speak for the feed at an unchanged
+  threshold, and the roster has a ceiling.
 
 ## Alternatives considered
 
