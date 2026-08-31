@@ -47,6 +47,12 @@ name = "generate-idl"
 path = "src/bin/generate-idl.rs"
 
 [dev-dependencies]
+# The pull path, for `tests/error_parity.rs` alone. This direction is the one that
+# costs nothing: a dev-dependency is outside `--edges normal,build`, so it cannot
+# appear in `pull-lib`'s build closure. The `pull-independence` job pins that
+# closure and runs against this edge; the reverse dependency is what it exists to
+# refuse. `[M3-04:01]` records why the test has to live on this side.
+pull-lib.workspace = true
 # Deliberately without `preserve_order`. It would give the parity test field
 # order for free, and it would also change what the IDL generator emits: the
 # feature is unified across the graph, so `serde_json::Map` becomes an `IndexMap`
