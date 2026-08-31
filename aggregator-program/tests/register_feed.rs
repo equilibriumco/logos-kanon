@@ -6,6 +6,7 @@
 //! constraint derives.
 
 use aggregator_program::register::{register_feed, RegisterError, FEED_ACCOUNT_SEED};
+use aggregator_program::submit::PRICE_ACCOUNT_SEED;
 use aggregator_program::FeedAccount;
 use borsh::BorshDeserialize;
 use lee_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
@@ -62,14 +63,30 @@ fn signers(n: u8) -> Vec<[u8; 20]> {
     (1..=n).map(|i| [i; 20]).collect()
 }
 
+/// The price account for a feed that has never published: default, at the
+/// address the constraint derives from the feed account's own id. A
+/// registration reads it for the pair and passes it through untouched.
+fn unpublished_price(feed_at: &AccountId) -> AccountWithMetadata {
+    AccountWithMetadata {
+        account: Account::default(),
+        is_authorized: false,
+        account_id: compute_pda(
+            &OURS,
+            &[feed_at.value(), &seed_from_str(PRICE_ACCOUNT_SEED)],
+        ),
+    }
+}
+
 fn register(
     feed: AccountWithMetadata,
     id: [u8; 32],
 ) -> Result<Vec<AccountPostState>, RegisterError> {
+    let price = unpublished_price(&feed.account_id);
     register_feed(
         feed,
         on_chain(0xAD, true),
         on_chain(0xC0, false),
+        price,
         id,
         BASE,
         QUOTE,
@@ -85,7 +102,12 @@ fn register(
 fn a_registration_lands_and_claims_the_address_the_constraint_checks() {
     let id = feed_id(b"BTC");
     let feed = unregistered(&id);
-    let pre = vec![feed.clone(), on_chain(0xAD, true), on_chain(0xC0, false)];
+    let pre = vec![
+        feed.clone(),
+        on_chain(0xAD, true),
+        on_chain(0xC0, false),
+        unpublished_price(&feed.account_id),
+    ];
 
     let posts = register(feed, id).expect("a usable feed");
 
@@ -144,7 +166,12 @@ fn two_feeds_are_two_accounts() {
 
     for id in [btc, eth] {
         let feed = unregistered(&id);
-        let pre = vec![feed.clone(), on_chain(0xAD, true), on_chain(0xC0, false)];
+        let pre = vec![
+            feed.clone(),
+            on_chain(0xAD, true),
+            on_chain(0xC0, false),
+            unpublished_price(&feed.account_id),
+        ];
         let posts = register(feed, id).expect("a usable feed");
         validate_execution(&pre, &posts, OURS).expect("each lands on its own");
     }

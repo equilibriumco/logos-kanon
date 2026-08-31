@@ -51,10 +51,11 @@ feed  = AccountId::for_public_pda(program, sha256( zero_pad_32(feed_id) || zero_
 price = AccountId::for_public_pda(program, sha256( feed_account_id       || zero_pad_32("KANON_PRICE_ACCOUNT") ))
 ```
 
-Declared as `#[account(init, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]`
+Declared as `#[account(mut, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]`
 rather than checked in code, for the reason ADR 32 gives about the price account:
 the derivation is what a client has to reproduce, and the constraint is what
-publishes it in the IDL. The generated IDL now carries
+publishes it in the IDL. It was `init` until the feed account gained a third
+pre-state; the consequences below record why that could not stay. The generated IDL now carries
 `seeds: [{kind: arg, path: feed_id}, {kind: const, value: KANON_FEED_ACCOUNT}]`,
 so the SDK, the CLI, the relayer and a consumer each derive it from the artefact
 rather than from this document.
@@ -101,14 +102,23 @@ not the other fails.
   than as undecodable bytes, because those go to different people. What no state
   recovers is the *configuration*: only `signers` and `threshold` have an update path
   (M2-08), so a wrong `decimals` or `max_age_ms` is fixed by retiring the feed and
-  registering it again rather than by amending it, and deriving the address removed
+  registering it again rather than by amending it — **except the pair, which is fixed
+  from the feed id's first publication.** A retirement empties the feed account and
+  leaves the price account untouched, and `submit_price` reads the expected pair off
+  the published account on every write but the first, so a re-registration under a new
+  pair would produce a feed whose every submission answers `AssetMismatch`.
+  `register_feed` therefore reads the price account and refuses that with
+  `PairChanged`. No loss: a RedStone feed id *is* its asset, so a different pair is a
+  different feed id. And deriving the address removed
   the one escape `Claim::Authorized` had — abandoning the account and re-creating the
   feed at a fresh address under the same id. That is the cost ADR 32 named, paid
   knowingly: two accounts able to answer for BTC/USD with different signer sets is the
   worse hazard.
-- **`registered` is not a state anyone stores.** Whether a feed exists is whether
-  its derived account is non-default, which is a read a client can do without
-  this program.
+- **`registered` is not a separate state anyone stores.** A feed is live when its
+  derived account is owned by this program and holds a non-empty `FeedAccount`;
+  an owned account with empty data is retired, and a default one was never
+  registered. Still a read a client can do without this program — but "non-default"
+  alone is not the test, because a retirement leaves the account owned and empty.
 - **The feed id is padded twice, and the two must agree.** The caller pads to
   build the seed and `FeedAccount` stores the padded form.
   `FeedConfig::try_new` still refuses an all-zero or over-width id, so the

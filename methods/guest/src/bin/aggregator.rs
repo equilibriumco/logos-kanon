@@ -130,6 +130,9 @@ mod kanon_aggregator {
     /// 2. `admin` — the signer claiming to be the authority.
     /// 3. `config` — the account holding the authority `admin` is checked
     ///    against, at the address its constraint derives.
+    /// 4. `price_account` — read, never written. It is what remembers a feed
+    ///    id's pair across a retirement, since a retirement empties the feed
+    ///    account and leaves this one alone.
     #[expect(
         clippy::too_many_arguments,
         reason = "a registration is the feed's whole configuration, and naming each field is what makes it checkable from the IDL"
@@ -155,6 +158,11 @@ mod kanon_aggregator {
         feed: AccountWithMetadata,
         #[account(signer)] admin: AccountWithMetadata,
         #[account(pda = [r#const("KANON_ADMIN_CONFIG")])] config: AccountWithMetadata,
+        // Read-only, and declared rather than checked so the IDL publishes the
+        // derivation a client has to reproduce -- the same seeds `submit_price`
+        // declares, because it is the same account.
+        #[account(pda = [account("feed"), r#const("KANON_PRICE_ACCOUNT")])]
+        price_account: AccountWithMetadata,
         feed_id: [u8; 32],
         base_asset: [u8; 32],
         quote_asset: [u8; 32],
@@ -168,6 +176,7 @@ mod kanon_aggregator {
             feed,
             admin,
             config,
+            price_account,
             feed_id,
             base_asset,
             quote_asset,
@@ -495,24 +504,62 @@ mod tests {
     }
 
     #[test]
-    fn an_administrative_instruction_refuses_an_admin_that_did_not_sign() {
-        // The dispatcher's half of the gate. `authorise` checks the flag too,
-        // and this is the only place the generated check itself is reachable.
+    fn every_administrative_instruction_refuses_an_admin_that_did_not_sign() {
+        // The dispatcher's half of the gate, over all five handlers rather than
+        // one. `#[account(signer)]` is repeated by hand on each of them, so a
+        // missing annotation is a per-handler mistake and testing one handler
+        // proves nothing about the other four. `authorise` checks the flag too,
+        // which is why a gap here would not be an auth hole today -- but it
+        // would be an unnoticed change to the IDL's `signer` metadata, which is
+        // what a client builds a transaction from.
+        type Validator = fn(
+            &[AccountWithMetadata],
+            &ProgramId,
+            &InstructionData,
+            &[u8; 32],
+        ) -> Result<(), SpelError>;
+
+        let handlers: [(&str, Validator); 5] = [
+            (
+                "register_feed",
+                super::kanon_aggregator::__validate_register_feed,
+            ),
+            (
+                "update_signer_set",
+                super::kanon_aggregator::__validate_update_signer_set,
+            ),
+            (
+                "deregister_feed",
+                super::kanon_aggregator::__validate_deregister_feed,
+            ),
+            ("pause_feed", super::kanon_aggregator::__validate_pause_feed),
+            (
+                "unpause_feed",
+                super::kanon_aggregator::__validate_unpause_feed,
+            ),
+        ];
+
+        // The admin is index 1 and is not authorised. The signer check runs
+        // before the pda check, so the feed address is not what these refuse on.
+        let feed_at = feed_account_id(&SOME_FEED);
         let accounts = [
-            account(*feed_account_id(&SOME_FEED).value()),
+            account(*feed_at.value()),
             account([0xAD; 32]),
             account(*admin_config_id().value()),
+            // Only `register_feed` declares a fourth; the others ignore it, and
+            // passing it means none of these refuse merely for being handed a
+            // short account list.
+            account(*price_account_for(&feed_at).value()),
         ];
         let instruction: InstructionData = Vec::new();
-        assert!(matches!(
-            super::kanon_aggregator::__validate_pause_feed(
-                &accounts,
-                &OURS,
-                &instruction,
-                &SOME_FEED
-            ),
-            Err(SpelError::Unauthorized { .. })
-        ));
+
+        for (name, validate) in handlers {
+            let refused = validate(&accounts, &OURS, &instruction, &SOME_FEED);
+            assert!(
+                matches!(refused, Err(SpelError::Unauthorized { .. })),
+                "{name} admitted an admin that did not sign: {refused:?}"
+            );
+        }
     }
 
     #[test]
@@ -569,6 +616,15 @@ mod tests {
         ));
     }
 
+    /// The price account's address for a given feed account, derived the way a
+    /// client would.
+    fn price_account_for(feed_at: &AccountId) -> AccountId {
+        compute_pda(
+            &OURS,
+            &[feed_at.value(), &seed_from_str(PRICE_ACCOUNT_SEED)],
+        )
+    }
+
     /// The feed account's address, derived the way a client would.
     fn feed_account_id(feed_id: &[u8; 32]) -> AccountId {
         compute_pda(
@@ -597,7 +653,12 @@ mod tests {
         admin.is_authorized = true;
         let mut feed = account(*feed_at.value());
         feed.account = pre;
-        let accounts = [feed, admin, account(*admin_config_id().value())];
+        // Fourth account: the price account, at the address derived from the
+        // feed account's own id. A registration reads it for the pair it may not
+        // change, so the constraint has to accept the same address
+        // `submit_price` writes.
+        let price = account(*price_account_for(&feed_at).value());
+        let accounts = [feed, admin, account(*admin_config_id().value()), price];
         // The seed argument is handed to the validator directly rather than
         // decoded from the instruction: the generated claims function and the
         // validator take the same `&[u8; 32]`, which is what keeps the address

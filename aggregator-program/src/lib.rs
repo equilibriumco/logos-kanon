@@ -17,12 +17,13 @@
 //! binary at `methods/guest/src/bin/aggregator.rs`, because that is what LEZ
 //! executes; it delegates here, which is what makes the logic host-testable.
 //!
-//! # Not yet implemented
+//! # The whole instruction set is implemented
 //!
-//! `submit_price` is built, the admin gate is M2-06, `register_feed` is M2-07 and
-//! `update_signer_set` is M2-08 — so a feed can be created, read and rotated,
-//! which is the operating loop the servicing commitment needs. Deregistration
-//! and pausing still refuse with their task: M2-09 and M2-10.
+//! `submit_price` and the five admin operations behind the M2-06 gate:
+//! registration (M2-07), signer-set rotation (M2-08), deregistration (M2-09),
+//! and pausing and resuming (M2-10). Nothing refuses with its task any more —
+//! the `not_yet` stub is gone, which is what makes that a compile-time fact
+//! rather than a claim in this comment.
 //!
 //! [`register`] is registration: what a feed's configuration is, where its
 //! account lives, and why the address is the feed id's (ADR 33). [`manage`] is

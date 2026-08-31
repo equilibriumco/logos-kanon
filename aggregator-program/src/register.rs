@@ -59,6 +59,8 @@ use spel_framework::spel_output::AutoClaim;
 use verifier_core::SignerAddress;
 use verifier_core::{AssetPair, ConfigError, FeedConfig};
 
+use kanon_idl::OraclePriceAccount;
+
 use crate::FeedAccount;
 
 /// The name seed the feed account's address is derived from.
@@ -86,6 +88,20 @@ pub enum RegisterError {
     /// and a submission refuse the same input for the same reason with the same
     /// code.
     Config(ConfigError),
+    /// The pair does not match the one this feed id has already published.
+    ///
+    /// A feed id's pair is fixed from its first publication, and the price
+    /// account is what remembers it: a retirement empties the *feed* account and
+    /// leaves the *price* account where it was, so a re-registration under a new
+    /// pair would produce a feed that can never publish. `submit_price` reads the
+    /// expected pair off the published account on every write but the first, so
+    /// every payload for the new pair would answer `AssetMismatch` for ever.
+    ///
+    /// Refused here rather than allowed and diagnosed later, because a RedStone
+    /// feed id *is* its asset — `BTC` means BTC/USD — so re-pointing an id at
+    /// another pair is a mistake in every case rather than a use case with a
+    /// cost. Registering a different pair means a different feed id.
+    PairChanged,
     /// The serialised feed does not fit an account's data.
     ///
     /// Unreachable while [`ConfigError::TooManySigners`] bounds the signer list:
@@ -109,6 +125,9 @@ impl core::fmt::Display for RegisterError {
                 f.write_str("this feed id is already registered at its derived address")
             }
             Self::FeedTooLarge => f.write_str("the serialised feed does not fit an account's data"),
+            Self::PairChanged => {
+                f.write_str("this feed id has already published a different asset pair")
+            }
             Self::Config(err) => write!(f, "{err:?}"),
         }
     }
@@ -130,6 +149,7 @@ impl RegisterError {
         match self {
             Self::AlreadyRegistered => 901,
             Self::FeedTooLarge => 902,
+            Self::PairChanged => 903,
             Self::Config(err) => crate::submit::config_code(*err),
         }
     }
@@ -154,6 +174,7 @@ pub fn register_feed(
     feed: AccountWithMetadata,
     admin: AccountWithMetadata,
     config: AccountWithMetadata,
+    price_account: AccountWithMetadata,
     feed_id: [u8; 32],
     base_asset: [u8; 32],
     quote_asset: [u8; 32],
@@ -178,6 +199,21 @@ pub fn register_feed(
     // Constructed and dropped: what is wanted is the refusal, not the value.
     // Storing the configuration would mean storing borrowed signers, and the
     // account is the storage.
+    // The pair the feed id already published, if it ever did. A retirement does
+    // not touch the price account, so this outlives the registration that wrote
+    // it -- which is exactly why it is the right place to read the pair from.
+    // Undecodable or empty means nothing was ever published under this id, and
+    // any pair is still available.
+    if let Ok(published) = OraclePriceAccount::try_from(&price_account.account.data) {
+        let publishing = AssetPair::new(
+            published.base_asset.into_value(),
+            published.quote_asset.into_value(),
+        );
+        if publishing != AssetPair::new(base_asset, quote_asset) {
+            return Err(RegisterError::PairChanged);
+        }
+    }
+
     let addresses: Vec<SignerAddress> = signers.iter().copied().map(SignerAddress).collect();
     FeedConfig::try_new(
         &feed_id,
@@ -221,6 +257,9 @@ pub fn register_feed(
         feed_post,
         AccountPostState::new(admin.account),
         AccountPostState::new(config.account),
+        // Read for its pair and otherwise untouched. A registration never writes
+        // a price; `submit_price` does.
+        AccountPostState::new(price_account.account),
     ])
 }
 
@@ -258,6 +297,15 @@ mod tests {
         }
     }
 
+    /// A price account for a feed id that has never published.
+    fn unpublished() -> AccountWithMetadata {
+        AccountWithMetadata {
+            account: Account::default(),
+            is_authorized: false,
+            account_id: AccountId::new([0x9E; 32]),
+        }
+    }
+
     /// Any account this instruction only passes through.
     fn passthrough(tag: u8) -> AccountWithMetadata {
         AccountWithMetadata {
@@ -287,6 +335,8 @@ mod tests {
             feed,
             passthrough(0xAD),
             passthrough(0xC0),
+            // Nothing published, so any pair is available.
+            unpublished(),
             id,
             BASE,
             QUOTE,
@@ -349,15 +399,17 @@ mod tests {
     }
 
     #[test]
-    fn the_post_states_are_the_feed_then_the_two_it_passes_through() {
+    fn the_post_states_are_the_feed_then_the_three_it_passes_through() {
         let id = feed_id(b"XMR");
         let admin = passthrough(0xAD);
         let config = passthrough(0xC0);
+        let price = unpublished();
 
         let posts = register_feed(
             unregistered(&id),
             admin.clone(),
             config.clone(),
+            price.clone(),
             id,
             BASE,
             QUOTE,
@@ -369,12 +421,17 @@ mod tests {
         )
         .expect("a usable feed");
 
-        assert_eq!(posts.len(), 3);
+        assert_eq!(posts.len(), 4);
         assert_eq!(*posts[1].account(), admin.account, "the admin is untouched");
         assert_eq!(
             *posts[2].account(),
             config.account,
             "the config is untouched"
+        );
+        assert_eq!(
+            *posts[3].account(),
+            price.account,
+            "a registration reads the price account and never writes it"
         );
     }
 
@@ -513,6 +570,7 @@ mod tests {
         let causes = [
             RegisterError::AlreadyRegistered,
             RegisterError::FeedTooLarge,
+            RegisterError::PairChanged,
         ];
 
         // No wildcard arm, so a new variant fails to compile here. It does not
@@ -523,6 +581,7 @@ mod tests {
             match cause {
                 RegisterError::AlreadyRegistered
                 | RegisterError::FeedTooLarge
+                | RegisterError::PairChanged
                 | RegisterError::Config(_) => {}
             }
         }
@@ -541,6 +600,7 @@ mod tests {
         // transaction does not have to know which instruction produced it.
         assert_eq!(RegisterError::AlreadyRegistered.code(), 901);
         assert_eq!(RegisterError::FeedTooLarge.code(), 902);
+        assert_eq!(RegisterError::PairChanged.code(), 903);
         assert_eq!(
             RegisterError::Config(ConfigError::ThresholdZero).code(),
             crate::submit::config_code(ConfigError::ThresholdZero)

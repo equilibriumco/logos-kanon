@@ -40,6 +40,14 @@ pub enum ManageError {
     FeedNotOurs,
     /// The account is owned by this program but its data is not a feed.
     FeedUndecodable,
+    /// The feed was retired, so there is no registration to operate on.
+    ///
+    /// Its own cause and not [`Self::FeedUndecodable`], and the same cause
+    /// `SubmitError` reports at the same number. A retirement is the ordinary
+    /// end of a feed's life and leaves the account owned with empty data;
+    /// reporting that as undecodable would tell an operator their account was
+    /// corrupt and send them looking for damage that is not there.
+    FeedDeregistered,
     /// The account is a feed, but not the feed the caller named.
     ///
     /// Reachable only if the declared PDA constraint is absent or wrong, since
@@ -80,6 +88,7 @@ impl core::fmt::Display for ManageError {
                 f.write_str("the account offered as a feed is not one this program owns")
             }
             Self::FeedUndecodable => f.write_str("the feed account's data is not a feed"),
+            Self::FeedDeregistered => f.write_str("this feed was retired"),
             Self::FeedMismatch => {
                 f.write_str("the feed account does not hold the feed id the caller named")
             }
@@ -107,6 +116,7 @@ impl ManageError {
         match self {
             Self::FeedNotOurs => 101,
             Self::FeedUndecodable => 102,
+            Self::FeedDeregistered => 106,
             Self::FeedMismatch => 1001,
             Self::FeedTooLarge => 1002,
             Self::AlreadyPaused => 1003,
@@ -127,6 +137,13 @@ fn named_feed(
 ) -> Result<FeedAccount, ManageError> {
     if feed.account.program_owner != self_program_id {
         return Err(ManageError::FeedNotOurs);
+    }
+    // Before the decode, and for the reason `submit_price` does it here too: a
+    // retirement leaves the account owned and empty, which decodes as nothing at
+    // all. Every operation in this module shares this function, so rotation,
+    // pausing, resuming and a second deregistration all answer the same way.
+    if feed.account.data.as_ref().is_empty() {
+        return Err(ManageError::FeedDeregistered);
     }
     let stored = FeedAccount::try_from_slice(feed.account.data.as_ref())
         .map_err(|_| ManageError::FeedUndecodable)?;
@@ -576,6 +593,11 @@ mod tests {
             ManageError::FeedUndecodable.code(),
             SubmitError::FeedUndecodable.code()
         );
+        assert_eq!(
+            ManageError::FeedDeregistered.code(),
+            SubmitError::FeedDeregistered.code(),
+            "a retired feed is one cause with one number wherever it surfaces"
+        );
         assert_eq!(ManageError::FeedMismatch.code(), 1001);
         assert_eq!(ManageError::FeedTooLarge.code(), 1002);
         assert_eq!(
@@ -662,8 +684,9 @@ mod tests {
     #[test]
     fn an_already_deregistered_feed_cannot_be_deregistered_again() {
         // The account is ours and empty, so there is no feed to name. Reported
-        // as undecodable rather than as a mismatch, because that is what an
-        // empty account is: no feed at all.
+        // as retired and not as undecodable: the operator's next action differs,
+        // and `submit_price` already answers `FeedDeregistered` for this exact
+        // state. One state, one answer, whichever instruction meets it.
         let mut feed = feed_account(&registered(BTC, 3, 2, false), OURS);
         feed.account.data = Data::default();
         assert_eq!(
@@ -674,7 +697,7 @@ mod tests {
                 feed_id(BTC),
                 OURS
             ),
-            Err(ManageError::FeedUndecodable)
+            Err(ManageError::FeedDeregistered)
         );
     }
     #[test]
@@ -776,6 +799,7 @@ mod tests {
         let causes = [
             ManageError::FeedNotOurs,
             ManageError::FeedUndecodable,
+            ManageError::FeedDeregistered,
             ManageError::FeedMismatch,
             ManageError::FeedTooLarge,
             ManageError::AlreadyPaused,
@@ -789,6 +813,7 @@ mod tests {
             match cause {
                 ManageError::FeedNotOurs
                 | ManageError::FeedUndecodable
+                | ManageError::FeedDeregistered
                 | ManageError::FeedMismatch
                 | ManageError::FeedTooLarge
                 | ManageError::AlreadyPaused

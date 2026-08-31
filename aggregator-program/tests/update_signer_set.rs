@@ -6,6 +6,7 @@
 
 use aggregator_program::manage::{update_signer_set, ManageError};
 use aggregator_program::register::{register_feed, FEED_ACCOUNT_SEED};
+use aggregator_program::submit::PRICE_ACCOUNT_SEED;
 use aggregator_program::FeedAccount;
 use borsh::BorshDeserialize;
 use lee_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
@@ -47,6 +48,20 @@ fn rotated(n: u8) -> Vec<[u8; 20]> {
     (1..=n).map(|i| [0x80 + i; 20]).collect()
 }
 
+/// The price account for a feed that has never published: default, at the
+/// address the constraint derives from the feed account's own id. A
+/// registration reads it for the pair and passes it through untouched.
+fn unpublished_price(feed_at: &AccountId) -> AccountWithMetadata {
+    AccountWithMetadata {
+        account: Account::default(),
+        is_authorized: false,
+        account_id: compute_pda(
+            &OURS,
+            &[feed_at.value(), &seed_from_str(PRICE_ACCOUNT_SEED)],
+        ),
+    }
+}
+
 /// A feed as the chain leaves it once `register_feed`'s claim is honoured.
 fn registered(id: &[u8; 32]) -> AccountWithMetadata {
     let fresh = AccountWithMetadata {
@@ -54,10 +69,12 @@ fn registered(id: &[u8; 32]) -> AccountWithMetadata {
         is_authorized: false,
         account_id: feed_address(id),
     };
+    let price = unpublished_price(&fresh.account_id);
     let posts = register_feed(
         fresh,
         on_chain(0xAD, true),
         on_chain(0xC0, false),
+        price,
         *id,
         [0xB7; 32],
         [0x05; 32],
