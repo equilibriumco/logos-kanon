@@ -67,8 +67,10 @@
 //! asserts that identity over the same inputs. An integer is a program's
 //! interface to its own callers, so a consumer numbering its causes in its own
 //! space is not a second taxonomy. What would be a second taxonomy is a
-//! consumer that collapsed thirteen verification failures into one code, which
-//! is what the match in [`SettleError::code`] exists not to do.
+//! consumer that collapsed a taxonomy into one code, which is what the blocks in
+//! [`SettleError::code`] exist not to do — including the four `VerifyError`
+//! variants that carry another error, each of which dispatches into that layer's
+//! block rather than reporting its whole layer as one number.
 //!
 //! # 4. Verification is not authorisation
 //!
@@ -86,8 +88,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use lee_core::account::{Account, AccountWithMetadata, Data};
 use lee_core::program::{AccountPostState, ProgramId};
 use pull_lib::{
-    verify_price, AssetPair, ConfigError, FeedConfig, InProgramBackend, PullConfig, SignerAddress,
-    VerifiedFeed, VerifyError,
+    verify_price, AssetPair, BackendError, ConfigError, DecodeError, FeedConfig, InProgramBackend,
+    PullConfig, SignerAddress, TimeError, VerifiedFeed, VerifyError,
 };
 use serde::{Deserialize, Serialize};
 use spel_framework_macros::account_type;
@@ -329,14 +331,24 @@ impl OpenError {
 
 impl SettleError {
     /// A stable number per leaf cause: this program's own in the 1400 block,
-    /// then one block per layer beneath it.
+    /// then one block per layer beneath it — 1500 for a configuration fault,
+    /// 1600 for a verification failure `VerifyError` names itself, 1700 for the
+    /// decoder, 1800 for signature recovery, 1900 for the clock.
+    ///
+    /// *Leaf* is the load-bearing word. Four `VerifyError` variants carry another
+    /// error, and each dispatches into that layer's block rather than taking a
+    /// number of its own: `Malformed` covers nine decoder faults and would
+    /// otherwise report all nine as "unreadable". A wrapper answered with one
+    /// number is the collapse U6 exists to prevent, and it is what the push path
+    /// avoids the same way.
     ///
     /// The blocks are this program's and are not the aggregator's — see the
     /// module header on why an integer space is per program while the typed
     /// value is shared. What matters is the property: two causes never answer
-    /// with the same number, and the match is exhaustive with no wildcard arm,
-    /// so a variant added to [`VerifyError`] stops this compiling until somebody
-    /// decides what a consumer should tell its callers about it.
+    /// with the same number, and every match involved is exhaustive with no
+    /// wildcard arm, so a variant added anywhere in the taxonomy stops this
+    /// compiling until somebody decides what a consumer should tell its callers
+    /// about it.
     #[must_use]
     pub const fn code(&self) -> u32 {
         match self {
@@ -353,6 +365,10 @@ impl SettleError {
 }
 
 /// One number per configuration fault, in the 1500 block.
+///
+/// Reached two ways — a configuration this program failed to build, and
+/// `VerifyError::InvalidConfig` — and both arrive here, because one cause reached
+/// by two routes is still one cause and deserves one number.
 const fn config_code(err: ConfigError) -> u32 {
     match err {
         ConfigError::MaxAgeZero => 1501,
@@ -369,26 +385,68 @@ const fn config_code(err: ConfigError) -> u32 {
     }
 }
 
-/// One number per verification failure, in the 1600 block.
+/// One number per verification failure that `VerifyError` names itself, in the
+/// 1600 block.
 ///
-/// The list is the taxonomy U6 asks for, and this is the point where a consumer
-/// program decides what each cause means to its own callers. Nothing is
-/// collapsed and nothing is a wildcard.
+/// Four of its variants carry another error, and each of those dispatches to the
+/// block for that layer instead of consuming a number here. That matters more
+/// than it looks: `Malformed` alone covers nine decoder faults, so answering it
+/// with one number would tell a caller that a payload was unreadable and not
+/// whether the marker was missing, the length was absurd or a value had zero
+/// width. Collapsing a wrapper is exactly the failure U6 is about, and it is the
+/// shape the push path already avoids the same way.
 const fn verify_code(err: VerifyError) -> u32 {
     match err {
-        VerifyError::Malformed(_) => 1601,
-        VerifyError::UnauthorisedSigner => 1602,
-        VerifyError::ThresholdNotMet { .. } => 1603,
-        VerifyError::AssetMismatch => 1604,
-        VerifyError::StalePackage => 1605,
-        VerifyError::FuturePackage => 1606,
-        VerifyError::ValueOutOfRange => 1607,
-        VerifyError::ScalingOutOfRange => 1608,
-        VerifyError::TimestampMismatch { .. } => 1609,
-        VerifyError::TooManyPackages { .. } => 1610,
-        VerifyError::InvalidSignature(_) => 1611,
-        VerifyError::NoClock(_) => 1612,
-        VerifyError::InvalidConfig(_) => 1613,
+        VerifyError::UnauthorisedSigner => 1601,
+        VerifyError::ThresholdNotMet { .. } => 1602,
+        VerifyError::AssetMismatch => 1603,
+        VerifyError::StalePackage => 1604,
+        VerifyError::FuturePackage => 1605,
+        VerifyError::ValueOutOfRange => 1606,
+        VerifyError::ScalingOutOfRange => 1607,
+        VerifyError::TimestampMismatch { .. } => 1608,
+        VerifyError::TooManyPackages { .. } => 1609,
+        VerifyError::Malformed(err) => decode_code(err),
+        VerifyError::InvalidSignature(err) => backend_code(err),
+        VerifyError::NoClock(err) => clock_code(err),
+        VerifyError::InvalidConfig(err) => config_code(err),
+    }
+}
+
+/// One number per decoder fault, in the 1700 block.
+const fn decode_code(err: DecodeError) -> u32 {
+    match err {
+        DecodeError::MissingMarker => 1701,
+        DecodeError::Truncated => 1702,
+        DecodeError::LengthOutOfRange => 1703,
+        DecodeError::NumberOverflow => 1704,
+        DecodeError::TooLong { .. } => 1705,
+        DecodeError::NoDataPackages => 1706,
+        DecodeError::NoDataPoints => 1707,
+        DecodeError::ZeroWidthValue => 1708,
+        DecodeError::TrailingBytes(_) => 1709,
+    }
+}
+
+/// One number per signature-recovery fault, in the 1800 block.
+const fn backend_code(err: BackendError) -> u32 {
+    match err {
+        BackendError::InvalidRecoveryId => 1801,
+        BackendError::InvalidSignature => 1802,
+        BackendError::RecoveryFailed => 1803,
+    }
+}
+
+/// One number per clock fault, in the 1900 block.
+///
+/// `WrongAccount` is the one a caller of this program can actually cause, by
+/// naming an account that is not the pinned every-block one.
+const fn clock_code(err: TimeError) -> u32 {
+    match err {
+        TimeError::Missing => 1901,
+        TimeError::WrongAccount => 1902,
+        TimeError::Undecodable => 1903,
+        TimeError::Unavailable => 1904,
     }
 }
 
@@ -844,34 +902,9 @@ mod tests {
             SettleError::OrderTooLarge,
             SettleError::LimitNotReached { price: 1, limit: 2 },
         ];
+        causes.extend(every_config_fault().map(SettleError::Config));
         causes.extend(
             [
-                ConfigError::MaxAgeZero,
-                ConfigError::MaxAgeTooLarge {
-                    max_age_ms: 1,
-                    max: 0,
-                },
-                ConfigError::DecimalsOutOfRange {
-                    decimals: 1,
-                    max: 0,
-                },
-                ConfigError::NoSigners,
-                ConfigError::ThresholdZero,
-                ConfigError::TooManySigners { signers: 1, max: 0 },
-                ConfigError::ThresholdExceedsSigners {
-                    threshold: 1,
-                    signers: 0,
-                },
-                ConfigError::ZeroSignerAddress,
-                ConfigError::DuplicateSigner,
-                ConfigError::FeedIdTooLong { len: 33 },
-                ConfigError::ZeroFeedId,
-            ]
-            .map(SettleError::Config),
-        );
-        causes.extend(
-            [
-                VerifyError::Malformed(pull_lib::DecodeError::Truncated),
                 VerifyError::UnauthorisedSigner,
                 VerifyError::ThresholdNotMet {
                     met: 1,
@@ -887,13 +920,88 @@ mod tests {
                     found: 2,
                 },
                 VerifyError::TooManyPackages { max: 1 },
-                VerifyError::InvalidSignature(pull_lib::BackendError::RecoveryFailed),
-                VerifyError::NoClock(pull_lib::TimeError::WrongAccount),
-                VerifyError::InvalidConfig(ConfigError::NoSigners),
             ]
             .map(SettleError::Verify),
         );
+        // Every member of each wrapped layer, not one apiece.
+        causes.extend(
+            [
+                DecodeError::MissingMarker,
+                DecodeError::Truncated,
+                DecodeError::LengthOutOfRange,
+                DecodeError::NumberOverflow,
+                DecodeError::TooLong { len: 1, max: 0 },
+                DecodeError::NoDataPackages,
+                DecodeError::NoDataPoints,
+                DecodeError::ZeroWidthValue,
+                DecodeError::TrailingBytes(1),
+            ]
+            .map(|err| SettleError::Verify(VerifyError::Malformed(err))),
+        );
+        causes.extend(
+            [
+                BackendError::InvalidRecoveryId,
+                BackendError::InvalidSignature,
+                BackendError::RecoveryFailed,
+            ]
+            .map(|err| SettleError::Verify(VerifyError::InvalidSignature(err))),
+        );
+        causes.extend(
+            [
+                TimeError::Missing,
+                TimeError::WrongAccount,
+                TimeError::Undecodable,
+                TimeError::Unavailable,
+            ]
+            .map(|err| SettleError::Verify(VerifyError::NoClock(err))),
+        );
         causes
+    }
+
+    /// Every configuration fault `FeedConfig::try_new` can report.
+    fn every_config_fault() -> [ConfigError; 11] {
+        [
+            ConfigError::MaxAgeZero,
+            ConfigError::MaxAgeTooLarge {
+                max_age_ms: 1,
+                max: 0,
+            },
+            ConfigError::DecimalsOutOfRange {
+                decimals: 1,
+                max: 0,
+            },
+            ConfigError::NoSigners,
+            ConfigError::ThresholdZero,
+            ConfigError::TooManySigners { signers: 1, max: 0 },
+            ConfigError::ThresholdExceedsSigners {
+                threshold: 1,
+                signers: 0,
+            },
+            ConfigError::ZeroSignerAddress,
+            ConfigError::DuplicateSigner,
+            ConfigError::FeedIdTooLong { len: 33 },
+            ConfigError::ZeroFeedId,
+        ]
+    }
+
+    #[test]
+    fn a_configuration_fault_has_one_number_by_either_route() {
+        // Two routes reach a `ConfigError`: this program failing to build its own
+        // configuration, and `verify_feed` refusing one. They are the same fault
+        // and get the same number, which is why the counting test above lists each
+        // leaf once rather than once per route -- a shared number there would look
+        // like a collision.
+        //
+        // Asserted rather than left to the reader, because the alternative is a
+        // second number for one cause, and an operator comparing two failed
+        // transactions would have no way to know they had hit the same thing.
+        for fault in every_config_fault() {
+            assert_eq!(
+                SettleError::Config(fault).code(),
+                SettleError::Verify(VerifyError::InvalidConfig(fault)).code(),
+                "{fault:?} answers with two numbers"
+            );
+        }
     }
 
     /// The clock account's sixteen bytes: `block_id` then `timestamp`, both
