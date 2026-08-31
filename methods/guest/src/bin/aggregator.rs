@@ -902,12 +902,12 @@ mod tests {
     }
     /// A config account holding `admin_key` as the established authority.
     ///
-    /// Encoded by hand rather than with `borsh::to_vec`, because the guest
-    /// workspace carries no borsh dependency and a test-only one would be in the
-    /// shipping graph. `AdminAccount` is two `Option<[u8; 32]>`, and Borsh writes
-    /// an option as a one-byte tag then the payload -- so `Some(key)` is `1` and
-    /// the key, and `None` is a lone `0`. A change to the struct breaks this
-    /// loudly: the bytes stop decoding and the gate answers `NoAuthority`.
+    /// Encoded by hand rather than with `borsh::to_vec` to avoid another direct
+    /// test dependency and a change to the guest's pinned lockfile. `AdminAccount`
+    /// is two `Option<[u8; 32]>`, and Borsh writes an option as a one-byte tag then
+    /// the payload. `Some(key)` is `1` and the key, and `None` is a lone `0`. A
+    /// change to the struct breaks this loudly: the bytes stop decoding and the
+    /// gate answers `NoAuthority`.
     fn config_holding(admin_key: [u8; 32]) -> AccountWithMetadata {
         let mut data = Vec::with_capacity(34);
         data.push(1);
