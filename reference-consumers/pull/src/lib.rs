@@ -80,7 +80,26 @@
 //! variants that carry another error, each of which dispatches into that layer's
 //! block rather than reporting its whole layer as one number.
 //!
-//! # 4. Verification is not authorisation
+//! # 4. Where the payload came from is not this program's business, and is
+//! somebody's
+//!
+//! [`settle`] verifies bytes it was handed. It cannot know, and does not ask, how
+//! they reached the transaction — which is correct, because a payload is either
+//! signed by enough authorised keys or it is not, whoever carried it.
+//!
+//! That leaves a choice for whoever integrates this, and it is not a neutral one.
+//! Fetching from RedStone's gateway at read time is the obvious route and it
+//! exposes the fetcher's network address to RedStone on every read, which on a
+//! privacy-first chain is worth a decision rather than a default. Taking the bytes
+//! from a relayer that fetched them, or from instruction data a caller already
+//! assembled, moves that exposure somewhere it may be more acceptable — and costs
+//! nothing in authenticity, since the signatures are checked here either way.
+//!
+//! Named here because this is where a consumer author meets it. The
+//! recommendation belongs to the SDK doc packet (S5) and the end-to-end README
+//! (S4), and neither is written yet.
+//!
+//! # 5. Verification is not authorisation
 //!
 //! [`settle`] is permissionless: anybody may present a payload for anybody's
 //! order, exactly as anybody may submit a price to the push aggregator. Nothing
