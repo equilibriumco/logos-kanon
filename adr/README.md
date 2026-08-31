@@ -55,6 +55,8 @@ they describe the design being proposed for acceptance.
 | [M2-19:01](unnumbered-M2-19-the-end-to-end-tests-resolve-in-their-own-workspace.md) | The end-to-end tests resolve in their own workspace | accepted, unnumbered, extends 7 |
 | [M3-01:01](unnumbered-M3-01-the-pull-library-is-a-call-not-a-layer.md) | The pull library is a call, not a layer | accepted, unnumbered |
 | [M3-04:01](unnumbered-M3-04-where-a-two-mode-test-can-live.md) | Where a test that needs both modes can live | accepted, unnumbered |
+| [M3-06:01](unnumbered-M3-06-where-a-pull-consumers-program-lives.md) | Where a pull consumer's program lives | accepted, unnumbered |
+| [M3-06:02](unnumbered-M3-06-the-consumers-configuration-is-compiled-in.md) | The consumer's configuration is compiled in | accepted, unnumbered |
 
 ## How they fit together
 
@@ -167,6 +169,22 @@ than a hole in the library, and the reference consumer is where it is shown. The
 rest of that record is about adding nothing: one function over `verifier-core`'s
 own types is what makes ADR 2's "one verification, two modes" an identity rather
 than a claim two crates have to keep agreeing on.
+
+[M3-06:01] and [M3-06:02] are that obligation being discharged, and each turns out
+to be about a boundary the library could describe but not hold. The first is a
+question about packaging that became a question about evidence: a SPEL program is a
+guest binary, `cargo tree` resolves a package rather than a binary, and the package
+holding the aggregator's guest cannot host a consumer whose whole claim is that it
+reaches no aggregator crate. Giving the consumer its own guest workspace is what
+makes the closure an assertion about the program and not only about the library it
+calls. The second is where the signer set comes from. A shared borrow proves a
+roster was not mutated during a call and says nothing about where it came from, so
+the demonstration had to be an absence — a `settle` with no signer, threshold,
+window or pair parameter, checked against the IDL a caller actually builds against.
+The rejected alternative is the instructive one: storing the configuration in an
+account the program owns is the realistic shape and the aggregator's own, and taking
+it here would have reproduced the registration that F9 exists to say pull mode does
+not need.
 
 ADR 29 closes a range that only had one end. ADR 18 gave staleness a two-sided window and
 left `maxAge` to the feed; registration refused zero and nothing else. But `freshness`
