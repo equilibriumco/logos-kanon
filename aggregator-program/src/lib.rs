@@ -17,27 +17,31 @@
 //! binary at `methods/guest/src/bin/aggregator.rs`, because that is what LEZ
 //! executes; it delegates here, which is what makes the logic host-testable.
 //!
-//! # Not yet implemented
+//! # The whole instruction set is implemented
 //!
-//! Three of the four admin-gated bodies. `submit_price` is built, the admin gate
-//! is M2-06, and `register_feed` is M2-07 — so a feed can be created and read,
-//! and the push path is operable end to end for one feed. Signer-set updates,
-//! deregistration and pausing still refuse with their task: M2-08 to M2-10.
+//! `submit_price` and the five admin operations behind the M2-06 gate:
+//! registration (M2-07), signer-set rotation (M2-08), deregistration (M2-09),
+//! and pausing and resuming (M2-10). Nothing refuses with its task any more —
+//! the `not_yet` stub is gone, which is what makes that a compile-time fact
+//! rather than a claim in this comment.
 //!
 //! [`register`] is registration: what a feed's configuration is, where its
-//! account lives, and why the address is the feed id's (ADR 33).
+//! account lives, and why the address is the feed id's (ADR 33). [`manage`] is
+//! the admin-gated operations on a feed that already exists.
 //! `TRACEABILITY.md` maps each to its requirement.
 #![forbid(unsafe_code)]
 
 pub mod admin;
 pub mod feed_account;
 pub mod instruction;
+pub mod manage;
 pub mod publish;
 pub mod register;
 pub mod submit;
 
 pub use feed_account::FeedAccount;
 pub use instruction::Instruction;
+pub use manage::{update_signer_set, ManageError};
 pub use register::{register_feed, RegisterError};
 pub use submit::{submit_price, SubmitError};
 

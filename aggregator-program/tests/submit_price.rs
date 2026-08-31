@@ -16,6 +16,7 @@
 //! through a crate for the reason its own header gives -- a fixture reader has no
 //! business in the published surface of a crate consumer programs link.
 
+use aggregator_program::manage::deregister_feed;
 use aggregator_program::publish::{PublishError, REDSTONE_SOURCE_ID};
 use aggregator_program::submit::{submit_price, SubmitError, PRICE_ACCOUNT_SEED};
 use aggregator_program::FeedAccount;
@@ -116,6 +117,12 @@ fn price_account_id() -> AccountId {
         &OURS,
         &[&FEED_ACCOUNT_ID, &seed_from_str(PRICE_ACCOUNT_SEED)],
     )
+}
+
+/// An account a retirement only passes through: `authorise` is the guest's call,
+/// so `deregister_feed` never inspects these.
+fn passthrough(tag: u8) -> AccountWithMetadata {
+    account(OURS, Vec::new(), [tag; 32])
 }
 
 fn no_price_account() -> AccountWithMetadata {
@@ -515,5 +522,63 @@ fn a_submission_to_an_account_another_source_populated_is_refused() {
             &v.payload,
         ),
         Err(SubmitError::Publish(PublishError::SourceMismatch))
+    );
+}
+
+#[test]
+fn the_published_pair_is_what_a_re_registration_may_not_change() {
+    // Why `RegisterError::PairChanged` exists, shown rather than asserted. This
+    // builds by hand the state the guard now refuses to create, and demonstrates
+    // that it is terminal: a retirement empties the *feed* account and leaves the
+    // *price* account where it was, and `submit_price` reads the expected pair
+    // off the published account on every write but the first. So a feed
+    // re-registered under a different pair would answer `AssetMismatch` for
+    // every payload, for ever.
+    //
+    // Unreachable through the instruction set, which is the point --
+    // `a_feed_id_may_not_change_its_pair_once_it_has_published` in
+    // `deregister_feed.rs` is the guard, and this is the cost of not having one.
+    let v = vector("BTC");
+
+    let published = written(
+        &submit(
+            feed_account(&feed_state(&v)),
+            no_price_account(),
+            clock_at(v.timestamp_ms),
+            &v.payload,
+        )
+        .expect("the first submission publishes"),
+    );
+    assert_eq!(published.base_asset.into_value(), BASE);
+
+    // A retirement produces three post-states -- feed, admin, config -- and the
+    // price account is not one of them.
+    let retired = deregister_feed(
+        feed_account(&feed_state(&v)),
+        passthrough(0xAD),
+        passthrough(0xC0),
+        feed_state(&v).feed_id,
+        OURS,
+    )
+    .expect("a live feed retires");
+    assert_eq!(
+        retired.len(),
+        3,
+        "deregistration does not touch the price account"
+    );
+
+    let other_pair = FeedAccount {
+        base_asset: [0xEE; 32],
+        ..feed_state(&v)
+    };
+    assert_eq!(
+        submit(
+            feed_account(&other_pair),
+            existing_price_account(&published),
+            clock_at(v.timestamp_ms),
+            &v.payload,
+        ),
+        Err(SubmitError::Verify(VerifyError::AssetMismatch)),
+        "the published pair outlives the registration it belonged to"
     );
 }

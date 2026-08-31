@@ -44,12 +44,19 @@ fn every_variant() -> Vec<Instruction> {
             threshold: 1,
         },
         Instruction::UpdateSignerSet {
+            feed_id: padded(b"BTC"),
             signers: vec![[4u8; 20]],
             threshold: 2,
         },
-        Instruction::DeregisterFeed,
-        Instruction::PauseFeed,
-        Instruction::UnpauseFeed,
+        Instruction::DeregisterFeed {
+            feed_id: padded(b"BTC"),
+        },
+        Instruction::PauseFeed {
+            feed_id: padded(b"BTC"),
+        },
+        Instruction::UnpauseFeed {
+            feed_id: padded(b"BTC"),
+        },
         Instruction::InitialiseAdmin,
         Instruction::NominateAdmin {
             new_admin: [5u8; 32],

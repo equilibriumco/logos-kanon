@@ -142,7 +142,7 @@
     {
       "accounts": [
         {
-          "init": true,
+          "init": false,
           "name": "feed",
           "pda": {
             "seeds": [
@@ -173,6 +173,24 @@
               {
                 "kind": "const",
                 "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "price_account",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "feed"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_PRICE_ACCOUNT"
               }
             ]
           },
@@ -239,6 +257,18 @@
         {
           "init": false,
           "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
           "signer": false,
           "writable": true
         },
@@ -265,6 +295,15 @@
       ],
       "args": [
         {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
           "name": "signers",
           "type": {
             "vec": {
@@ -287,6 +326,18 @@
         {
           "init": false,
           "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
           "signer": false,
           "writable": true
         },
@@ -311,7 +362,17 @@
           "writable": false
         }
       ],
-      "args": [],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
       "name": "deregister_feed"
     },
     {
@@ -319,6 +380,18 @@
         {
           "init": false,
           "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
           "signer": false,
           "writable": true
         },
@@ -343,7 +416,17 @@
           "writable": false
         }
       ],
-      "args": [],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
       "name": "pause_feed"
     },
     {
@@ -351,6 +434,18 @@
         {
           "init": false,
           "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
           "signer": false,
           "writable": true
         },
@@ -375,7 +470,17 @@
           "writable": false
         }
       ],
-      "args": [],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
       "name": "unpause_feed"
     },
     {

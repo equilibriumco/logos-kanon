@@ -15,24 +15,52 @@
 //! # The feed's address
 //!
 //! `for_public_pda(program, sha256(feed_id || zero_pad_32("KANON_FEED_ACCOUNT")))`,
-//! declared as `#[account(init, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]`
+//! declared as `#[account(mut, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]`
 //! on the guest handler rather than checked here, for the reason ADR 32 gives
 //! about the price account: the derivation is what a client has to reproduce, so
-//! the constraint is what publishes it in the IDL.
+//! the constraint is what publishes it in the IDL. `mut` and not `init` because
+//! of the three pre-states below -- see [`register_feed`].
 //!
 //! Two things follow from the address being the feed id's. A client can find a
 //! feed without being told where it is, which is what the SDK, the CLI, the
 //! relayer and every consumer need. And one feed id has one account, so a second
-//! registration of the same feed arrives at an account that is no longer default
-//! and is refused -- which is the whole of R2's atomicity, and a property of the
+//! registration of the same feed arrives at an account that already holds one and
+//! is refused -- which is the whole of R2's atomicity, and a property of the
 //! address space rather than a check anyone has to remember.
+//!
+//! # Three states, not two
+//!
+//! Because the address is fixed, re-registering after
+//! [`deregister_feed`](crate::manage::deregister_feed) has to work, or a feed id
+//! would be spent the first time it was retired. LEZ makes that a question about
+//! data rather than about the account: rule 4 forbids a program giving up
+//! ownership and rule 3 forbids resetting the nonce, so a deregistered account
+//! stays this program's forever and cannot be handed back as
+//! `Account::default()`.
+//!
+//! So a feed account arrives in one of three states, which is the same shape
+//! `submit_price` faces at the price account:
+//!
+//! - **fully default** -- never registered, and the claim makes it ours;
+//! - **ours, with no data** -- deregistered, and re-registering rewrites it
+//!   without claiming, because it is already claimed;
+//! - **anything else** -- a feed is there, or the account is not one this program
+//!   can write, and either way the registration is refused.
+//!
+//! The third state is also why the guest declares the feed account `mut` rather
+//! than `init`. `init` emits `accounts[0] != Account::default()` in the
+//! dispatcher, which is the two-state question, and it would refuse every
+//! re-registration as `AccountAlreadyInitialized` before this function ran. The
+//! check below is therefore the only gate, on chain as well as in a test.
 
 use lee_core::account::{Account, AccountWithMetadata, Data};
-use lee_core::program::AccountPostState;
+use lee_core::program::{AccountPostState, ProgramId};
 use spel_framework::pda::seed_from_str;
 use spel_framework::spel_output::AutoClaim;
 use verifier_core::SignerAddress;
 use verifier_core::{AssetPair, ConfigError, FeedConfig};
+
+use kanon_idl::OraclePriceAccount;
 
 use crate::FeedAccount;
 
@@ -50,6 +78,10 @@ pub enum RegisterError {
     /// `validate_execution`, which reports it against the post-state rather
     /// than against the input. ADR 32 records the same trap at the price
     /// account.
+    ///
+    /// Nothing upstream repeats this check: the declaration is `mut` rather than
+    /// `init`, so a squatted address reaches here rather than being turned away
+    /// by the dispatcher.
     AlreadyRegistered,
     /// The parameters do not describe a usable feed.
     ///
@@ -57,6 +89,20 @@ pub enum RegisterError {
     /// and a submission refuse the same input for the same reason with the same
     /// code.
     Config(ConfigError),
+    /// The pair does not match the one this feed id has already published.
+    ///
+    /// A feed id's pair is fixed from its first publication, and the price
+    /// account is what remembers it: a retirement empties the *feed* account and
+    /// leaves the *price* account where it was, so a re-registration under a new
+    /// pair would produce a feed that can never publish. `submit_price` reads the
+    /// expected pair off the published account on every write but the first, so
+    /// every payload for the new pair would answer `AssetMismatch` for ever.
+    ///
+    /// Refused here rather than allowed and diagnosed later, because a RedStone
+    /// feed id *is* its asset — `BTC` means BTC/USD — so re-pointing an id at
+    /// another pair is a mistake in every case rather than a use case with a
+    /// cost. Registering a different pair means a different feed id.
+    PairChanged,
     /// The serialised feed does not fit an account's data.
     ///
     /// Unreachable while [`ConfigError::TooManySigners`] bounds the signer list:
@@ -80,6 +126,9 @@ impl core::fmt::Display for RegisterError {
                 f.write_str("this feed id is already registered at its derived address")
             }
             Self::FeedTooLarge => f.write_str("the serialised feed does not fit an account's data"),
+            Self::PairChanged => {
+                f.write_str("this feed id has already published a different asset pair")
+            }
             Self::Config(err) => write!(f, "{err:?}"),
         }
     }
@@ -101,6 +150,7 @@ impl RegisterError {
         match self {
             Self::AlreadyRegistered => 901,
             Self::FeedTooLarge => 902,
+            Self::PairChanged => 903,
             Self::Config(err) => crate::submit::config_code(*err),
         }
     }
@@ -125,6 +175,7 @@ pub fn register_feed(
     feed: AccountWithMetadata,
     admin: AccountWithMetadata,
     config: AccountWithMetadata,
+    price_account: AccountWithMetadata,
     feed_id: [u8; 32],
     base_asset: [u8; 32],
     quote_asset: [u8; 32],
@@ -132,14 +183,38 @@ pub fn register_feed(
     max_age_ms: u64,
     signers: Vec<[u8; SignerAddress::LEN]>,
     threshold: u8,
+    self_program_id: ProgramId,
 ) -> Result<Vec<AccountPostState>, RegisterError> {
-    if feed.account != Account::default() {
+    // Decided once, on one discriminator, for the reason ADR 32 records about the
+    // price account: an account with data and a default owner has a claimable
+    // owner and an unwritable body, and deciding the claim separately is what
+    // lets that state through.
+    let first = feed.account == Account::default();
+    let deregistered = !first
+        && feed.account.program_owner == self_program_id
+        && feed.account.data.as_ref().is_empty();
+    if !first && !deregistered {
         return Err(RegisterError::AlreadyRegistered);
     }
 
     // Constructed and dropped: what is wanted is the refusal, not the value.
     // Storing the configuration would mean storing borrowed signers, and the
     // account is the storage.
+    // The pair the feed id already published, if it ever did. A retirement does
+    // not touch the price account, so this outlives the registration that wrote
+    // it -- which is exactly why it is the right place to read the pair from.
+    // Undecodable or empty means nothing was ever published under this id, and
+    // any pair is still available.
+    if let Ok(published) = OraclePriceAccount::try_from(&price_account.account.data) {
+        let publishing = AssetPair::new(
+            published.base_asset.into_value(),
+            published.quote_asset.into_value(),
+        );
+        if publishing != AssetPair::new(base_asset, quote_asset) {
+            return Err(RegisterError::PairChanged);
+        }
+    }
+
     let addresses: Vec<SignerAddress> = signers.iter().copied().map(SignerAddress).collect();
     FeedConfig::try_new(
         &feed_id,
@@ -168,17 +243,24 @@ pub fn register_feed(
     account.data = Data::try_from(borsh::to_vec(&stored).map_err(|_| RegisterError::FeedTooLarge)?)
         .map_err(|_| RegisterError::FeedTooLarge)?;
 
-    // Unconditional rather than `new_claimed_if_default`, because the check
-    // above has already refused every pre-state but the default one. Deciding it
-    // twice, on different rules, is how the third price-account state got
-    // through in ADR 32.
-    let claimed = AutoClaim::pda_from_seeds(&[&feed_id, &seed_from_str(FEED_ACCOUNT_SEED)])
-        .to_post_state(account);
+    // From the same discriminator the check used, and not from the account's
+    // owner. A re-registration must not claim: LEZ refuses a claim on an account
+    // whose owner is not the default one, so claiming again would fail the
+    // transaction rather than be ignored.
+    let feed_post = if first {
+        AutoClaim::pda_from_seeds(&[&feed_id, &seed_from_str(FEED_ACCOUNT_SEED)])
+            .to_post_state(account)
+    } else {
+        AccountPostState::new(account)
+    };
 
     Ok(vec![
-        claimed,
+        feed_post,
         AccountPostState::new(admin.account),
         AccountPostState::new(config.account),
+        // Read for its pair and otherwise untouched. A registration never writes
+        // a price; `submit_price` does.
+        AccountPostState::new(price_account.account),
     ])
 }
 
@@ -216,6 +298,15 @@ mod tests {
         }
     }
 
+    /// A price account for a feed id that has never published.
+    fn unpublished() -> AccountWithMetadata {
+        AccountWithMetadata {
+            account: Account::default(),
+            is_authorized: false,
+            account_id: AccountId::new([0x9E; 32]),
+        }
+    }
+
     /// Any account this instruction only passes through.
     fn passthrough(tag: u8) -> AccountWithMetadata {
         AccountWithMetadata {
@@ -245,6 +336,8 @@ mod tests {
             feed,
             passthrough(0xAD),
             passthrough(0xC0),
+            // Nothing published, so any pair is available.
+            unpublished(),
             id,
             BASE,
             QUOTE,
@@ -252,6 +345,7 @@ mod tests {
             MAX_AGE_MS,
             set,
             threshold,
+            OURS,
         )
     }
 
@@ -306,15 +400,17 @@ mod tests {
     }
 
     #[test]
-    fn the_post_states_are_the_feed_then_the_two_it_passes_through() {
+    fn the_post_states_are_the_feed_then_the_three_it_passes_through() {
         let id = feed_id(b"XMR");
         let admin = passthrough(0xAD);
         let config = passthrough(0xC0);
+        let price = unpublished();
 
         let posts = register_feed(
             unregistered(&id),
             admin.clone(),
             config.clone(),
+            price.clone(),
             id,
             BASE,
             QUOTE,
@@ -322,15 +418,21 @@ mod tests {
             MAX_AGE_MS,
             signers(3),
             2,
+            OURS,
         )
         .expect("a usable feed");
 
-        assert_eq!(posts.len(), 3);
+        assert_eq!(posts.len(), 4);
         assert_eq!(*posts[1].account(), admin.account, "the admin is untouched");
         assert_eq!(
             *posts[2].account(),
             config.account,
             "the config is untouched"
+        );
+        assert_eq!(
+            *posts[3].account(),
+            price.account,
+            "a registration reads the price account and never writes it"
         );
     }
 
@@ -469,6 +571,7 @@ mod tests {
         let causes = [
             RegisterError::AlreadyRegistered,
             RegisterError::FeedTooLarge,
+            RegisterError::PairChanged,
         ];
 
         // No wildcard arm, so a new variant fails to compile here. It does not
@@ -479,6 +582,7 @@ mod tests {
             match cause {
                 RegisterError::AlreadyRegistered
                 | RegisterError::FeedTooLarge
+                | RegisterError::PairChanged
                 | RegisterError::Config(_) => {}
             }
         }
@@ -497,6 +601,7 @@ mod tests {
         // transaction does not have to know which instruction produced it.
         assert_eq!(RegisterError::AlreadyRegistered.code(), 901);
         assert_eq!(RegisterError::FeedTooLarge.code(), 902);
+        assert_eq!(RegisterError::PairChanged.code(), 903);
         assert_eq!(
             RegisterError::Config(ConfigError::ThresholdZero).code(),
             crate::submit::config_code(ConfigError::ThresholdZero)

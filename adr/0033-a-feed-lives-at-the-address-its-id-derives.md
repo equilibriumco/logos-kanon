@@ -30,7 +30,8 @@ new is that **the trade-off is now taken deliberately**, with the cost stated in
 the consequences rather than left implicit. A reader who finds ADR 32 first
 should read this paragraph as the answer to it.
 
-`#[account(init)]` is not neutral here. The macro generates `Claim::Pda` when the
+`#[account(init)]` — the declaration M2-01 left, and the one this decision was
+taken against — is not neutral here. The macro generates `Claim::Pda` when the
 declared account carries seeds and `Claim::Authorized` when it does not, so the
 declaration chooses between two different programs:
 
@@ -42,6 +43,10 @@ declaration chooses between two different programs:
 - **Claim::Pda.** The address is derived, so anyone can find a feed, and one feed
   id has exactly one account.
 
+The seeds are what that turned on, and they are still declared. The `init` half
+did not survive M2-09 — the consequences record why — so the claim is now built by
+the body rather than by the generated helper, at the same address either way.
+
 ## Decision
 
 **A feed lives at the address its id derives.**
@@ -51,10 +56,11 @@ feed  = AccountId::for_public_pda(program, sha256( zero_pad_32(feed_id) || zero_
 price = AccountId::for_public_pda(program, sha256( feed_account_id       || zero_pad_32("KANON_PRICE_ACCOUNT") ))
 ```
 
-Declared as `#[account(init, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]`
+Declared as `#[account(mut, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]`
 rather than checked in code, for the reason ADR 32 gives about the price account:
 the derivation is what a client has to reproduce, and the constraint is what
-publishes it in the IDL. The generated IDL now carries
+publishes it in the IDL. It was `init` until the feed account gained a third
+pre-state; the consequences below record why that could not stay. The generated IDL now carries
 `seeds: [{kind: arg, path: feed_id}, {kind: const, value: KANON_FEED_ACCOUNT}]`,
 so the SDK, the CLI, the relayer and a consumer each derive it from the artefact
 rather than from this document.
@@ -81,24 +87,43 @@ not the other fails.
   arrives at an account that is no longer default and is refused before anything
   is written, and two ids cannot collide. The deliverable for R2 is therefore the
   test that says so, not a rollback path.
-- **A registration is permanent for that feed id, and no implementation can change
-  that.** `Account::default()` requires `program_owner == DEFAULT_PROGRAM_ID`, and
-  rule 4 forbids a program changing an account's owner, so once a registration claims
-  the account it can never equal `Account::default()` again whatever a later
-  deregistration writes. M2-09 therefore has no design space here and should not begin
-  by looking for it: the most it can do is empty the data and keep the account, which
-  means `register_feed` will have to admit a third pre-state. What is genuinely
-  permanent is the *configuration set at registration*: only `signers` and `threshold`
-  are scheduled for an update path (M2-08), so a wrong `decimals` or `max_age_ms`
-  burns that feed id for the life of the build. Deriving the address also removes the
-  one escape `Claim::Authorized` had, which was to abandon the account and re-create
-  the feed at a fresh address under the same id. That is the cost ADR 32 named, paid
+- **A feed id outlives its registrations, and that took a third state — but its
+  configuration does not.** Retiring `BTC` must not spend `BTC`, since RedStone's ids
+  are fixed strings. LEZ will not let a program hand an account back, though: rule 4
+  forbids giving up ownership and rule 3 forbids resetting the nonce, so a feed
+  account is this program's from its first registration onwards and can never equal
+  `Account::default()` again. `deregister_feed` (M2-09) therefore empties the data and
+  keeps the account, and `register_feed` accepts three pre-states rather than two —
+  which cost the `init` constraint: `#[account(init)]` emits
+  `accounts[0] != Account::default()` in the dispatcher, so it would have refused every
+  re-registration as `AccountAlreadyInitialized` before the body could accept it. The
+  declaration is `#[account(mut, pda = [...])]` and the body is the only layer that
+  tells the three states apart, which is the point: a constraint can check the address
+  but not which of three pre-states an account is in. Pinned by
+  `a_deregistered_feed_account_reaches_the_body`. The states are —
+  fully default (first registration, claimed), ours and empty (re-registration, not
+  claimed, because LEZ refuses a claim on an account it already owns), and anything
+  else refused. `submit_price` reports an emptied account as `FeedDeregistered` rather
+  than as undecodable bytes, because those go to different people. What no state
+  recovers is the *configuration*: only `signers` and `threshold` have an update path
+  (M2-08), so a wrong `decimals` or `max_age_ms` is fixed by retiring the feed and
+  registering it again rather than by amending it — **except the pair, which is fixed
+  from the feed id's first publication.** A retirement empties the feed account and
+  leaves the price account untouched, and `submit_price` reads the expected pair off
+  the published account on every write but the first, so a re-registration under a new
+  pair would produce a feed whose every submission answers `AssetMismatch`.
+  `register_feed` therefore reads the price account and refuses that with
+  `PairChanged`. No loss: a RedStone feed id *is* its asset, so a different pair is a
+  different feed id. And deriving the address removed
+  the one escape `Claim::Authorized` had — abandoning the account and re-creating the
+  feed at a fresh address under the same id. That is the cost ADR 32 named, paid
   knowingly: two accounts able to answer for BTC/USD with different signer sets is the
-  worse hazard, and an update path for the remaining fields is the mitigation if it is
-  ever wanted.
-- **`registered` is not a state anyone stores.** Whether a feed exists is whether
-  its derived account is non-default, which is a read a client can do without
-  this program.
+  worse hazard.
+- **`registered` is not a separate state anyone stores.** A feed is live when its
+  derived account is owned by this program and holds a non-empty `FeedAccount`;
+  an owned account with empty data is retired, and a default one was never
+  registered. Still a read a client can do without this program — but "non-default"
+  alone is not the test, because a retirement leaves the account owned and empty.
 - **The feed id is padded twice, and the two must agree.** The caller pads to
   build the seed and `FeedAccount` stores the padded form.
   `FeedConfig::try_new` still refuses an all-zero or over-width id, so the
@@ -112,13 +137,25 @@ not the other fails.
   owner. A claim cannot rescue it, because the claim loop runs after
   `validate_execution`. That kills the feed id for the life of the build, and the same
   attack lands on the admin config account, whose address takes no input an attacker
-  cannot predict. **The refusal a caller meets is SPEL's, not this program's:**
-  `#[account(init)]` emits `AccountAlreadyInitialized` in the dispatcher, so
-  `RegisterError::AlreadyRegistered` is the pure function's answer and never the
-  on-chain one. Not M2-07's to fix and not fixed here: recorded in `m0/versions.md`
-  question 4 and pinned at both layers, by
-  `a_derived_address_can_be_squatted_and_this_pins_the_refusal` and by
-  `a_squatted_feed_account_is_refused_by_the_generated_validator`.
+  cannot predict. **Which layer refuses depends on the constraint, and it moved.** While
+  the feed account carried `#[account(init)]` the dispatcher answered first, with
+  `AccountAlreadyInitialized`; dropping `init` for M2-09's third pre-state moved the
+  refusal into the body, where `RegisterError::AlreadyRegistered` is now what a caller
+  meets as well as what the pure function returns. The admin config account has no third
+  state, keeps `init`, and so still answers `AccountAlreadyInitialized` ahead of
+  `AdminError::AlreadyInitialised`. The refusal is permanent either way — this decides
+  what an operator reads, not whether the id survives. Not M2-07's to fix and not fixed
+  here: recorded in `m0/versions.md` question 4 and pinned by
+  `a_derived_address_can_be_squatted_and_this_pins_the_refusal`,
+  `a_squatted_feed_account_passes_the_validator_and_the_body_refuses_it` and
+  `a_squatted_admin_config_is_refused_by_the_generated_validator`.
+- **Every later operation names the feed as well as addressing it.** The constraint
+  checks the address; the body checks the id the account stores. Two checks for one
+  property, because an account this program owns is not necessarily the feed the
+  caller meant — an operator rotating five feeds could otherwise hand the wrong
+  account and move the wrong signer set, which is not a mistake anyone notices.
+  `update_signer_set` (M2-08) takes `feed_id` for that reason, and M2-09 and M2-10
+  will. It is ADR 16's rule about the asset pair applied to the feed itself.
 - **One registration, one signer set.** Combined with ADR 30, a rotation is one
   `update_signer_set` per feed against an address the operator can derive, which
   is what makes the runbook writable.
