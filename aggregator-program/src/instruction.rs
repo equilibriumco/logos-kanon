@@ -50,9 +50,21 @@ pub enum Instruction {
     /// against.
     ///
     /// Expected accounts:
-    /// 1. `feed` — uninitialised account for this feed, claimed by the program.
+    /// 1. `feed` — this feed id's account, at
+    ///    `for_public_pda(program, sha256(feed_id || zero_pad_32("KANON_FEED_ACCOUNT")))`.
+    ///    Default on a first registration, and claimed by the program; owned by
+    ///    the program with empty data on a re-registration after
+    ///    [`Self::DeregisterFeed`], and not claimed again, because LEZ refuses a
+    ///    claim on an account this program already owns. Anything else is
+    ///    refused.
     /// 2. `admin` — the signer claiming to be the authority.
     /// 3. `config` — the account holding the authority `admin` is checked against.
+    /// 4. `price_account` — the same account [`Self::SubmitPrice`] writes, at
+    ///    `for_public_pda(program, sha256(feed_account_id || zero_pad_32("KANON_PRICE_ACCOUNT")))`.
+    ///    Read and never written: it is what remembers a feed id's pair across a
+    ///    retirement, since a retirement empties the feed account and leaves this
+    ///    one alone. A registration whose pair differs from the one already
+    ///    published here is refused, because such a feed could never publish.
     RegisterFeed {
         /// The RedStone feed id, right-padded to the wire's field width.
         ///

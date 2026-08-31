@@ -30,7 +30,8 @@ new is that **the trade-off is now taken deliberately**, with the cost stated in
 the consequences rather than left implicit. A reader who finds ADR 32 first
 should read this paragraph as the answer to it.
 
-`#[account(init)]` is not neutral here. The macro generates `Claim::Pda` when the
+`#[account(init)]` — the declaration M2-01 left, and the one this decision was
+taken against — is not neutral here. The macro generates `Claim::Pda` when the
 declared account carries seeds and `Claim::Authorized` when it does not, so the
 declaration chooses between two different programs:
 
@@ -41,6 +42,10 @@ declaration chooses between two different programs:
   price.
 - **Claim::Pda.** The address is derived, so anyone can find a feed, and one feed
   id has exactly one account.
+
+The seeds are what that turned on, and they are still declared. The `init` half
+did not survive M2-09 — the consequences record why — so the claim is now built by
+the body rather than by the generated helper, at the same address either way.
 
 ## Decision
 

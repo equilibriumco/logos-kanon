@@ -15,10 +15,11 @@
 //! # The feed's address
 //!
 //! `for_public_pda(program, sha256(feed_id || zero_pad_32("KANON_FEED_ACCOUNT")))`,
-//! declared as `#[account(init, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]`
+//! declared as `#[account(mut, pda = [arg("feed_id"), r#const("KANON_FEED_ACCOUNT")])]`
 //! on the guest handler rather than checked here, for the reason ADR 32 gives
 //! about the price account: the derivation is what a client has to reproduce, so
-//! the constraint is what publishes it in the IDL.
+//! the constraint is what publishes it in the IDL. `mut` and not `init` because
+//! of the three pre-states below -- see [`register_feed`].
 //!
 //! Two things follow from the address being the feed id's. A client can find a
 //! feed without being told where it is, which is what the SDK, the CLI, the
