@@ -737,29 +737,24 @@ fn the_threshold_is_a_boundary_and_the_submission_path_holds_it() {
 
 #[test]
 fn no_registrable_scale_lets_a_captured_price_overflow_its_conversion() {
-    // `ScalingOutOfRange`, and why the push path cannot reach it. Not S3's
-    // "invalid value": that is `ValueOutOfRange`, which a package carrying a
+    // `ScalingOutOfRange`, and why these captured payloads cannot reach it. Not
+    // S3's "invalid value": that is `ValueOutOfRange`, which a package carrying a
     // zero, negative or over-wide value raises before any scaling happens
     // (`feed.rs:411`), and reaching it needs a crafted package rather than a
     // captured one. M2-16 owns it.
     //
-    // What this covers is the other end -- `to_q64_64` failing at `feed.rs:468`,
-    // where the agreed price will not fit the account's scale. The value sits
-    // inside the signed package, so altering it answers `UnauthorisedSigner` or
-    // `InvalidSignature` long before the conversion runs; the two tests above are
-    // that. The only free parameter left is the feed's own `decimals`, and it
-    // appears in a divisor, so it can only make the result smaller. `decimals = 0`
-    // is therefore the most hostile scale a registration can choose, and it is
+    // What this covers is the other end: `to_q64_64` failing at `feed.rs:468`,
+    // where the agreed price will not fit the account's scale. The signed values
+    // in these captures are fixed, so the feed's `decimals` is the only free
+    // parameter. It appears in a divisor and can only make the result smaller.
+    // `decimals = 0` is therefore the most hostile registrable scale, and it is
     // what this runs.
     //
-    // The headroom is seven orders of magnitude: the largest value RedStone
-    // published across these five captures is 6,281,896,137,270, and overflow
-    // needs `value / 10^decimals` above `2^64`, about 1.8e19. `verifier-core`
-    // covers the cause itself over synthesised values, where it is reachable.
-    // What this pins is the claim that this path cannot reach it -- so if a
-    // capture, a scale or the conversion moves far enough to make it reachable,
-    // this stops passing and the claim gets revisited instead of quietly becoming
-    // false.
+    // The largest value across these captures is 6,281,896,137,270. Overflow
+    // needs `value / 10^decimals` above `2^64`, about 1.8e19, leaving seven
+    // orders of magnitude of headroom. `verifier-core` covers the cause itself
+    // over synthesised values. This test pins only the captured-fixture claim:
+    // if a capture or the conversion moves enough to overflow, it stops passing.
     for v in vectors::all() {
         let widest = FeedAccount {
             decimals: 0,
