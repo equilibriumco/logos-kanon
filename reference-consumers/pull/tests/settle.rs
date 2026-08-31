@@ -140,7 +140,7 @@ fn a_captured_payload_fills_an_order_the_market_has_reached() {
         let posts = settle(order, clock_at(v.timestamp_ms), &v.payload, OURS)
             .unwrap_or_else(|err| panic!("{} should fill: {err:?}", v.feed_id));
 
-        assert_eq!(posts.len(), 1, "{}: only the order changes", v.feed_id);
+        assert_eq!(posts.len(), 2, "{}: the order and the clock", v.feed_id);
         assert!(stored(posts[0].account()).filled, "{}", v.feed_id);
     }
 }
@@ -186,22 +186,41 @@ fn a_fill_claims_nothing() {
 
 #[test]
 fn the_post_states_pass_lez() {
-    // Rather than restating rules 1 through 8: hand the post-states to the
-    // function that enforces them.
+    // Rather than restating rules 1 through 8: hand what `settle` returned to the
+    // function that enforces them, unmodified.
+    //
+    // Unmodified is the whole value of this test, and an earlier version of it
+    // threw that away. `settle` used to return the order alone, and this test
+    // appended the clock before validating -- so it asserted that LEZ would accept
+    // a list the program does not produce, and rule 2's equal-length requirement
+    // would have refused every successful settlement on chain. A test that repairs
+    // its subject's output cannot fail for the reason it exists.
     let v = vectors::named("BTC");
     let order = opened(index_of(&v), 1);
     let pre = vec![order.clone(), clock_at(v.timestamp_ms)];
 
-    let mut posts = settle(order, clock_at(v.timestamp_ms), &v.payload, OURS).expect("fills");
-    // `settle` returns the order alone, because the clock is read and never
-    // written. LEZ zips pre-states and post-states positionally and requires
-    // equal length, so a caller returning a subset has to be the dispatcher's
-    // concern rather than this function's -- the clock is appended here to make
-    // the check the one LEZ actually runs.
-    posts.push(lee_core::program::AccountPostState::new(
-        clock_at(v.timestamp_ms).account,
-    ));
+    let posts = settle(order, clock_at(v.timestamp_ms), &v.payload, OURS).expect("fills");
     validate_execution(&pre, &posts, OURS).expect("LEZ accepts the fill");
+}
+
+#[test]
+fn a_settlement_returns_one_post_state_per_account_it_was_given() {
+    // Stated on its own as well, because the property is about the instruction's
+    // shape rather than about a fill: two accounts in, two post-states out, in the
+    // order they were declared, with the clock unchanged because `settle` reads it
+    // and never writes it.
+    let v = vectors::named("BTC");
+    let clock = clock_at(v.timestamp_ms);
+    let posts = settle(opened(index_of(&v), 1), clock.clone(), &v.payload, OURS).expect("fills");
+
+    assert_eq!(posts.len(), 2, "the order and the clock");
+    assert!(stored(posts[0].account()).filled);
+    assert_eq!(
+        posts[1].account(),
+        &clock.account,
+        "the clock comes back exactly as it was given"
+    );
+    assert!(posts[1].required_claim().is_none());
 }
 
 #[test]

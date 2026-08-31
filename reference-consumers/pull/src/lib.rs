@@ -537,9 +537,20 @@ pub fn settle(
     let mut account = order.account;
     account.data = write(&stored).ok_or(SettleError::OrderTooLarge)?;
 
-    // No claim: this program already owns the account, and LEZ refuses a claim on
-    // an account whose owner is not the default one.
-    Ok(vec![AccountPostState::new(account)])
+    // Both accounts, in the instruction's own order, and the clock unchanged.
+    // `validate_execution` zips pre-states and post-states positionally and
+    // requires equal length (rule 2), so an account this instruction only reads
+    // still has to come back -- returning the order alone would have failed every
+    // successful settlement on chain. `SpelOutput::execute` passes these through
+    // and adds nothing. The push path returns its read-only feed and clock for the
+    // same reason.
+    //
+    // No claim on either: this program already owns the order, and LEZ refuses a
+    // claim on an account whose owner is not the default one.
+    Ok(vec![
+        AccountPostState::new(account),
+        AccountPostState::new(clock.account),
+    ])
 }
 
 /// The verification itself, over the consumer's own configuration.
