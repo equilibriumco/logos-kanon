@@ -230,10 +230,15 @@ jobs:
           # ignored by the same rule rather than by being named, since neither
           # opens with a path or a scheme.
           #
-          # `--color never` against this workflow's `CARGO_TERM_COLOR: always`:
-          # coloured output wraps those markers in escape codes, so a scan for a
-          # leading `(` stops matching and every non-registry package reads as a
-          # registry one.
+          # `--color never` against this workflow's `CARGO_TERM_COLOR: always`.
+          # Cargo colourises the `(*)` marker and not the source parentheses, so
+          # this scan does not actually need the flag: measured, it returns the
+          # same allow-list with colour on and the flag removed. It stays because
+          # a filter that read `(*)` did need it -- without it five deduped
+          # registry packages leaked in -- and this one should not have to care
+          # what cargo decides to colour next. The direction is closed either
+          # way: a colourised source would match nothing, which drops `pull-lib`
+          # itself and fails the diff.
           closure() {
             cargo tree --locked --color never --all-features --target all \
                 -p "$1" --edges normal,build --prefix none \
