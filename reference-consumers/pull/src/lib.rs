@@ -11,10 +11,18 @@
 //!
 //! # 1. The configuration is compiled in, and instruction data cannot reach it
 //!
-//! The signer set, the threshold, the staleness window, the scale and the pair
-//! are [`SIGNERS`], [`THRESHOLD`], [`MAX_AGE_MS`], [`DECIMALS`] and [`FEEDS`] —
-//! constants in this file. Nothing a caller sends can add an address to the
-//! roster, lower the threshold, widen the window or relabel a pair.
+//! [`FEEDS`] is a constant, and it carries the whole of what governs a feed: its
+//! signer set, its threshold, its staleness window, its scale and its pair.
+//! Nothing a caller sends can add an address to a roster, lower a threshold,
+//! widen a window or relabel a pair.
+//!
+//! Per feed, not global, which is ADR 30's decision. A threshold is only
+//! meaningful against the set it counts, so one global roster beside four
+//! per-feed thresholds would split a feed's security parameters across two places
+//! with different reasons to change. The five entries point at one
+//! [`REDSTONE_PRIMARY_PROD`] roster today because that is what the capture found,
+//! and one feed diverging upstream is a one-line edit rather than a change to the
+//! other four.
 //!
 //! That is the whole security model of pull mode (SEC2), and it is the half
 //! `pull-lib` cannot check. The roster arrives there as a slice, and a slice
@@ -101,17 +109,19 @@ use spel_framework_macros::account_type;
 /// can compute an order's address without being told it.
 pub const ORDER_ACCOUNT_SEED: &str = "KANON_PULL_ORDER";
 
-/// The signers this consumer authorises, and the whole of who may speak for a
-/// price it acts on.
+/// The `redstone-primary-prod` roster, as `FEEDS.md` records it.
 ///
-/// RedStone's `redstone-primary-prod` set for the feeds in [`FEEDS`], as
-/// `FEEDS.md` records them. A deployment substitutes its own; what it must not
-/// do is take them from anywhere a caller can reach.
+/// Every entry in [`FEEDS`] points at this today, and that is an observation
+/// rather than a constraint: [`FeedSpec::signers`] is per feed, so one feed
+/// diverging is a one-line edit here and not a change to the other four. ADR 30
+/// decided that shape and gives the reason — a global roster cannot represent an
+/// estate where one feed's set has moved, and per-feed rosters that turn out to
+/// agree cost four copies of five addresses.
 ///
-/// These addresses *are* the data service. [`DATA_SERVICE_ID`] names it for a
-/// human and authenticates nothing: no payload carries a data service, and the
-/// one envelope slot that could sits outside every signature.
-pub const SIGNERS: [[u8; 20]; 5] = [
+/// These addresses *are* the data service. [`FeedSpec::data_service_id`] names it
+/// for a human and authenticates nothing: no payload carries a data service, and
+/// the one envelope slot that could sits outside every signature.
+pub const REDSTONE_PRIMARY_PROD: [[u8; 20]; 5] = [
     [
         0x9c, 0x5a, 0xe8, 0x9c, 0x4a, 0xf6, 0xaa, 0x32, 0xce, 0x58, 0x58, 0x8d, 0xba, 0xf9, 0x0d,
         0x18, 0xa8, 0x55, 0xb6, 0xde,
@@ -134,33 +144,46 @@ pub const SIGNERS: [[u8; 20]; 5] = [
     ],
 ];
 
-/// How many of [`SIGNERS`] must agree before this consumer acts on a price.
-pub const THRESHOLD: u8 = 3;
-
-/// How old the oldest package behind a price may be, in milliseconds.
+/// One feed this consumer is prepared to price an order against, and the whole of
+/// its configuration.
 ///
-/// The consumer's own tolerance, and not something a payload or its sender can
-/// widen.
-pub const MAX_AGE_MS: u64 = 60_000;
-
-/// The power of ten [`SIGNERS`] scale their values by.
-pub const DECIMALS: u8 = 8;
-
-/// The RedStone data service [`SIGNERS`] belongs to.
+/// Every field is per feed, which is ADR 30's decision rather than a convenience:
+/// a threshold is only meaningful against the set it counts, and a `maxAge`
+/// against the cadence of the feed it bounds, so splitting a feed's security
+/// parameters across a global slot and a per-feed one would mean reading two
+/// places and knowing which wins. It is also the shape the push side stores —
+/// `FeedAccount` holds the same fields for one registered feed — so a reader
+/// comparing the two modes finds one configuration shape and not two.
 ///
-/// Carried for this consumer's own records — its logs, its own error paths — and
-/// read by nothing in verification. See the module header.
-pub const DATA_SERVICE_ID: &str = "redstone-primary-prod";
-
-/// One feed this consumer is prepared to price an order against.
+/// The five RFP-020 names are here: `data_service_id`, `feed_id`, the authorised
+/// signers, the M-of-N threshold and `max_age_ms`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeedSpec {
+    /// The RedStone data service this feed's roster belongs to.
+    ///
+    /// Carried for this consumer's own records — its logs, its own error paths —
+    /// and read by nothing in verification. See the module header.
+    pub data_service_id: &'static str,
     /// The RedStone feed id, right-padded to the wire width.
     pub feed_id: [u8; 32],
     /// The base asset of the pair.
     pub base_asset: [u8; 32],
     /// The quote asset of the pair.
     pub quote_asset: [u8; 32],
+    /// The power of ten this feed's signers scale their values by.
+    pub decimals: u8,
+    /// How old the oldest package behind a price may be, in milliseconds. This
+    /// consumer's own tolerance, and not something a payload or its sender can
+    /// widen.
+    pub max_age_ms: u64,
+    /// The signers this consumer authorises for this feed, and the whole of who
+    /// may speak for a price it acts on.
+    ///
+    /// A slice rather than a fixed array, so a feed whose roster grows or shrinks
+    /// upstream can be represented without touching the others.
+    pub signers: &'static [[u8; 20]],
+    /// How many of `signers` must agree before this consumer acts on a price.
+    pub threshold: u8,
 }
 
 /// The feeds this consumer serves, and the only ones an order can name.
@@ -177,11 +200,21 @@ pub const FEEDS: [FeedSpec; 5] = [
     feed(b"ZEC", b"ZEC", b"USD"),
 ];
 
+/// One feed on the settings the capture observed for all five.
+///
+/// A helper because the five agree today, not because they have to: a feed whose
+/// roster, threshold or window diverges is written out in full here and the other
+/// four are untouched, which is the property ADR 30 asks for.
 const fn feed(feed_id: &[u8], base: &[u8], quote: &[u8]) -> FeedSpec {
     FeedSpec {
+        data_service_id: "redstone-primary-prod",
         feed_id: padded(feed_id),
         base_asset: padded(base),
         quote_asset: padded(quote),
+        decimals: 8,
+        max_age_ms: 60_000,
+        signers: &REDSTONE_PRIMARY_PROD,
+        threshold: 3,
     }
 }
 
@@ -552,7 +585,7 @@ pub fn open_order(
 ///
 /// Permissionless: the sender is not checked, because the sender attests to
 /// nothing. The signatures in `payload` are the only claim of authenticity, and
-/// they are checked against [`SIGNERS`].
+/// they are checked against the roster the order's own feed carries in [`FEEDS`].
 ///
 /// `clock` is the LEZ clock account the transaction supplied. Its id and its
 /// bytes are read from the one struct, which is what binds them — see the module
@@ -621,17 +654,17 @@ fn verify(
     payload: &[u8],
     clock: &AccountWithMetadata,
 ) -> Result<VerifiedFeed, SettleError> {
-    let signers: Vec<SignerAddress> = SIGNERS.iter().copied().map(SignerAddress).collect();
+    let signers: Vec<SignerAddress> = spec.signers.iter().copied().map(SignerAddress).collect();
     let pair = AssetPair::new(spec.base_asset, spec.quote_asset);
     let config = PullConfig {
-        data_service_id: DATA_SERVICE_ID,
+        data_service_id: spec.data_service_id,
         feed: FeedConfig::try_new(
             &spec.feed_id,
             pair,
-            DECIMALS,
-            MAX_AGE_MS,
+            spec.decimals,
+            spec.max_age_ms,
             &signers,
-            THRESHOLD,
+            spec.threshold,
         )?,
     };
 
@@ -713,15 +746,16 @@ mod tests {
         // this build rather than merely unlikely: every input to
         // `FeedConfig::try_new` is a constant in this file, so if the constants
         // are usable the variant cannot be produced.
-        let signers: Vec<SignerAddress> = SIGNERS.iter().copied().map(SignerAddress).collect();
         for spec in &FEEDS {
+            let signers: Vec<SignerAddress> =
+                spec.signers.iter().copied().map(SignerAddress).collect();
             FeedConfig::try_new(
                 &spec.feed_id,
                 AssetPair::new(spec.base_asset, spec.quote_asset),
-                DECIMALS,
-                MAX_AGE_MS,
+                spec.decimals,
+                spec.max_age_ms,
                 &signers,
-                THRESHOLD,
+                spec.threshold,
             )
             .unwrap_or_else(|err| panic!("{:?} is not a usable feed: {err:?}", spec.feed_id));
         }

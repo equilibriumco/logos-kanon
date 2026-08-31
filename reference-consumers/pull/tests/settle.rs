@@ -17,7 +17,7 @@ use lee_core::program::{validate_execution, ProgramId};
 use pull_lib::verifier_core::value::median;
 use pull_lib::{TimeError, VerifyError, CLOCK_ACCOUNT_ID};
 use reference_consumer_pull::{
-    open_order, settle, OrderAccount, SettleError, DECIMALS, FEEDS, MAX_AGE_MS, ORDER_ACCOUNT_SEED,
+    open_order, settle, FeedSpec, OrderAccount, SettleError, FEEDS, ORDER_ACCOUNT_SEED,
 };
 use spel_framework::pda::{compute_pda, seed_from_str};
 
@@ -105,6 +105,15 @@ fn opened(feed: u8, limit: u128) -> AccountWithMetadata {
     as_chain_leaves_it(posts[0].account().clone())
 }
 
+/// The compiled configuration for this capture's feed.
+///
+/// Read off the feed rather than from constants of this file, because the
+/// consumer's configuration is per feed (ADR 30): a test reading a global scale or
+/// window would stop following the program the day two feeds differed.
+fn spec(v: &Vector) -> &'static FeedSpec {
+    &FEEDS[usize::from(index_of(v))]
+}
+
 /// Which of `FEEDS` carries this capture's feed id.
 fn index_of(v: &Vector) -> u8 {
     let mut wanted = [0u8; 32];
@@ -121,7 +130,7 @@ fn price(v: &Vector) -> u128 {
     let mut values = v.values.clone();
     median(&mut values)
         .expect("five values have a median")
-        .to_q64_64(DECIMALS)
+        .to_q64_64(spec(v).decimals)
         .expect("a RedStone price fits Q64.64")
 }
 
@@ -275,7 +284,7 @@ fn an_order_against_another_feed_does_not_fill_from_this_payload() {
         ),
         Err(SettleError::Verify(VerifyError::ThresholdNotMet {
             met: 0,
-            required: reference_consumer_pull::THRESHOLD,
+            required: spec(&btc).threshold,
         }))
     );
 }
@@ -308,14 +317,14 @@ fn a_clock_account_the_caller_chose_cannot_fill_an_order() {
 
 #[test]
 fn a_payload_past_the_consumers_window_cannot_fill_an_order() {
-    // `MAX_AGE_MS` is this consumer's own tolerance and is not something a
+    // `max_age_ms` is this consumer's own tolerance, per feed, and is not something a
     // payload or its sender can widen. One millisecond past it is the whole test:
     // the window's edges are inclusive, and `verifier-core` owns which side.
     let v = vectors::named("BTC");
 
     settle(
         opened(index_of(&v), 1),
-        clock_at(v.timestamp_ms + MAX_AGE_MS),
+        clock_at(v.timestamp_ms + spec(&v).max_age_ms),
         &v.payload,
         OURS,
     )
@@ -324,7 +333,7 @@ fn a_payload_past_the_consumers_window_cannot_fill_an_order() {
     assert_eq!(
         settle(
             opened(index_of(&v), 1),
-            clock_at(v.timestamp_ms + MAX_AGE_MS + 1),
+            clock_at(v.timestamp_ms + spec(&v).max_age_ms + 1),
             &v.payload,
             OURS
         ),
@@ -397,7 +406,7 @@ fn no_refusal_returns_a_post_state() {
             "a payload past the window",
             settle(
                 opened(feed, 1),
-                clock_at(now + MAX_AGE_MS + 1),
+                clock_at(now + spec(&v).max_age_ms + 1),
                 &v.payload,
                 OURS,
             ),

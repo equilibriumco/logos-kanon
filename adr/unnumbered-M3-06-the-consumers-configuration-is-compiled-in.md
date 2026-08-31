@@ -23,10 +23,24 @@ threshold, staleness window and asset pair come from. Three answers were availab
 **The whole configuration is `const` in the consumer, and the only thing instruction data
 may influence is which of a compiled table of feeds an order is priced against.**
 
-`SIGNERS`, `THRESHOLD`, `MAX_AGE_MS`, `DECIMALS` and `FEEDS` are constants.
+`FEEDS` is a constant and carries the whole of what governs a feed: its data service,
+its feed id, its pair, its scale, its window, its signer set and its threshold.
 `settle` takes an order account, the clock account and a payload — there is no signer,
 threshold, window or pair parameter, so the demonstration is structural rather than
-asserted. `nothing_in_settles_instruction_data_can_reach_the_signer_set` reads that off
+asserted.
+
+**Per feed and not global, which ADR 30 already decided.** The first version of this
+crate had one `SIGNERS` constant shared by all five feeds, and that is the shape ADR 30
+rejects in as many words: a global roster cannot represent an estate where one feed's set
+has moved, and the repair once feeds are live is a migration rather than an edit. Its
+consequence list says a pull consumer configures its own set per feed too. The same
+argument reaches the threshold and the window, because a threshold is only meaningful
+against the set it counts, so `FeedSpec` carries all of it and is the compile-time
+analogue of the `FeedAccount` the push side stores. The five entries point at one
+`REDSTONE_PRIMARY_PROD` roster today, which is the observation the capture made; storing
+it per feed is what makes divergence a one-line edit. `signers` is a slice rather than a
+fixed array for the same reason — a roster that grows upstream needs no change to the
+others. `nothing_in_settles_instruction_data_can_reach_the_signer_set` reads that off
 the published IDL rather than off the source, because the IDL is what a caller builds
 against and an added parameter shows up there as a failure rather than as a diff nobody
 read.
@@ -60,7 +74,7 @@ share one; a RedStone signer set is the same on both.
   should know it before copying the file. `FEEDS.md` records which addresses served which
   data service when this was measured.
 - **The roster is load-bearing rather than decorative.** Moving one byte of one address
-  in `SIGNERS` fails seven tests, because the captured payloads then recover to a signer
+  in `REDSTONE_PRIMARY_PROD` fails seven tests, because the captured payloads recover to a signer
   this build does not authorise. That is what makes the constants the binding rather than
   the comment above them.
 - **`SettleError::Config` is unreachable in this build and is kept anyway.** Every input
