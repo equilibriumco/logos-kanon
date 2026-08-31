@@ -900,4 +900,68 @@ mod tests {
             Err(SpelError::PdaMismatch { .. })
         ));
     }
+    /// A config account holding `admin_key` as the established authority.
+    ///
+    /// Encoded by hand rather than with `borsh::to_vec`, because the guest
+    /// workspace carries no borsh dependency and a test-only one would be in the
+    /// shipping graph. `AdminAccount` is two `Option<[u8; 32]>`, and Borsh writes
+    /// an option as a one-byte tag then the payload -- so `Some(key)` is `1` and
+    /// the key, and `None` is a lone `0`. A change to the struct breaks this
+    /// loudly: the bytes stop decoding and the gate answers `NoAuthority`.
+    fn config_holding(admin_key: [u8; 32]) -> AccountWithMetadata {
+        let mut data = Vec::with_capacity(34);
+        data.push(1);
+        data.extend_from_slice(&admin_key);
+        data.push(0);
+        let mut config = account(*admin_config_id().value());
+        config.account.data = Data::try_from(data).expect("fits");
+        config
+    }
+
+    #[test]
+    fn only_the_stored_authority_can_rotate_a_signer_set() {
+        // SEC2 end to end rather than per function. That `authorise` refuses a
+        // stranger, and that `update_signer_set` rotates a feed, are each covered
+        // on their own -- and neither says the handler runs them in that order.
+        // The gate is a Rust call in the body rather than a constraint the
+        // dispatcher applies, so this layer is the only one it is observable
+        // from: a handler that dropped the call would pass every host test and
+        // every generated-validator test above.
+        const AUTHORITY: [u8; 32] = [0xA1; 32];
+        const STRANGER: [u8; 32] = [0x5A; 32];
+        let feed_id = *b"BTC\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+
+        let rotate = |who: [u8; 32]| {
+            let mut admin = account(who);
+            admin.is_authorized = true;
+            super::kanon_aggregator::update_signer_set(
+                super::ProgramContext::new(OURS, [0u32; 8]),
+                account(*feed_account_id(&feed_id).value()),
+                admin,
+                config_holding(AUTHORITY),
+                feed_id,
+                (10..=12u8).map(|i| [i; 20]).collect(),
+                2,
+            )
+        };
+
+        // A signer who is not the stored authority never reaches the rotation.
+        let refused = rotate(STRANGER).expect_err("a stranger must not rotate a signer set");
+        assert_eq!(
+            refused.error_code(),
+            SpelError::from(aggregator_program::admin::AdminError::Unauthorised).error_code(),
+            "the refusal has to be the admin gate's"
+        );
+
+        // The authority gets past the gate. It stops at the *next* check rather
+        // than succeeding, because the feed account here carries no feed -- and
+        // that is the assertion: what changed between these two calls is the
+        // signer, and the gate is what noticed.
+        let onwards = rotate(AUTHORITY).expect_err("no feed is stored at that address");
+        assert_eq!(
+            onwards.error_code(),
+            SpelError::from(aggregator_program::manage::ManageError::FeedDeregistered).error_code(),
+            "the authority has to get past the gate and be stopped by the feed instead"
+        );
+    }
 }

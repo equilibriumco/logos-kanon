@@ -25,6 +25,7 @@ use kanon_idl::OraclePriceAccount;
 use lee_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
 use lee_core::program::{validate_execution, AccountPostState, Claim, ProgramId};
 use spel_framework::pda::{compute_pda, seed_from_str};
+use verifier_core::feed::MAX_AHEAD_MS;
 use verifier_core::value::median;
 use verifier_core::VerifyError;
 
@@ -473,6 +474,62 @@ fn a_clock_past_the_windows_upper_edge_refuses_a_captured_payload() {
             &v.payload,
         ),
         Err(SubmitError::Verify(VerifyError::StalePackage))
+    );
+}
+
+#[test]
+fn the_window_is_two_sided_and_both_edges_are_inclusive() {
+    // The test above takes one step past the upper edge; this takes the window
+    // apart. ADR 18 makes validity two-sided -- `[now - max_age, now + MAX_AHEAD]`
+    // -- and a captured payload is the only way to check that a real signed
+    // package lands where the arithmetic says it should.
+    //
+    // The lower edge is the one nothing covered. A chain clock that has fallen
+    // behind would otherwise accept a package minted for a moment that has not
+    // happened yet, which is the shape a replayed-forward payload would take.
+    let v = vector("BTC");
+
+    // Accepted: the last instant of each side.
+    for (label, now) in [
+        (
+            "the oldest instant still fresh",
+            v.timestamp_ms + MAX_AGE_MS,
+        ),
+        (
+            "the furthest ahead still allowed",
+            v.timestamp_ms - MAX_AHEAD_MS,
+        ),
+    ] {
+        submit(
+            feed_account(&feed_state(&v)),
+            no_price_account(),
+            clock_at(now),
+            &v.payload,
+        )
+        .unwrap_or_else(|e| panic!("{label} has to verify, got {e:?}"));
+    }
+
+    // Refused: one millisecond further out on each side, and the two sides do
+    // not answer with the same cause.
+    assert_eq!(
+        submit(
+            feed_account(&feed_state(&v)),
+            no_price_account(),
+            clock_at(v.timestamp_ms + MAX_AGE_MS + 1),
+            &v.payload,
+        ),
+        Err(SubmitError::Verify(VerifyError::StalePackage)),
+        "one millisecond past the age limit is stale"
+    );
+    assert_eq!(
+        submit(
+            feed_account(&feed_state(&v)),
+            no_price_account(),
+            clock_at(v.timestamp_ms - MAX_AHEAD_MS - 1),
+            &v.payload,
+        ),
+        Err(SubmitError::Verify(VerifyError::FuturePackage)),
+        "one millisecond further ahead than the tolerance is future-dated"
     );
 }
 
