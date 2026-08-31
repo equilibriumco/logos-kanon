@@ -6,9 +6,25 @@
 //!
 //! Nothing here decides anything about a payload. [`verifier_core`] does all of
 //! it, which is what makes one audit cover both modes (ADR 2) and what makes
-//! this crate's independence from the aggregator structural rather than
-//! reviewed: there is no aggregator type in the signature and no code path that
-//! could reach one.
+//! this crate's independence from the aggregator structural: there is no
+//! aggregator type in the signature and no code path that could reach one.
+//!
+//! # Independence from the aggregator, and what holds it
+//!
+//! A consumer using only pull registers nothing (F9). It supplies a feed id, a
+//! signer set, a threshold and a window; it reads no feed account, and there is
+//! no price account for it to derive.
+//!
+//! Nothing in this crate would notice if that stopped being true, because the
+//! failure is an addition rather than a break: a `use` of an aggregator type to
+//! borrow a field layout compiles, and every test below still passes. So the
+//! guard is on the build graph instead — CI's `pull-independence` job pins every
+//! non-registry package in this crate's dependency closure, and the reference
+//! consumer's, to an allow-list, across every feature and every target. That
+//! covers the price-account type as well as this repository's own crates: the
+//! canonical one lives in `twap_oracle_core`, which arrives by git.
+//! `Cargo.toml` records why an allow-list, and why dev-dependencies sit outside
+//! it.
 //!
 //! # What a consumer supplies
 //!

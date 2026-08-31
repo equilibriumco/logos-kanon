@@ -11,6 +11,7 @@
 #   build-test    the product crates build and their tests pass
 #                 (`m0/` is a separate workspace; guardrails.yml runs it)
 #   no-std        the guest-reachable crates really are no_std
+#   pull-independence  pull reaches no aggregator crate, so pull-only needs no feed
 #   guest         product code cross-compiles to riscv32
 #   licenses      cargo deny, every workspace: product, m0, guests
 #   traceability  the requirement matrix resolves to real evidence
@@ -142,6 +143,114 @@ jobs:
           cargo build --release --locked \
             --target riscv32im-unknown-none-elf \
             -p verifier-core -p pull-lib -p kanon-clock
+
+  pull-independence:
+    name: pull has no aggregator dependency
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      # F9: a consumer using only pull integrates without registering a feed
+      # against the aggregator. Nothing in `pull-lib`'s signature reaches an
+      # aggregator account today, and nothing in the crate would notice if that
+      # changed -- a `use kanon_idl::OraclePriceAccount` to borrow a field
+      # layout, or an `aggregator_program::FeedAccount` to save declaring a
+      # config, would compile and pass every test. So the closure is the
+      # assertion, and it is an allow-list rather than a list of crates to
+      # refuse: a denylist only catches the reuse someone thought of.
+      #
+      # What the list covers is every package in the closure that does not come
+      # from a registry: this repository's own, and anything reached by path or
+      # by git. Stopping at this repository's own packages was not enough, and
+      # the hole was the price account itself -- `twap_oracle_core` declares the
+      # canonical one, it is a git dependency, and `deny.toml` already allows
+      # that source, so a direct dependency on it would have been the aggregator
+      # account in `pull-lib` with every gate green.
+      #
+      # Registry packages stay out of scope, and that is a judgement rather than
+      # an oversight: nothing aggregator-side is published, `cargo deny` governs
+      # what may come from a registry at all, and pinning `k256`'s transitive
+      # set would fail on every upstream bump for no reason this requirement
+      # cares about.
+      #
+      # Three flags carry the rest of it, and the default of each would leave a
+      # way past:
+      #
+      #   --all-features  a dependency can be optional and reached only through
+      #                   a feature nobody enables by default. Measured: an
+      #                   `optional = true` aggregator dependency behind a
+      #                   non-default feature is invisible without this.
+      #   --target all    and a dependency can be declared per target. That one
+      #                   matters here, because this crate's shipping target is
+      #                   a riscv32 guest and not the runner: measured, a
+      #                   `cfg(target_arch = "riscv32")` dependency is invisible
+      #                   to a host-only walk. It is the runner's own resolution
+      #                   either way -- the guest workspace resolves separately
+      #                   and this job does not reach it.
+      #   --edges         normal,build leaves dev-dependencies out on purpose. A
+      #                   test comparing the two paths against each other is
+      #                   exactly what M3-04's error-taxonomy parity asks for,
+      #                   and it reaches nothing a consumer links.
+      #
+      # The consumer is checked too, and it is the half the requirement is
+      # actually about: `pull-lib` staying clean is worth nothing if the
+      # reference consumer has to register a feed anyway.
+      - name: pull's closure is the verifier and the clock, and nothing else of ours
+        run: |
+          set -o pipefail
+
+          # The walk covers the root workspace, which is where every crate the
+          # requirement is about lives. `methods/guest` is an excluded workspace
+          # with its own lockfile, so nothing in it is reached -- there is no pull
+          # guest today and `pull-lib` is not a member, but a pull consumer built
+          # as a guest binary would need its own walk rather than this one.
+          #
+          # `set -o pipefail` because this workflow sets no `shell:`, so steps run
+          # under `bash -e`, which does not enable it. A cargo failure exits 101
+          # and `sort` still returns 0, so the closure comes back empty and the
+          # `diff` fails -- closed, but with a log that reads as though every
+          # package vanished instead of showing what cargo said.
+          #
+          # A non-registry package renders its source in parentheses: `(/abs/path)`
+          # for a path dependency, `(https://...#rev)` for a git one. Registry
+          # packages carry no source at all. The scan looks for that source in any
+          # field rather than in the third, because cargo puts other parenthesised
+          # markers first and the third field is not reliably the source:
+          #
+          #   spel-framework-macros v0.6.0 (proc-macro) (https://github.com/...)
+          #
+          # A leaf proc-macro from a path or a git revision would otherwise be
+          # dropped as though it came from a registry -- measured, an unlisted
+          # local proc-macro crate linked into `pull-lib` left this closure reading
+          # exactly the allow-list. The `(*)` dedupe marker and `(proc-macro)` are
+          # ignored by the same rule rather than by being named, since neither
+          # opens with a path or a scheme.
+          #
+          # `--color never` against this workflow's `CARGO_TERM_COLOR: always`.
+          # Cargo colourises the `(*)` marker and not the source parentheses, so
+          # this scan does not actually need the flag: measured, it returns the
+          # same allow-list with colour on and the flag removed. It stays because
+          # a filter that read `(*)` did need it -- without it five deduped
+          # registry packages leaked in -- and this one should not have to care
+          # what cargo decides to colour next. The direction is closed either
+          # way: a colourised source would match nothing, which drops `pull-lib`
+          # itself and fails the diff.
+          closure() {
+            cargo tree --locked --color never --all-features --target all \
+                -p "$1" --edges normal,build --prefix none \
+              | awk '{ for (i = 3; i <= NF; i++) if ($i ~ /^\((\/|http|ssh|git\+)/) { print $1; break } }' \
+              | sort -u
+          }
+
+          diff <(printf '%s\n' kanon-clock pull-lib verifier-core) \
+               <(closure pull-lib)
+
+          diff <(printf '%s\n' kanon-clock pull-lib reference-consumer-pull verifier-core) \
+               <(closure reference-consumer-pull)
 
   guest:
     name: riscv32 guest build
