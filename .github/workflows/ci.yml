@@ -188,7 +188,9 @@ jobs:
       #                   matters here, because this crate's shipping target is
       #                   a riscv32 guest and not the runner: measured, a
       #                   `cfg(target_arch = "riscv32")` dependency is invisible
-      #                   to a host-only walk.
+      #                   to a host-only walk. It is the runner's own resolution
+      #                   either way -- the guest workspace resolves separately
+      #                   and this job does not reach it.
       #   --edges         normal,build leaves dev-dependencies out on purpose. A
       #                   test comparing the two paths against each other is
       #                   exactly what M3-04's error-taxonomy parity asks for,
@@ -199,19 +201,43 @@ jobs:
       # reference consumer has to register a feed anyway.
       - name: pull's closure is the verifier and the clock, and nothing else of ours
         run: |
-          # A registry package renders as `name v1.2.3`, with nothing in the
-          # third field but a `(*)` dedupe marker or `(proc-macro)`. Anything
-          # from a path or a git revision renders its source there, which is
-          # what picks the non-registry packages out.
+          set -o pipefail
+
+          # The walk covers the root workspace, which is where every crate the
+          # requirement is about lives. `methods/guest` is an excluded workspace
+          # with its own lockfile, so nothing in it is reached -- there is no pull
+          # guest today and `pull-lib` is not a member, but a pull consumer built
+          # as a guest binary would need its own walk rather than this one.
+          #
+          # `set -o pipefail` because this workflow sets no `shell:`, so steps run
+          # under `bash -e`, which does not enable it. A cargo failure exits 101
+          # and `sort` still returns 0, so the closure comes back empty and the
+          # `diff` fails -- closed, but with a log that reads as though every
+          # package vanished instead of showing what cargo said.
+          #
+          # A non-registry package renders its source in parentheses: `(/abs/path)`
+          # for a path dependency, `(https://...#rev)` for a git one. Registry
+          # packages carry no source at all. The scan looks for that source in any
+          # field rather than in the third, because cargo puts other parenthesised
+          # markers first and the third field is not reliably the source:
+          #
+          #   spel-framework-macros v0.6.0 (proc-macro) (https://github.com/...)
+          #
+          # A leaf proc-macro from a path or a git revision would otherwise be
+          # dropped as though it came from a registry -- measured, an unlisted
+          # local proc-macro crate linked into `pull-lib` left this closure reading
+          # exactly the allow-list. The `(*)` dedupe marker and `(proc-macro)` are
+          # ignored by the same rule rather than by being named, since neither
+          # opens with a path or a scheme.
           #
           # `--color never` against this workflow's `CARGO_TERM_COLOR: always`:
-          # coloured output wraps the `(*)` marker in escape codes, so the field
-          # stops comparing equal and every deduped registry package reads as a
-          # local one.
+          # coloured output wraps those markers in escape codes, so a scan for a
+          # leading `(` stops matching and every non-registry package reads as a
+          # registry one.
           closure() {
             cargo tree --locked --color never --all-features --target all \
                 -p "$1" --edges normal,build --prefix none \
-              | awk '$3 != "" && $3 != "(*)" && $3 != "(proc-macro)" { print $1 }' \
+              | awk '{ for (i = 3; i <= NF; i++) if ($i ~ /^\((\/|http|ssh|git\+)/) { print $1; break } }' \
               | sort -u
           }
 
