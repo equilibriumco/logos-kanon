@@ -11,6 +11,7 @@ dependencies = [
  "kanon-clock",
  "kanon-idl",
  "lee_core",
+ "pull-lib",
  "risc0-zkvm",
  "serde",
  "serde_json",

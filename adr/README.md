@@ -54,6 +54,7 @@ they describe the design being proposed for acceptance.
 | [M2-16:01](unnumbered-M2-16-where-a-payload-nobody-captured-comes-from.md) | Where a payload nobody captured comes from | accepted, unnumbered, supersedes part of 21 and 23 |
 | [M2-19:01](unnumbered-M2-19-the-end-to-end-tests-resolve-in-their-own-workspace.md) | The end-to-end tests resolve in their own workspace | accepted, unnumbered, extends 7 |
 | [M3-01:01](unnumbered-M3-01-the-pull-library-is-a-call-not-a-layer.md) | The pull library is a call, not a layer | accepted, unnumbered |
+| [M3-04:01](unnumbered-M3-04-where-a-two-mode-test-can-live.md) | Where a test that needs both modes can live | accepted, unnumbered |
 
 ## How they fit together
 
