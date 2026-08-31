@@ -1,0 +1,112 @@
+{
+  "accounts": [
+    {
+      "name": "OrderAccount",
+      "type": {
+        "fields": [
+          {
+            "name": "owner",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "feed",
+            "type": "u8"
+          },
+          {
+            "name": "limit_price_q64",
+            "type": "u128"
+          },
+          {
+            "name": "filled",
+            "type": "bool"
+          }
+        ],
+        "kind": "struct"
+      }
+    }
+  ],
+  "errors": [],
+  "instructions": [
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "order",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "order_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_PULL_ORDER"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "owner",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "order_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "feed",
+          "type": "u8"
+        },
+        {
+          "name": "limit_price_q64",
+          "type": "u128"
+        }
+      ],
+      "name": "open_order"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "order",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "clock",
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "payload",
+          "type": {
+            "vec": "u8"
+          }
+        }
+      ],
+      "name": "settle"
+    }
+  ],
+  "name": "kanon_pull_consumer",
+  "types": [],
+  "version": "0.1.0"
+}

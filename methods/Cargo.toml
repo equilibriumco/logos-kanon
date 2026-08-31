@@ -40,5 +40,12 @@ aggregator-program.workspace = true
 kanon-clock.workspace = true
 borsh = { workspace = true, features = ["derive"] }
 
+# Both product guests: the aggregator, and reference consumer B. Each is its own
+# workspace with its own lockfile and its own `[patch.crates-io]`, which is what
+# risc0-build expects and, for the consumer, what F9 requires -- a pull consumer
+# sharing a package with `aggregator-program` could not be shown to reach no
+# aggregator crate. `[M3-06:01]` records that. One methods crate builds both
+# because a path here is resolved against this manifest's directory, so the two
+# guests need no second build script between them.
 [package.metadata.risc0]
-methods = ["guest"]
+methods = ["guest", "../reference-consumers/pull/guest"]
