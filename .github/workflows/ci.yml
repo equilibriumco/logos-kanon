@@ -76,6 +76,8 @@ jobs:
           cargo fmt --all --manifest-path m0/Cargo.toml -- --check
           cargo fmt --all --manifest-path methods/guest/Cargo.toml -- --check
           cargo fmt --all --manifest-path e2e/Cargo.toml -- --check
+          cargo fmt --all \
+            --manifest-path reference-consumers/pull/guest/Cargo.toml -- --check
 
       # RISC0_SKIP_BUILD is required, not a shortcut. `cargo clippy` exports a
       # rustc wrapper that the guest build inherits, and clippy-driver has no
@@ -198,16 +200,26 @@ jobs:
       #
       # The consumer is checked too, and it is the half the requirement is
       # actually about: `pull-lib` staying clean is worth nothing if the
-      # reference consumer has to register a feed anyway.
+      # reference consumer has to register a feed anyway. Twice, because the
+      # consumer is two packages: the logic in the root workspace, and the SPEL
+      # program in its own guest workspace. The program is the artefact somebody
+      # copies, so it is the one this requirement is really about.
       - name: pull's closure is the verifier and the clock, and nothing else of ours
         run: |
           set -o pipefail
 
-          # The walk covers the root workspace, which is where every crate the
-          # requirement is about lives. `methods/guest` is an excluded workspace
-          # with its own lockfile, so nothing in it is reached -- there is no pull
-          # guest today and `pull-lib` is not a member, but a pull consumer built
-          # as a guest binary would need its own walk rather than this one.
+          # Two workspaces, because a walk reaches one resolution. The root
+          # workspace holds `pull-lib` and the consumer's logic. The consumer's
+          # SPEL program is an excluded workspace with its own lockfile and its
+          # own `[patch.crates-io]`, so the third walk below is the only thing
+          # that reaches it.
+          #
+          # That third walk is the reason the consumer guest is not a binary
+          # under `methods/guest`. That package depends on `aggregator-program`
+          # and `kanon-idl`, and `cargo tree` resolves a package rather than a
+          # binary, so a pull consumer living there would sit in a closure
+          # holding the push aggregator and the canonical price account with no
+          # way to show it did not reach them. `[M3-06:01]` records it.
           #
           # `set -o pipefail` because this workflow sets no `shell:`, so steps run
           # under `bash -e`, which does not enable it. A cargo failure exits 101
@@ -239,18 +251,56 @@ jobs:
           # what cargo decides to colour next. The direction is closed either
           # way: a colourised source would match nothing, which drops `pull-lib`
           # itself and fails the diff.
+          # Arguments forwarded rather than a package name, so the same filter
+          # serves a walk that needs `--manifest-path` for another workspace.
           closure() {
             cargo tree --locked --color never --all-features --target all \
-                -p "$1" --edges normal,build --prefix none \
+                "$@" --edges normal,build --prefix none \
               | awk '{ for (i = 3; i <= NF; i++) if ($i ~ /^\((\/|http|ssh|git\+)/) { print $1; break } }' \
               | sort -u
           }
 
           diff <(printf '%s\n' kanon-clock pull-lib verifier-core) \
-               <(closure pull-lib)
+               <(closure -p pull-lib)
 
-          diff <(printf '%s\n' kanon-clock pull-lib reference-consumer-pull verifier-core) \
-               <(closure reference-consumer-pull)
+          # The consumer's logic adds LEZ and SPEL and nothing else. That it adds
+          # no `kanon-idl` is the load-bearing part: `twap_oracle_core` reaches
+          # this repository through that crate and through no other, so the
+          # canonical price account stays outside a pull consumer's closure while
+          # the account types a program cannot do without come in.
+          diff <(printf '%s\n' \
+                   kanon-clock \
+                   lee_core \
+                   pull-lib \
+                   reference-consumer-pull \
+                   spel-framework \
+                   spel-framework-core \
+                   spel-framework-macros \
+                   verifier-core) \
+               <(closure -p reference-consumer-pull)
+
+          # The program itself. `crypto-bigint`, `k256` and `sha2` are the
+          # accelerated replacements this guest's `[patch.crates-io]` substitutes
+          # for the registry ones, so they arrive by git and the filter sees them;
+          # they are the same three `methods/guest` patches, which is deliberate
+          # and which that manifest explains. `nssa_core` resolves to `lee_core`
+          # and appears under that name, which is also the check that the rename
+          # unified rather than duplicating LEZ.
+          diff <(printf '%s\n' \
+                   crypto-bigint \
+                   k256 \
+                   kanon-clock \
+                   lee_core \
+                   pull-lib \
+                   reference-consumer-pull \
+                   reference-consumer-pull-guest \
+                   sha2 \
+                   spel-framework \
+                   spel-framework-core \
+                   spel-framework-macros \
+                   verifier-core) \
+               <(closure --manifest-path reference-consumers/pull/guest/Cargo.toml \
+                         -p reference-consumer-pull-guest)
 
   guest:
     name: riscv32 guest build
@@ -285,11 +335,15 @@ jobs:
           rzup install r0vm 3.0.5
           rzup install rust 1.97.0
 
-      # Cross-compiles `methods/guest`, which links `verifier-core`. The cost baseline proved
+      # Cross-compiles both product guests, which is what `kanon-methods` now
+      # builds: the aggregator, and reference consumer B. The cost baseline proved
       # the toolchain on measurement code; this is the same proof for the crates
       # that ship, and it is where a dependency added to `verifier-core` that
-      # turns out not to be guest-compatible fails.
-      - name: build the product guest
+      # turns out not to be guest-compatible fails. For the consumer it is also
+      # where `pull-lib` and everything under it is shown to reach riscv32 without
+      # an aggregator crate in the graph -- the closure job says nothing is there,
+      # and this says what is there compiles.
+      - name: build the product guests
         run: cargo build --release --locked -p kanon-methods
 
       # The macro-generated half of the SPEL program: the dispatcher, the account
@@ -298,10 +352,13 @@ jobs:
       # the build above proves only that it compiles. The guest is an excluded
       # workspace, which is why this needs its own manifest rather than a
       # `--workspace` run.
-      - name: test the guest's generated code
+      - name: test the guests' generated code
         run: |
           cargo test --release --locked \
             --manifest-path methods/guest/Cargo.toml --bin aggregator
+          cargo test --release --locked \
+            --manifest-path reference-consumers/pull/guest/Cargo.toml \
+            --bin pull_consumer
 
   licenses:
     name: cargo deny
@@ -329,6 +386,7 @@ jobs:
           for ws in \
             m0 \
             methods/guest \
+            reference-consumers/pull/guest \
             m0/cost-baseline/methods-software/guest \
             m0/cost-baseline/methods-accelerated/guest \
             m0/cost-baseline/methods-mixed/guest \
