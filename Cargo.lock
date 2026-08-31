@@ -2539,7 +2539,15 @@ dependencies = [
 name = "reference-consumer-pull"
 version = "0.1.0"
 dependencies = [
+ "borsh",
+ "hex",
+ "lee_core",
  "pull-lib",
+ "serde",
+ "serde_json",
+ "spel-framework",
+ "spel-framework-macros",
+ "verifier-core",
 ]
 
 [[package]]
