@@ -25,6 +25,7 @@ use kanon_idl::OraclePriceAccount;
 use lee_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
 use lee_core::program::{validate_execution, AccountPostState, Claim, ProgramId};
 use spel_framework::pda::{compute_pda, seed_from_str};
+use verifier_core::decode::{EMPTY_ENVELOPE_BYTES, REDSTONE_MARKER};
 use verifier_core::feed::MAX_AHEAD_MS;
 use verifier_core::value::median;
 use verifier_core::VerifyError;
@@ -638,4 +639,133 @@ fn the_published_pair_is_what_a_re_registration_may_not_change() {
         Err(SubmitError::Verify(VerifyError::AssetMismatch)),
         "the published pair outlives the registration it belonged to"
     );
+}
+
+/// The payload cut to its first `n` packages, with the envelope rewritten to
+/// match. The same reassembly `methods/tests/cost.rs` uses to price a payload by
+/// signer count -- packages are a fixed stride apart, so a prefix of them is a
+/// well-formed payload with real signatures over real packages.
+fn payload_with(v: &Vector, n: usize) -> Vec<u8> {
+    let body_len = v.payload.len() - EMPTY_ENVELOPE_BYTES;
+    let count = v.signers.len();
+    assert_eq!(body_len % count, 0, "packages are not a fixed stride apart");
+    let stride = body_len / count;
+
+    let mut out = v.payload[..n * stride].to_vec();
+    out.extend_from_slice(&u16::try_from(n).expect("fits").to_be_bytes());
+    out.extend_from_slice(&[0, 0, 0]);
+    out.extend_from_slice(&REDSTONE_MARKER);
+    out
+}
+
+#[test]
+fn a_signature_that_cannot_be_recovered_is_refused_by_the_submission_path() {
+    // S3's invalid-signature rejection, on the push path. `verifier-core` covers
+    // it over synthesised keys; this covers it over a payload RedStone signed,
+    // which is the only way to know the refusal survives real framing.
+    //
+    // The recovery id is the byte to corrupt, and it is the last of each package.
+    // Corrupting anything the signature covers instead recovers a *different*
+    // address and answers `UnauthorisedSigner` -- a refusal, but a different one,
+    // and not the cause this dimension is about.
+    let v = vector("BTC");
+    let stride = (v.payload.len() - EMPTY_ENVELOPE_BYTES) / v.signers.len();
+    let mut corrupted = v.payload.clone();
+    corrupted[stride - 1] ^= 0xFF;
+
+    let refused = submit(
+        feed_account(&feed_state(&v)),
+        no_price_account(),
+        clock_at(v.timestamp_ms),
+        &corrupted,
+    )
+    .expect_err("a signature that cannot be recovered has to be refused");
+
+    assert!(
+        matches!(
+            refused,
+            SubmitError::Verify(VerifyError::InvalidSignature(_))
+        ),
+        "expected the recovery to fail, got {refused:?}"
+    );
+}
+
+#[test]
+fn the_threshold_is_a_boundary_and_the_submission_path_holds_it() {
+    // S3's threshold boundaries, on the push path. Both sides of one step, over a
+    // real payload cut to three of its five packages -- so every signer present
+    // is authorised and the only thing in question is how many of them reported.
+    //
+    // This is the case `UnauthorisedSigner` hides in a partially-overlapping
+    // roster: there the first unknown signer aborts before any count is reached
+    // (ADR 15). Here the roster is the whole published set and the payload is
+    // short, which is the only way to reach `ThresholdNotMet` through this path.
+    let v = vector("BTC");
+    let three_packages = payload_with(&v, 3);
+
+    let at_the_threshold = FeedAccount {
+        threshold: 3,
+        ..feed_state(&v)
+    };
+    submit(
+        feed_account(&at_the_threshold),
+        no_price_account(),
+        clock_at(v.timestamp_ms),
+        &three_packages,
+    )
+    .expect("three reports meet a threshold of three");
+
+    let one_above = FeedAccount {
+        threshold: 4,
+        ..feed_state(&v)
+    };
+    assert_eq!(
+        submit(
+            feed_account(&one_above),
+            no_price_account(),
+            clock_at(v.timestamp_ms),
+            &three_packages,
+        ),
+        Err(SubmitError::Verify(VerifyError::ThresholdNotMet {
+            met: 3,
+            required: 4
+        })),
+        "three reports do not meet a threshold of four, and the counts say so"
+    );
+}
+
+#[test]
+fn no_registrable_scale_lets_a_captured_price_overflow_the_account() {
+    // S3 names "invalid value" as a dimension, and on the push path it cannot be
+    // reached. This is the test that says so with numbers, rather than leaving a
+    // silent gap or synthesising a payload to manufacture the cause.
+    //
+    // `ValueOutOfRange` is `(value << 64) / 10^decimals` exceeding `u128`. The
+    // value sits inside the signed package, so altering it answers
+    // `UnauthorisedSigner` or `InvalidSignature` long before any conversion runs
+    // -- the two tests above are that. The only free parameter left is the feed's
+    // own `decimals`, and it appears in a divisor, so it can only make the result
+    // smaller. `decimals = 0` is therefore the most hostile scale a registration
+    // can choose, and it is what this runs.
+    //
+    // The headroom is seven orders of magnitude: the largest value RedStone
+    // published across these five captures is about 6.3e12, and overflow needs
+    // `value / 10^decimals` above `2^64`, about 1.8e19. `verifier-core` covers the
+    // cause itself over synthesised values, where it is reachable. What this pins
+    // is the claim that this path cannot reach it -- so if a capture, a scale or
+    // the conversion moves far enough to make it reachable, this stops passing
+    // and the claim gets revisited instead of quietly becoming false.
+    for v in vectors::all() {
+        let widest = FeedAccount {
+            decimals: 0,
+            ..feed_state(&v)
+        };
+        submit(
+            feed_account(&widest),
+            no_price_account(),
+            clock_at(v.timestamp_ms),
+            &v.payload,
+        )
+        .unwrap_or_else(|e| panic!("{} at decimals = 0 has to convert, got {e:?}", v.feed_id));
+    }
 }
