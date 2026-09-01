@@ -359,7 +359,7 @@ fn write_config(
 mod tests {
     use super::*;
     use lee_core::account::{AccountId, Nonce};
-    use lee_core::program::validate_execution;
+    use lee_core::program::{validate_execution, Claim};
 
     const OURS: ProgramId = [7u32; 8];
     const WALLET: ProgramId = [42u32; 8];
@@ -579,6 +579,10 @@ mod tests {
     /// the one whose post-states LEZ could reject. Handed to the validator over
     /// the pre-states it was really given rather than checked against a
     /// restatement of the rules.
+    ///
+    /// It says nothing about the claim itself: `validate_execution` never reads
+    /// `required_claim`. `the_claimed_seed_derives_the_config_address` is the
+    /// half that does.
     #[test]
     fn establishing_the_authority_passes_lez() {
         let pre = vec![unestablished(), key(GENESIS, true)];
@@ -598,6 +602,25 @@ mod tests {
         .expect("accepts");
 
         validate_execution(&pre, &posts, OURS).expect("LEZ accepts the handover");
+    }
+
+    /// The rule LEZ's claim loop applies after validation has run: a claim whose
+    /// seed does not derive the account it is attached to is refused as
+    /// `MismatchedPdaClaim`. An establishment that claimed the wrong address
+    /// would pass every assertion above and fail the transaction on chain.
+    #[test]
+    fn the_claimed_seed_derives_the_config_address() {
+        let posts = establish(unestablished(), key(GENESIS, true), &GENESIS, OURS).expect("ok");
+
+        let Some(Claim::Pda(seed)) = posts[0].required_claim() else {
+            panic!("establishing the authority claims its address as a PDA");
+        };
+
+        assert_eq!(
+            AccountId::for_public_pda(&OURS, &seed),
+            config_address(&OURS),
+            "the claimed seed has to derive the address the config account is at"
+        );
     }
 
     #[test]

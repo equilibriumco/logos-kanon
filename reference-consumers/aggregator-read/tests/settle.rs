@@ -16,7 +16,7 @@ use aggregator_program::{submit, FeedAccount};
 use borsh::BorshDeserialize;
 use kanon_clock::CLOCK_ACCOUNT_ID;
 use lee_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
-use lee_core::program::{validate_execution, AccountPostState, ProgramId};
+use lee_core::program::{validate_execution, AccountPostState, Claim, ProgramId};
 use reference_consumer_aggregator_read::order::{
     self, OrderAccount, SettleError, ORDER_ACCOUNT_SEED,
 };
@@ -284,6 +284,9 @@ fn the_post_states_pass_lez() {
 }
 
 /// The other write LEZ could reject: opening an order claims its address.
+///
+/// Rules 1 to 8 only, since `validate_execution` never reads `required_claim`.
+/// `the_claimed_seed_derives_the_order_address` is the half that does.
 #[test]
 fn opening_an_order_passes_lez() {
     let v = vectors::named("BTC");
@@ -306,6 +309,37 @@ fn opening_an_order_passes_lez() {
     .expect("the order opens");
 
     validate_execution(&pre, &posts, OURS).expect("LEZ accepts the new order");
+}
+
+/// The rule LEZ's claim loop applies after validation has run: a claim whose seed
+/// does not derive the account it is attached to is refused as
+/// `MismatchedPdaClaim`. An order that claimed the wrong address would pass the
+/// validator and fail the transaction on chain.
+#[test]
+fn the_claimed_seed_derives_the_order_address() {
+    let v = vectors::named("BTC");
+    let posts = order::open_order(
+        account(DEFAULT, Vec::new(), order_address()),
+        key(OWNER, true),
+        registered(&v, AGG),
+        padded(&v.feed_id),
+        BASE,
+        QUOTE,
+        1,
+        ORDER_ID,
+        OURS,
+    )
+    .expect("the order opens");
+
+    let Some(Claim::Pda(seed)) = posts[0].required_claim() else {
+        panic!("a new order claims its address as a PDA");
+    };
+
+    assert_eq!(
+        AccountId::for_public_pda(&OURS, &seed),
+        order_address(),
+        "the claimed seed has to derive the address the order account is at"
+    );
 }
 
 /// The whole reason the aggregator's id is state rather than a constant: an
