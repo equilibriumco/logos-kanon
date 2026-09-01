@@ -136,6 +136,13 @@ use pull_lib::{BackendError, ConfigError, DecodeError, TimeError, VerifyError};
 /// `padded(b"BTC")` is the feed id RedStone signs for BTC. Public because a
 /// client building a registration has to produce the same bytes, and every place
 /// that spelled the padding out by hand was a place it could drift.
+///
+/// # Panics
+///
+/// If `name` is longer than 32 bytes. In a `const` context — which is every use
+/// in this crate, and the use it exists for — that is a compile error. Called at
+/// runtime it aborts the transaction, so a caller building a feed id from bytes
+/// it did not choose should check the length first.
 #[must_use]
 pub const fn padded(name: &[u8]) -> [u8; 32] {
     assert!(name.len() <= 32, "an identifier is at most 32 bytes");

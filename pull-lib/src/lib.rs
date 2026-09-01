@@ -177,7 +177,9 @@ pub use kanon_clock::CLOCK_ACCOUNT_ID;
 pub use verifier_core::backend::{BackendError, InProgramBackend, SignerAddress};
 pub use verifier_core::decode::DecodeError;
 pub use verifier_core::error::{ConfigError, VerifyError};
-pub use verifier_core::feed::{AssetPair, FeedConfig, VerifiedFeed, MAX_MAX_AGE_MS, MAX_SIGNERS};
+pub use verifier_core::feed::{
+    AssetPair, FeedConfig, VerifiedFeed, MAX_AHEAD_MS, MAX_MAX_AGE_MS, MAX_SIGNERS,
+};
 pub use verifier_core::time::TimeError;
 pub use verifier_core::value::Value;
 

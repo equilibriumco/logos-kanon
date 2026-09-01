@@ -1,10 +1,12 @@
 //! The committed RedStone capture, read once.
 //!
-//! Two test targets in two packages read this file: `redstone_conformance`
-//! here, and `cost` in `kanon-methods`. Included by path rather than shared
-//! through a crate, because a fixture reader has no business in the published
-//! surface of a crate consumer programs link -- the reason ADR 21 already gives
-//! for keeping `test_support` behind `cfg(test)`.
+//! Three test targets in three packages read this file: `redstone_conformance`
+//! here, `cost` in `kanon-methods`, and `settle` in `reference-consumer-pull`.
+//! Included by path rather than shared through a crate, because a fixture reader
+//! has no business in the published surface of a crate consumer programs link --
+//! the reason ADR 21 already gives for keeping `test_support` behind `cfg(test)`.
+//! Each of the three declares `serde_json` and `hex` as dev-dependencies for it,
+//! so a new import here is a change to three manifests.
 
 #![allow(dead_code)] // Each consumer reads a different subset of the fields.
 
