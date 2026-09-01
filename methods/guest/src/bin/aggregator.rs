@@ -31,7 +31,7 @@ risc0_zkvm::guest::entry!(main);
 /// A build input rather than a committed key, so devnet and mainnet do not share
 /// one. All zeros is a build nobody configured, and `initialise` refuses it —
 /// which is what stops a forgotten key becoming an open first write, the race
-/// `[M2-06:01]` records as recurring once per deployment.
+/// `[M2-06:01]` records as recurring once per build.
 ///
 /// Set it at build time:
 ///

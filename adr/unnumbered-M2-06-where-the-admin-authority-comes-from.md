@@ -72,12 +72,42 @@ renumbers every instruction after it.
 
 **`initialize` is gated on a compile-time genesis key, and hands the live authority to
 the account.** An open `initialize` is not a launch-day race that careful deployment
-wins once. Because PDAs hash the program id, and the program id is the image id, every
-rebuild of this program presents a **fresh, default config account at a new address**.
-First-caller-wins therefore recurs after every single deployment, and whoever wins owns
-the aggregator: they set the signer sets that decide what a price means. The genesis
-key closes that for every build rather than for the first one. Ordinary rotation does
-not touch it, because the authority that instructions check is the account's.
+wins once. Because PDAs hash the program id, and the program id is the image id, any
+build with a **different** image id presents a fresh, default config account at a new
+address. Not *any* rebuild: a rebuild whose inputs have not changed reproduces the
+image id bit for bit, so it lands on the same config account and strands nothing.
+What moves the id is a changed input, and the genesis key is one of them because it is
+compiled in.
+
+Measured on `94afd3e`, one machine at the pinned toolchain, each row a
+`cargo build --release --locked -p kanon-methods` with no cleaning between rows:
+
+| `KANON_GENESIS_ADMIN` | image id (first word) | ELF sha256 |
+| --- | --- | --- |
+| unset | `1449095883` | `25c805d8eca7` |
+| `aa…aa` | `1088200503` | `fbefce3deb22` |
+| `bb…bb` | `70564520` | `bfafd0367558` |
+| back to `aa…aa` | `1088200503` | `fbefce3deb22` |
+| unset again | `1449095883` | `25c805d8eca7` |
+
+Every change moved the id; every repeat reproduced it, in both directions. A separate
+run deleted `target/riscv-guest` and rebuilt from scratch, reproducing the id exactly.
+The absolute numbers are a function of the guest source, so they only mean anything
+against the commit named; the behaviour is what carries forward.
+
+**Bit-identity across machines is not established, and this record does not assume
+it.** ADR 8 pins r0vm and the guest rustc as necessary conditions for the measured
+*figures*, and records a case where a different ELF gave identical cycle counts, so it
+does not settle the question either. That matters more than it first looks: CI builds
+the guest on GitHub's runners, so a release built there and rebuilt on an operator's
+machine is exactly the case one machine cannot speak for. Recorded as an open question
+in `m0/versions.md`.
+
+First-caller-wins therefore recurs with every new build rather than with every
+deployment, and whoever wins owns the aggregator: they set the signer sets that decide
+what a price means. The genesis key closes that for every build rather than for the
+first one. Ordinary rotation does not touch it, because the authority that instructions
+check is the account's.
 
 **A handover is two steps: nominate, then accept.** A one-step transfer accepts any
 key the authority names, and nothing makes the named key prove it can sign. A typo, an
@@ -201,8 +231,13 @@ holds.
   no equivalent of because it moves the authority on one signature.
 - **The rebuild-orphans-state problem now has a third instance**: price accounts, feed
   registrations, and the config account. A PDA hashes the program id and the program id
-  is the image id, so a rebuild presents fresh addresses and strands everything the
-  previous build created. That is a platform property rather than a decision of this
+  is the image id, so a build with a different image id presents fresh addresses and
+  strands everything the previous one created. A rebuild from unchanged inputs does not:
+  it reproduces the id and lands on the same accounts, which is ADR 8's pins doing what
+  they are for. The hazard is a changed input, not the act of rebuilding — and the same
+  reproducibility is why the *next* build's addresses are computable from published
+  source, which is what makes the squatting question in `m0/versions.md` item 4 sharper
+  rather than milder. That is a platform property rather than a decision of this
   repository, and it is not yet written down anywhere: `m0/versions.md` carries the
   questions outstanding with Logos but has no section on this one, so it is recorded
   here until it does.
@@ -214,8 +249,11 @@ holds.
 ## Alternatives considered
 
 - **An open `initialize`, first caller wins, deployed carefully.** Rejected on the
-  recurrence: it is not one race but one per deployment, and a program whose authority
-  can be taken by a mempool watcher after any rebuild cannot be operated under an SLA.
+  recurrence: it is not one race but one per *build*, and a program whose authority can
+  be taken by a mempool watcher after any build that moves the image id cannot be
+  operated under an SLA. Redeploying an unchanged build is not a fresh race — it meets
+  the config account it already established — but shipping a new one is, and over a
+  servicing period that is the case that recurs.
 - **A compile-time authority and no config account.** The smallest change, and it
   cannot express transfer. Rotation would mean a rebuild, a new program id, and every
   price account frozen holding a plausible permanently-stale price — the failure ADR 22
