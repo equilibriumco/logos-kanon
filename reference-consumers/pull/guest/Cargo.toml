@@ -47,7 +47,10 @@ nssa_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.gi
 # make the pull-side cycle figures (M3-08) incomparable with the push-side ones
 # and with the cost baseline that recommended this configuration. Guest
 # workspaces cannot share a `[patch.crates-io]`, so the pins are repeated;
-# `methods/guest/Cargo.toml` carries the reasoning behind the choice.
+# `methods/guest/Cargo.toml` carries the reasoning behind the choice, and
+# `tests/guest_pins.rs` is what keeps the two copies equal -- a bump on one side
+# alone would have the two modes verifying with different implementations of the
+# same audit, which is the guarantee ADR 2 exists for.
 [patch.crates-io]
 k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.1" }
 crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.2-risczero.1" }
