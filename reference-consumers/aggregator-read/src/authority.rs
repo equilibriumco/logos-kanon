@@ -359,6 +359,7 @@ fn write_config(
 mod tests {
     use super::*;
     use lee_core::account::{AccountId, Nonce};
+    use lee_core::program::validate_execution;
 
     const OURS: ProgramId = [7u32; 8];
     const WALLET: ProgramId = [42u32; 8];
@@ -572,6 +573,31 @@ mod tests {
             accept(established(GENESIS, Some(NOMINEE)), pristine_nominee, OURS).unwrap_err(),
             AuthorityError::KeyUnowned
         );
+    }
+
+    /// The establishment is the one write here that claims an address, so it is
+    /// the one whose post-states LEZ could reject. Handed to the validator over
+    /// the pre-states it was really given rather than checked against a
+    /// restatement of the rules.
+    #[test]
+    fn establishing_the_authority_passes_lez() {
+        let pre = vec![unestablished(), key(GENESIS, true)];
+        let posts = establish(unestablished(), key(GENESIS, true), &GENESIS, OURS).expect("ok");
+
+        validate_execution(&pre, &posts, OURS).expect("LEZ accepts the establishment");
+    }
+
+    #[test]
+    fn a_handover_passes_lez() {
+        let pre = vec![established(GENESIS, Some(NOMINEE)), key(NOMINEE, true)];
+        let posts = accept(
+            established(GENESIS, Some(NOMINEE)),
+            key(NOMINEE, true),
+            OURS,
+        )
+        .expect("accepts");
+
+        validate_execution(&pre, &posts, OURS).expect("LEZ accepts the handover");
     }
 
     #[test]

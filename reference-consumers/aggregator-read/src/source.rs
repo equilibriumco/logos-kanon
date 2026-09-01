@@ -372,6 +372,7 @@ mod tests {
     use super::*;
     use crate::authority::{config_address, ConfigAccount};
     use lee_core::account::Nonce;
+    use lee_core::program::validate_execution;
 
     const OURS: ProgramId = [7u32; 8];
     const WALLET: ProgramId = [42u32; 8];
@@ -728,6 +729,57 @@ mod tests {
         let rubbish = at(source_address(&OURS, &feed_id()), OURS, vec![0xFF; 3]);
 
         assert_eq!(read(&rubbish, OURS).unwrap_err(), SourceError::Undecodable);
+    }
+
+    /// Rather than restating LEZ's rules: hand what each instruction returned to
+    /// the function that enforces them, over the pre-states it was really given.
+    ///
+    /// The claim branch in `write_source` is what these are for. A first write
+    /// claims the address and a re-registration into a retired account must not,
+    /// and `required_claim()` only says which branch was taken -- LEZ is what
+    /// says the result is one a chain would apply.
+    #[test]
+    fn every_write_to_a_source_passes_lez() {
+        let stored = PriceSource {
+            feed_id: feed_id(),
+            aggregator: AGGREGATOR,
+            base_asset: BASE,
+            quote_asset: QUOTE,
+            max_age_ms: MAX_AGE_MS,
+        };
+
+        let pre = vec![empty_source(), key(AUTHORITY, true), config()];
+        let posts =
+            register_at(empty_source(), AUTHORITY, feed_id(), AGGREGATOR, MAX_AGE_MS).expect("ok");
+        validate_execution(&pre, &posts, OURS).expect("LEZ accepts a first registration");
+
+        let retired = at(source_address(&OURS, &feed_id()), OURS, Vec::new());
+        let pre = vec![retired.clone(), key(AUTHORITY, true), config()];
+        let posts = register_at(retired, AUTHORITY, feed_id(), REBUILT, MAX_AGE_MS).expect("ok");
+        validate_execution(&pre, &posts, OURS).expect("LEZ accepts a re-registration");
+
+        let pre = vec![registered_source(&stored), key(AUTHORITY, true), config()];
+        let posts = update_aggregator(
+            registered_source(&stored),
+            key(AUTHORITY, true),
+            config(),
+            feed_id(),
+            REBUILT,
+            OURS,
+        )
+        .expect("follows");
+        validate_execution(&pre, &posts, OURS).expect("LEZ accepts a rebuild being followed");
+
+        let pre = vec![registered_source(&stored), key(AUTHORITY, true), config()];
+        let posts = deregister(
+            registered_source(&stored),
+            key(AUTHORITY, true),
+            config(),
+            feed_id(),
+            OURS,
+        )
+        .expect("retires");
+        validate_execution(&pre, &posts, OURS).expect("LEZ accepts a retirement");
     }
 
     #[test]

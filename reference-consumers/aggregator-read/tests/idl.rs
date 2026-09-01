@@ -161,12 +161,17 @@ fn the_idl_declares_every_derivation_a_client_has_to_reproduce() {
     );
 }
 
-/// The one account in this program that is deliberately unconstrained, and the
+/// The one address a client has to derive that the IDL cannot publish, and the
 /// reason is worth a test rather than only a comment: it is derived under the
 /// *aggregator's* program id, and SPEL's `pda` constraint derives under
 /// `self_program_id`. A future author who "fixed" the omission by adding a
 /// constraint would produce an address no aggregator ever writes to, and every
 /// settlement would refuse.
+///
+/// Two other accounts carry no constraint either and neither is this case:
+/// `settle`'s `order` is identified by being this program's and decoding as an
+/// order rather than by an id in the instruction data, and `clock` is at a fixed
+/// address that no seed derives.
 #[test]
 fn the_price_account_carries_no_pda_constraint() {
     assert!(

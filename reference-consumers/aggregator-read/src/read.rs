@@ -92,9 +92,15 @@ pub fn price_account_address(aggregator: &ProgramId, feed_id: &[u8; 32]) -> Acco
 
 /// A price this consumer is prepared to act on.
 ///
-/// Only the two fields that move. The pair, the source and the confidence
-/// interval have all been checked by the time one of these exists, so carrying
-/// them would invite a second check somewhere that did not need one.
+/// Only the two fields that move. The pair and the source have been checked by
+/// the time one of these exists, so carrying them would invite a second check
+/// somewhere that did not need one.
+///
+/// The confidence interval is dropped rather than checked. RedStone supplies
+/// none and the aggregator writes a zero for that reason (`NO_CONFIDENCE_INTERVAL`),
+/// so there is nothing here to bound; a consumer reading a source that did
+/// publish one would have to decide what an acceptable width was, and that is a
+/// policy this reference has no basis to invent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Price {
     /// The price on RFP-019's `Q64.64` scale, as published.

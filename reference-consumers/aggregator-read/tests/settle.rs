@@ -283,6 +283,31 @@ fn the_post_states_pass_lez() {
     validate_execution(&pre, &posts, OURS).expect("LEZ accepts the fill");
 }
 
+/// The other write LEZ could reject: opening an order claims its address.
+#[test]
+fn opening_an_order_passes_lez() {
+    let v = vectors::named("BTC");
+    let order = account(DEFAULT, Vec::new(), order_address());
+    let owner = key(OWNER, true);
+    let source = registered(&v, AGG);
+    let pre = vec![order.clone(), owner.clone(), source.clone()];
+
+    let posts = order::open_order(
+        order,
+        owner,
+        source,
+        padded(&v.feed_id),
+        BASE,
+        QUOTE,
+        1,
+        ORDER_ID,
+        OURS,
+    )
+    .expect("the order opens");
+
+    validate_execution(&pre, &posts, OURS).expect("LEZ accepts the new order");
+}
+
 /// The whole reason the aggregator's id is state rather than a constant: an
 /// order opened before a rebuild settles after one, against the account the new
 /// build writes, with no redeployment of this consumer.

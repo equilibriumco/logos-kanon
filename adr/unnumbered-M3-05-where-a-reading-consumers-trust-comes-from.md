@@ -78,10 +78,13 @@ a before-and-after: the new build's account is refused under the old registratio
   from being the thing that forces strictness. The skew allowance is not configurable
   at all and is the verifier's own value, which
   `the_skew_allowance_is_the_verifiers` pins.
-- **The price account is the one account in the program with no `pda` constraint.** SPEL
-  derives a constraint's address under `self_program_id`, and this address is another
-  program's, so the constraint cannot express it. The check moves into Rust and runs
-  first. Two tests hold the pair together: `the_price_account_carries_no_pda_constraint`
+- **The price account is the one address a client must derive that the IDL cannot
+  publish.** SPEL derives a constraint's address under `self_program_id`, and this
+  address is another program's, so the constraint cannot express it. The check moves
+  into Rust and runs first. Two other accounts carry no `pda` constraint and neither is
+  this case: `settle`'s `order` is identified by being this program's and decoding as an
+  order rather than by an id in the instruction data, and the clock is at a fixed
+  address that no seed derives. Two tests hold the pair together: `the_price_account_carries_no_pda_constraint`
   records the omission as deliberate, so nobody "fixes" it into an address no aggregator
   writes to, and `the_generated_validator_does_not_check_the_price_account` shows the
   dispatcher accepting an arbitrary account — which is why the Rust check has to be
