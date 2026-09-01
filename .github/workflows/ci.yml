@@ -200,7 +200,11 @@ jobs:
       #
       # The consumer is checked too, and it is the half the requirement is
       # actually about: `pull-lib` staying clean is worth nothing if the
-      # reference consumer has to register a feed anyway. Twice, because the
+      # reference consumer has to reach the aggregator anyway. Against the
+      # aggregator is the whole of it -- the consumer does register feeds, with
+      # its own authority, in accounts it owns, and F9 has nothing to say about
+      # that. What it refuses is a dependency on the push mode's price account,
+      # so the closure is what the gate reads and not the word "register". Twice, because the
       # consumer is two packages: the logic in the root workspace, and the SPEL
       # program in its own guest workspace. The program is the artefact somebody
       # copies, so it is the one this requirement is really about.

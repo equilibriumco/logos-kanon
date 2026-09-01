@@ -38,7 +38,9 @@ one feed's set has moved, and the repair once feeds are live is a migration rath
 an edit — and its consequence list says a pull consumer configures its own set per feed
 too. The argument reaches the threshold and the window as well, because a threshold is
 only meaningful against the set it counts, so `FeedTrust` carries all of it and is the
-compile-time counterpart of the `FeedAccount` the push side stores. One configuration
+pull-side counterpart of the `FeedAccount` the push side stores — the same fields in the
+same shape, in an account governed by this program's own authority rather than the
+aggregator's. One configuration
 shape behind both modes is what makes ADR 2's "one verification, two modes" visible to
 somebody reading the two programs side by side.
 
@@ -73,6 +75,30 @@ image id and every derived address hashes the program id, so a changed build inp
 presents fresh addresses and abandons what the previous build created. Rotating a signer
 set would have cost every open order.
 
+**A registration is retirable, because only the roster rotates.** The pair, the scale
+and the window are fixed once written, for the reason above: they are what open orders
+were priced against. That leaves a mistake with no in-place correction, and because a
+trust account's address is its feed id's and LEZ never releases ownership, a single wrong
+exponent would otherwise spend that feed id for the life of the build. So `deregister`
+empties the account and `register` admits the emptied-and-ours state as a third
+pre-state — the same round trip the push path's `deregister_feed` and `register_feed`
+make, and the same three states.
+
+What it costs is not hidden: orders against a retired feed answer `Deregistered` until it
+is registered again, and if it returns under a different pair they answer `AssetMismatch`
+for ever. That is the intended outcome rather than a gap — an order priced against a pair
+this feed no longer claims is an order whose meaning changed — and it is only safe
+*because* an order carries its own pair. The two decisions hold each other up: without
+the recovery path a mis-registration is permanent, and without the order's own pair the
+recovery path would silently reprice open orders.
+
+*Rejected: amending a registration in place while no order exists.* It is the obvious
+alternative and this program cannot implement it, because it cannot see whether an order
+exists: orders live at addresses derived from order ids nobody enumerates. Counting them
+on the trust account would work and would put a write on the trust account in every
+`open_order`, turning a read-only account into a contended one for a check the authority
+can make off-chain. Retire-and-re-register reaches the same place without that.
+
 *Rejected: an authority with a revoke.* The aggregator has one because RFP-001 asks for
 it. A consumer that revoked its own authority would freeze every trust account it owns
 with no way back and nothing gained, so the surface is not carried here.
@@ -99,14 +125,21 @@ with no way back and nothing gained, so the surface is not carried here.
   rather than reporting "already there" — the advice differs, and for the config account
   it means the build is unusable until an input changes. This is the same hazard #48
   found on the aggregator's feed accounts.
-- **`expected` is structurally dead in this consumer, and that is stated in the code.**
-  `verify_feed` compares the caller's claimed pair against the configuration's, and here
-  both come from one trust account, so the comparison cannot fail. The push path is the
-  contrast rather than a thicker version of the same check: there the pair comes from the
-  price account and the configuration from the feed account, so it holds two
-  independently written records against each other (ADR 32). A pull consumer that grows a
-  second record gets a real check back by passing it.
-- **Seven instructions, which is more than a reference consumer would need to show
-  verification alone.** Two are the domain, five are governance. That ratio is the honest
+- **An order carries the pair its owner signed for, which is what makes asset-pair
+  verification real here.** U7 asks the reference consumer to *show* it, and a first
+  version of this crate did not: it passed the trust account's own pair as `verify_feed`'s
+  expected one, so the comparison held a value against itself and could not fail. The
+  hole was concrete rather than theoretical — a registration labelling RedStone's `BTC`
+  feed as ETH/USD verifies real BTC packages, meets the threshold and passes every
+  freshness check, and nothing in a payload can contradict it, because no signer attests
+  to which assets a feed prices. So `open_order` takes the owner's expected pair, refuses
+  the order if the registration disagrees, and stores it; `settle` passes that. Two
+  independently written records, which is what the push path does with the price account's
+  pair against the feed account's configuration (ADR 32) and for the same reason.
+  Reverting the source of that one value fails
+  `an_order_cannot_be_filled_under_a_pair_its_owner_never_signed_for` and nothing else,
+  which is what a check being load-bearing looks like.
+- **Eight instructions, which is more than a reference consumer would need to show
+  verification alone.** Two are the domain, six are governance. That ratio is the honest
   one: the verification call is a single line, and everything around it is what makes the
   roster the consumer's rather than its caller's.
