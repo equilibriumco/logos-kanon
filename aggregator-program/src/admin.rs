@@ -241,10 +241,11 @@ fn owned(admin: &AccountWithMetadata) -> Result<(), AdminError> {
 /// refuses.
 ///
 /// `[M2-06:01]` records why this is gated at all. Because a PDA hashes the
-/// program id and the program id is the image id, every rebuild presents a fresh
-/// default config account -- so an unguarded first write is not one race but one
-/// per deployment, and its winner sets the signer sets that decide what a price
-/// means.
+/// program id and the program id is the image id, a build that moves the image id
+/// presents a fresh default config account -- so an unguarded first write is not
+/// one race but one per *build*, and its winner sets the signer sets that decide
+/// what a price means. Redeploying an unchanged build is not a fresh race: it
+/// reproduces the id and meets the config account it already established.
 ///
 /// # Errors
 ///

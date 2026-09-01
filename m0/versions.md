@@ -246,6 +246,23 @@ crate with relaxed pins — or at minimum loosening `=3.0.5` to `^3.0.5` — wou
 canonical account usable by the external adaptors it was explicitly written for. What
 its current pins cost this repository is in ADR 8 and ADR 9.
 
+**6. Is a guest ELF bit-identical across machines at the pinned toolchain?** Measured
+here: the same inputs reproduce the image id bit for bit *on one machine*, including
+from a cleaned guest tree — the table is in `[M2-06:01]`. What that does not settle is
+whether two machines at the same pins produce the same id, and nothing in this
+repository establishes it. ADR 8 pins r0vm and the guest rustc as necessary conditions
+for the measured *figures*, and records a case where a different ELF gave identical
+cycle counts, so it is evidence about counts rather than about bytes.
+
+It matters for deployment rather than for the reports. The program id *is* the image
+id, so every account address derives from it. CI builds the guest on GitHub's runners:
+if a release is built there and an operator rebuilds it locally to verify what they are
+running, a differing id means the local build addresses different accounts and verifies
+nothing. Everything the ADR concludes holds under same-machine reproducibility, which
+is what was measured — but the deployment story quietly assumes the stronger property,
+and nobody has checked it. Two builds of one commit on two machines, ids compared,
+would answer it.
+
 ## Changing any of this
 
 Bump it, run both guardrail suites, and update the constants, the affected report

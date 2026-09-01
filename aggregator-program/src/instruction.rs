@@ -158,10 +158,10 @@ pub enum Instruction {
     /// Establish this build's admin authority, once.
     ///
     /// Not gated on being first. The genesis key the build carries is what
-    /// authorises it, because a rebuilt program derives a fresh config account
-    /// and an unguarded first write would be a race once per deployment rather
-    /// than once ever (`[M2-06:01]`). Appended to this enum rather than
-    /// inserted, since a variant's position is the discriminant.
+    /// authorises it, because a program built with a different image id derives a
+    /// fresh config account and an unguarded first write would be a race once per
+    /// build rather than once ever (`[M2-06:01]`). Appended to this enum rather
+    /// than inserted, since a variant's position is the discriminant.
     ///
     /// Expected accounts:
     /// 1. `config` — uninitialised, claimed by this program.
