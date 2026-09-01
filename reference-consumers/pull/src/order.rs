@@ -119,8 +119,8 @@ pub enum OpenError {
     ///
     /// Unreachable: an order is 154 bytes against a 100 KiB limit, and every field
     /// is fixed-width so that is the size rather than a maximum.
-    /// `an_order_is_far_smaller_than_an_accounts_data_limit` measures it, because
-    /// this number has been counted by hand and got wrong twice. Kept
+    /// `an_order_is_far_smaller_than_an_accounts_data_limit` measures it, so the
+    /// figure this variant's reachability rests on is not one anybody counted. Kept
     /// because the alternative is `expect`, and a panic in a guest aborts the
     /// transaction instead of refusing the instruction.
     OrderTooLarge,
@@ -764,9 +764,10 @@ mod tests {
 
     #[test]
     fn an_order_is_far_smaller_than_an_accounts_data_limit() {
-        // `OrderTooLarge` documents itself as unreachable, and the claim rests on
-        // a byte count. Measured rather than counted, because counting it by hand
-        // produced 89 and then 153 for encodings that were 81 and 145.
+        // `OrderTooLarge` documents itself as unreachable, and the claim rests on a
+        // byte count. Measured here so the claim has something behind it: every
+        // field is fixed-width, so there is one size rather than a maximum, and a
+        // field added to the order moves it.
         let order = stored(&opened(BTC, u128::MAX));
         assert_eq!(borsh::to_vec(&order).expect("serialises").len(), 154);
     }
@@ -905,11 +906,10 @@ mod tests {
         // `SpelError` carries one number.
         //
         // Every variant of every layer, and that is the point rather than
-        // thoroughness for its own sake. An earlier version of this test sampled
-        // one variant per wrapper -- one `DecodeError`, one `BackendError`, one
-        // `TimeError` -- and passed against a `verify_code` that answered all nine
-        // decoder faults with one number. A collapse inside a wrapper is
-        // invisible to a test that only ever constructs one member of it.
+        // thoroughness for its own sake: a collapse inside a wrapper is invisible
+        // to a test that constructs one member of it. Sampling one `DecodeError`
+        // would pass against a `verify_code` answering all nine decoder faults
+        // with a single number, which is the failure U6 is about.
         let mut codes: Vec<u32> = every_cause().iter().map(SettleError::code).collect();
         codes.extend(every_open_cause().iter().map(OpenError::code));
         codes.extend(every_authority_cause().iter().map(AuthorityError::code));

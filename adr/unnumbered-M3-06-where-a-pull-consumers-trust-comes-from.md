@@ -58,25 +58,24 @@ one is an authority that cannot act. All three are the aggregator's choices, rea
 independently here and deliberately spelled the same way; `[M2-06:01]` carries the
 reasoning and the review that found the pristine-key case.
 
-*Rejected: a roster compiled into the program.* **This was the first version of this
-crate, and the argument for it did not survive reading F9.** The claim was that F9 wants
-a consumer that registers nothing, so state of the consumer's own would be pull mode
-wearing push's clothes. F9 says something narrower: a configured tuple, and "no
-dependency on **the aggregator's price account**". Registering a roster in an account
-this program owns is not registering a feed against the aggregator, and SEC2's "comes
-from the consumer" is satisfied better by governed state than by a constant, because it
-also shows *how* a consumer governs its set. The paraphrase that misled the first
-version — "a consumer using only pull registers nothing (F9)" — has been corrected where
-it was written.
+*Rejected: a roster compiled into the program.* It reads as the stricter choice —
+nothing a caller sends can reach a constant — and it is the one this decision has to
+argue against, because a reader will reach for it first.
 
-The design was also worse than unnecessary. RedStone rotates: ADR 30 records that the
-captured addresses are unchanged since the capture and that a source two and a half
-years older shares none of them, which is exactly why the push path has
-`update_signer_set` rather than a table. A compiled roster makes that certain event a
-redeployment, and in LEZ a redeployment is not a restart — a program's id is its RISC0
-image id and every derived address hashes the program id, so a changed build input
-presents fresh addresses and abandons what the previous build created. Rotating a signer
-set would have cost every open order.
+It is not what F9 asks for. F9 wants a configured tuple and "no dependency on **the
+aggregator's price account**"; registering a roster in an account this program owns is
+not registering a feed against the aggregator, and SEC2's "comes from the consumer" is
+satisfied better by governed state than by a constant, because governed state also shows
+*how* a consumer governs its set.
+
+And it is worse than unnecessary. RedStone rotates: ADR 30 records that the captured
+addresses are unchanged since the capture and that a source two and a half years older
+shares none of them, which is exactly why the push path has `update_signer_set` rather
+than a table. A compiled roster makes that certain event a redeployment, and in LEZ a
+redeployment is not a restart — a program's id is its RISC0 image id and every derived
+address hashes the program id, so a changed build input presents fresh addresses and
+abandons what the previous build created. Rotating a signer set would cost every open
+order.
 
 **A registration is retirable, because only the roster rotates.** The pair, the scale
 and the window are fixed once written, for the reason above: they are what open orders
@@ -92,13 +91,12 @@ is registered again, and if it returns on different terms they never fill — a 
 answers `AssetMismatch`, a changed scale or window answers `ScaleChanged` or
 `WindowChanged`.
 
-**Which means an order binds the terms it was priced under, not only its pair.** The first
-version of the recovery path bound the pair alone, on the reasoning that the pair, the
-scale and the window are fixed at registration — true of `rotate_signers` and untrue of
-retire-and-re-register, which the same change had just introduced. A feed re-registered
-with a fifteen-minute window would have let a ten-minute-old payload fill an order whose
-owner accepted one minute, and a re-registration at six decimals rather than eight would
-have rescaled every limit by a hundred. So `OrderAccount` carries `decimals` and
+**Which means an order binds every term it was priced under, not only its pair.** "The
+pair, the scale and the window are fixed at registration" is true of `rotate_signers` and
+untrue of retire-and-re-register, so the recovery path is exactly what makes the other two
+mutable. A feed re-registered with a fifteen-minute window would let a ten-minute-old
+payload fill an order whose owner accepted one minute, and one re-registered at six
+decimals rather than eight would rescale every limit by a hundred. So `OrderAccount` carries `decimals` and
 `max_age_ms` as well, captured from the registration rather than supplied — they are the
 program's parameters and not claims an owner would know to make — and `terms_still_hold`
 destructures `FeedTrust` with no `..`, so a field added later stops the crate compiling
@@ -142,17 +140,17 @@ with no way back and nothing gained, so the surface is not carried here.
   it means the build is unusable until an input changes. This is the same hazard #48
   found on the aggregator's feed accounts.
 - **An order carries the pair its owner signed for, which is what makes asset-pair
-  verification real here.** U7 asks the reference consumer to *show* it, and a first
-  version of this crate did not: it passed the trust account's own pair as `verify_feed`'s
-  expected one, so the comparison held a value against itself and could not fail. The
-  hole was concrete rather than theoretical — a registration labelling RedStone's `BTC`
-  feed as ETH/USD verifies real BTC packages, meets the threshold and passes every
-  freshness check, and nothing in a payload can contradict it, because no signer attests
-  to which assets a feed prices. So `open_order` takes the owner's expected pair, refuses
-  the order if the registration disagrees, and stores it; `settle` passes that. Two
-  independently written records, which is what the push path does with the price account's
-  pair against the feed account's configuration (ADR 32) and for the same reason.
-  Reverting the source of that one value fails
+  verification real here.** U7 asks the reference consumer to *show* it, and the obvious
+  reading of `verify_price` does not: passing the trust account's own pair as the expected
+  one holds a value against itself, so the comparison cannot fail. What it would miss is
+  concrete — a registration labelling RedStone's `BTC` feed as ETH/USD verifies real BTC
+  packages, meets the threshold and passes every freshness check, and nothing in a payload
+  can contradict it, because no signer attests to which assets a feed prices. So
+  `open_order` takes the owner's expected pair, refuses the order if the registration
+  disagrees, and stores it; `settle` passes that. Two independently written records, which
+  is what the push path does with the price account's pair against the feed account's
+  configuration (ADR 32) and for the same reason. Sourcing that one value from the
+  registration instead fails
   `an_order_cannot_be_filled_under_a_pair_its_owner_never_signed_for` and nothing else,
   which is what a check being load-bearing looks like.
 - **Eight instructions, which is more than a reference consumer would need to show

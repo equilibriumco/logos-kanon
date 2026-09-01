@@ -477,8 +477,8 @@ fn an_order_cannot_be_filled_under_a_pair_its_owner_never_signed_for() {
     // new meaning.
     //
     // This is also what makes `AssetMismatch` reachable in this consumer at all.
-    // A version that passed the trust account's own pair as the expected one had a
-    // comparison that could not fail, which is not asset-pair verification.
+    // Passing the trust account's own pair as the expected one gives a comparison
+    // that cannot fail, which is not asset-pair verification.
     let v = vectors::named("BTC");
     let order = opened(&v, 1);
 

@@ -177,21 +177,20 @@ guest binary, `cargo tree` resolves a package rather than a binary, and the pack
 holding the aggregator's guest cannot host a consumer whose whole claim is that it
 reaches no aggregator crate. Giving the consumer its own guest workspace is what
 makes the closure an assertion about the program and not only about the library it
-calls. The second is where the signer set comes from, and it is the record of a wrong
-answer corrected. A shared borrow proves a roster was not mutated during a call and
-says nothing about where it came from, so the demonstration had to be about
-provenance — but the first version drew the wrong conclusion, that provenance meant
-a compiled constant, on the strength of a paraphrase rather than the requirement.
-F9 asks for a *configured* tuple with no dependency on the aggregator's price
-account; a roster in an account the consumer itself owns is neither a dependency on
-the aggregator nor a registration against it, and SEC2's "comes from the consumer"
-is answered better by governed state than by a literal, because it also shows how a
-consumer governs its set. The correction was not only textual. ADR 30 already
-established that RedStone rotates, which is why the push path has
-`update_signer_set` and not a table, and a compiled roster would have met that
-certain event with a redeployment — which in LEZ moves every derived address and
-abandons every open order. So the consumer carries an authority, a trust account per
-feed, and a rotation that is a transaction.
+calls. The second is where the signer set comes from, and the answer is less obvious than
+it looks. A shared borrow proves a roster was not mutated during a call and says
+nothing about where it came from, so the demonstration had to be about provenance —
+and provenance reads at first like a compiled constant, since nothing a caller sends
+can reach one. F9 asks for a *configured* tuple with no dependency on the
+aggregator's price account, though, and a roster in an account the consumer itself
+owns is neither a dependency on the aggregator nor a registration against it; SEC2's
+"comes from the consumer" is answered better by governed state than by a literal,
+because governed state also shows how a consumer governs its set. ADR 30 settles the
+rest: RedStone rotates, which is why the push path has `update_signer_set` and not a
+table, and a compiled roster would meet that certain event with a redeployment —
+which in LEZ moves every derived address and abandons every open order. So the
+consumer carries an authority, a trust account per feed, and a rotation that is a
+transaction.
 
 ADR 29 closes a range that only had one end. ADR 18 gave staleness a two-sided window and
 left `maxAge` to the feed; registration refused zero and nothing else. But `freshness`
