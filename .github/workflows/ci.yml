@@ -341,14 +341,14 @@ jobs:
           rzup install r0vm 3.0.5
           rzup install rust 1.97.0
 
-      # Cross-compiles both product guests, which is what `kanon-methods` now
-      # builds: the aggregator, and reference consumer B. The cost baseline proved
-      # the toolchain on measurement code; this is the same proof for the crates
-      # that ship, and it is where a dependency added to `verifier-core` that
-      # turns out not to be guest-compatible fails. For the consumer it is also
-      # where `pull-lib` and everything under it is shown to reach riscv32 without
-      # an aggregator crate in the graph -- the closure job says nothing is there,
-      # and this says what is there compiles.
+      # Cross-compiles all three product guests, which is what `kanon-methods`
+      # builds: the aggregator and both reference consumers. The cost baseline
+      # proved the toolchain on measurement code; this is the same proof for the
+      # crates that ship, and it is where a dependency added to `verifier-core`
+      # that turns out not to be guest-compatible fails. For the pull consumer it
+      # is also where `pull-lib` and everything under it is shown to reach riscv32
+      # without an aggregator crate in the graph -- the closure job says nothing is
+      # there, and this says what is there compiles.
       - name: build the product guests
         run: cargo build --release --locked -p kanon-methods
 

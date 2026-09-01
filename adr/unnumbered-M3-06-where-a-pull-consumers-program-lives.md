@@ -47,20 +47,22 @@ without, and still have no path to the account the push mode writes. `kanon-idl`
 one dependency a pull consumer must refuse, and it is refused by the allow-list rather
 than by anybody remembering.
 
-**One methods crate builds both guests.** `risc0-build` resolves each entry in
-`package.metadata.risc0.methods` against the methods crate's own directory, so
-`methods = ["guest", "../reference-consumers/pull/guest"]` reaches out of the tree and no
-second build script is needed.
+**One methods crate builds every guest.** `risc0-build` resolves each entry in
+`package.metadata.risc0.methods` against the methods crate's own directory, so an entry
+like `"../reference-consumers/pull/guest"` reaches out of the tree and no second build
+script is needed. `[M3-05:01]` adds the third entry the same way.
 
 *Rejected: a binary under `methods/guest`.* Cheapest by every other measure — no
 manifest, no lockfile, no CI line — and it costs the requirement. The gate would report
 green on a program that had linked the aggregator.
 
 *Rejected: a second methods crate.* It is the shape `m0/` uses, one methods crate per
-guest workspace, but `m0/` needs it: those crates differ in their `[patch.crates-io]`
-because comparing the software, accelerated and mixed configurations is the point. Here
-the two guests want the same patches, so a second methods crate would buy a build script
-and nothing else.
+guest workspace, and `m0/` needs it because those three build the *same* guest source
+under three different `[patch.crates-io]` blocks and each has to hand out its own ELF.
+Nothing here does that: a patch block belongs to a guest workspace rather than to the
+methods crate above it, so guests wanting different patches is not a reason to split
+one. `[M3-05:01]`'s guest is the demonstration -- it pins no accelerators at all, and
+still needs no methods crate of its own.
 
 *Rejected: shipping the logic in M3-06 and the program in M3-07.* M3-07 is the sequencer
 run, and a task that has to build the program before it can run it is a task doing two
