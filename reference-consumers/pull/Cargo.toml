@@ -1,8 +1,22 @@
 # Reference consumer B: the public-mode pull half.
 #
-# The pull tests have to exercise the library inside a representative public
-# consumer program, not only as a unit test of the verification function. Those
-# tests run against the standalone sequencer.
+# The logic is here so the host workspace can test it; the SPEL program is the
+# guest binary under `guest/`, because that is what LEZ executes. The same split
+# `aggregator-program` uses, and for the same reason.
+#
+# The guest is its own workspace rather than a binary under `methods/guest/`, and
+# that is the requirement rather than tidiness. `methods/guest` depends on
+# `aggregator-program` and `kanon-idl`, and `cargo tree` has no per-binary
+# closure, so a pull consumer living there could not be shown to reach no
+# aggregator crate -- F9 would be gated on the library and ungated on the
+# program. `[M3-06:01]` records it, and the third walk in `pull-independence` is
+# what asserts it.
+#
+# `kanon-idl` is deliberately absent from the dependencies below. It is where the
+# canonical price account arrives -- `twap_oracle_core` reaches this repository
+# through it and nowhere else -- so taking it would put the push mode's account
+# type in this crate's closure, which is the F9 hole the allow-list exists to
+# refuse.
 [package]
 name = "reference-consumer-pull"
 description = "Reference consumer that verifies a RedStone payload inline via pull-lib"
@@ -12,3 +26,44 @@ license.workspace = true
 
 [dependencies]
 pull-lib.workspace = true
+
+# LEZ's account and post-state types. A consumer program that means to bind a
+# clock's bytes to the account they came from has to name the type its dispatcher
+# hands it, which is what `pull-lib` cannot do from `no_std` and what this crate
+# exists to demonstrate.
+lee_core.workspace = true
+
+# `#[account_type]` for the order account the IDL publishes, and `generate_idl!`
+# for the binary that emits it.
+spel-framework-macros.workspace = true
+# For `SpelError`, which the guest handler returns. The conversion lives here
+# rather than in the guest because the orphan rule puts it here: the error is
+# this crate's and `SpelError` is not.
+spel-framework.workspace = true
+borsh = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
+
+# A binary rather than an example, so `tests/idl.rs` can reach it through
+# `CARGO_BIN_EXE_generate-pull-consumer-idl` and assert the committed artefact is
+# current.
+#
+# Not `generate-idl`, which is what `aggregator-program` calls its own. Binary
+# names share one directory under `target/`, so two packages emitting the same
+# one overwrite each other: the aggregator's IDL test passed alone and failed
+# under `--workspace`, because it had run this program instead.
+[[bin]]
+name = "generate-pull-consumer-idl"
+path = "src/bin/generate-pull-consumer-idl.rs"
+
+[dev-dependencies]
+# Named by the shared fixture reader rather than by any test here: that file is
+# included by path and imports `verifier_core` directly, so each crate reading it
+# declares the dependency. A dev-dependency sits outside `--edges normal,build`,
+# so this is not the crate naming the verifier on the path a consumer links --
+# which is the property `pull-lib`'s own suite keeps by naming only `pull_lib`.
+verifier-core.workspace = true
+# What the committed RedStone capture is encoded in. The fixture reader is
+# `verifier-core/tests/support/vectors.rs`, included by path rather than shared
+# through a crate, so its dependencies are declared by each consumer.
+serde_json = "1"
+hex = "0.4"

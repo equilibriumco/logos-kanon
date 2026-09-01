@@ -11,9 +11,15 @@
 //!
 //! # Independence from the aggregator, and what holds it
 //!
-//! A consumer using only pull registers nothing (F9). It supplies a feed id, a
-//! signer set, a threshold and a window; it reads no feed account, and there is
-//! no price account for it to derive.
+//! A consumer using only pull registers nothing *with the aggregator* (F9). It
+//! supplies a feed id, a signer set, a threshold and a window; it reads no feed
+//! account, and there is no price account for it to derive.
+//!
+//! The qualification is load-bearing. F9 asks for a configured tuple and no
+//! dependency on the aggregator's price account; it says nothing about where a
+//! consumer keeps that tuple. A consumer holding its roster in an account it owns
+//! and governs is not registering a feed against the aggregator, and `[M3-06:02]`
+//! records why the reference consumer does exactly that.
 //!
 //! Nothing in this crate would notice if that stopped being true, because the
 //! failure is an addition rather than a break: a `use` of an aggregator type to
@@ -171,7 +177,9 @@ pub use kanon_clock::CLOCK_ACCOUNT_ID;
 pub use verifier_core::backend::{BackendError, InProgramBackend, SignerAddress};
 pub use verifier_core::decode::DecodeError;
 pub use verifier_core::error::{ConfigError, VerifyError};
-pub use verifier_core::feed::{AssetPair, FeedConfig, VerifiedFeed, MAX_MAX_AGE_MS, MAX_SIGNERS};
+pub use verifier_core::feed::{
+    AssetPair, FeedConfig, VerifiedFeed, MAX_AHEAD_MS, MAX_MAX_AGE_MS, MAX_SIGNERS,
+};
 pub use verifier_core::time::TimeError;
 pub use verifier_core::value::Value;
 

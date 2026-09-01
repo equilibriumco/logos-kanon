@@ -25,7 +25,7 @@ there.**
 
 The direction is the one that costs nothing, and cargo is the reason rather than CI: a
 dev-dependency sits outside `--edges normal,build`, so it cannot appear in `pull-lib`'s
-build closure at all. Measured rather than assumed: both closures are byte-identical
+build closure at all. Both closures come back byte-identical
 before and after, and `pull-lib` does not appear in `aggregator-program`'s own normal
 closure either.
 
