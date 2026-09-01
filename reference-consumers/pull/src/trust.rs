@@ -62,8 +62,35 @@ use spel_framework_macros::account_type;
 
 use crate::authority::{authorise, AuthorityError};
 
+/// The longest data service label a registration will store.
+///
+/// The one field of the configuration `FeedConfig::try_new` does not check, since
+/// verification never reads it, so the bound is this program's to set. Without one
+/// the only limit is the account's own, and a label is decoded on every settlement
+/// for that feed — an unbounded string is a cost a caller pays for ever, charged
+/// where nobody looks. Sixty-four is roomy against RedStone's own
+/// `redstone-primary-prod`.
+pub const MAX_DATA_SERVICE_ID_LEN: usize = 64;
+
 /// The name seed a feed's trust account is derived from.
 pub const TRUST_ACCOUNT_SEED: &str = "KANON_PULL_TRUST";
+
+/// The address a feed's trust account lives at.
+///
+/// Public because a client has to derive it to build any transaction naming a
+/// feed, and because [`register`] checks against it — the derivation is the only
+/// thing tying a registration to the account it writes when that account is a
+/// retired one.
+#[must_use]
+pub fn trust_address(
+    self_program_id: &ProgramId,
+    feed_id: &[u8; 32],
+) -> lee_core::account::AccountId {
+    spel_framework::pda::compute_pda(
+        self_program_id,
+        &[feed_id, &seed_from_str(TRUST_ACCOUNT_SEED)],
+    )
+}
 
 /// What this consumer trusts for one feed.
 ///
@@ -173,9 +200,19 @@ pub enum TrustError {
     TrustUndecodable,
     /// The account addressed is not the feed the instruction named.
     ///
-    /// A rotation names its feed as well as addressing it (ADR 33), so an
-    /// operator rotating five feeds cannot move the wrong one by transposing two
-    /// accounts.
+    /// A registration, a rotation and a retirement each name their feed as well as
+    /// addressing it (ADR 33), so an operator working five feeds cannot move the
+    /// wrong one by transposing two accounts.
+    ///
+    /// The three establish it differently, and the difference is not cosmetic. A
+    /// rotation and a retirement read the stored feed id and compare. A
+    /// registration cannot: it may be handed a retired account, which is empty by
+    /// construction and remembers nothing, so it compares the account's *address*
+    /// against the one the named feed derives. Without that, registering `ETH`
+    /// into `BTC`'s retired account writes a feed at an address nothing will look
+    /// for it at, and leaves `BTC` answering `AlreadyRegistered` to a
+    /// registration and `FeedMismatch` to a retirement — permanently, since those
+    /// are the only two ways out.
     FeedMismatch,
     /// The parameters do not describe a usable feed.
     ///
@@ -183,6 +220,13 @@ pub enum TrustError {
     /// one meaning wherever it surfaces. Registering an unusable configuration
     /// is refused here rather than discovered by every later settlement.
     Config(ConfigError),
+    /// The data service label is longer than [`MAX_DATA_SERVICE_ID_LEN`].
+    DataServiceIdTooLong {
+        /// What was offered.
+        len: usize,
+        /// The most this program will store.
+        max: usize,
+    },
     /// The serialised trust does not fit an account's data.
     TrustTooLarge,
 }
@@ -209,6 +253,7 @@ impl TrustError {
             Self::TrustAccountUnusable => 2002,
             Self::NotRegistered => 2003,
             Self::Deregistered => 2007,
+            Self::DataServiceIdTooLong { .. } => 2008,
             Self::TrustUndecodable => 2004,
             Self::FeedMismatch => 2005,
             Self::TrustTooLarge => 2006,
@@ -231,6 +276,10 @@ impl fmt::Display for TrustError {
             Self::FeedMismatch => {
                 f.write_str("that account is not the feed this instruction named")
             }
+            Self::DataServiceIdTooLong { len, max } => write!(
+                f,
+                "the data service label is {len} bytes and this program stores at most {max}"
+            ),
             Self::TrustTooLarge => f.write_str("the serialised trust does not fit the account"),
             Self::Authority(err) => write!(f, "{err}"),
             Self::Config(err) => write!(f, "{err:?}"),
@@ -288,6 +337,24 @@ pub fn register(
         });
     }
 
+    // The address is what ties this registration to the feed it names, and only a
+    // first registration gets that for free: its claim commits to the derived
+    // address and `validate_execution` checks it. A re-registration claims nothing
+    // -- it must not, since the account is already ours -- so nothing downstream
+    // would notice `ETH` being written into `BTC`'s retired account. `deregister`
+    // and `rotate_signers` reach the same rule by reading the stored feed id,
+    // which an emptied account does not have.
+    if trust.account_id != trust_address(&self_program_id, &feed_id) {
+        return Err(TrustError::FeedMismatch);
+    }
+
+    if data_service_id.len() > MAX_DATA_SERVICE_ID_LEN {
+        return Err(TrustError::DataServiceIdTooLong {
+            len: data_service_id.len(),
+            max: MAX_DATA_SERVICE_ID_LEN,
+        });
+    }
+
     let stored = FeedTrust {
         data_service_id,
         feed_id,
@@ -332,8 +399,7 @@ pub fn register(
 /// correction, and without this it would spend the feed id for the life of the
 /// build.
 ///
-/// What it costs is stated rather than hedged: **orders against a retired feed
-/// cannot settle.** [`crate::order::settle`] answers [`TrustError::Deregistered`]
+/// **Orders against a retired feed cannot settle.** [`crate::order::settle`] answers [`TrustError::Deregistered`]
 /// until the authority registers the feed again, and if it comes back under a
 /// different pair those orders answer `AssetMismatch` for ever, because an order
 /// carries the pair its owner signed for. That is the intended outcome — an order
@@ -444,7 +510,6 @@ mod tests {
     use crate::testing::{as_chain_leaves_it, established_config, key, untouched, GENESIS, OURS};
     use lee_core::account::AccountId;
     use lee_core::program::validate_execution;
-    use spel_framework::pda::compute_pda;
 
     const BTC: [u8; 32] = crate::padded(b"BTC");
     const SERVICE: &str = "redstone-primary-prod";
@@ -454,7 +519,7 @@ mod tests {
     }
 
     fn trust_address(feed_id: &[u8; 32]) -> AccountId {
-        compute_pda(&OURS, &[feed_id, &seed_from_str(TRUST_ACCOUNT_SEED)])
+        super::trust_address(&OURS, feed_id)
     }
 
     fn register_btc(signers: Vec<[u8; 20]>, threshold: u8) -> Vec<AccountPostState> {
@@ -594,6 +659,34 @@ mod tests {
                 threshold: 6,
                 signers: 5
             }))
+        );
+    }
+
+    #[test]
+    fn an_oversized_data_service_label_is_refused_at_the_registration() {
+        // The label is the one field `FeedConfig::try_new` does not validate, and
+        // it is decoded on every settlement for the feed, so the refusal belongs
+        // where the authority can act on it rather than in a cost nobody attributes.
+        let outcome = register(
+            untouched(trust_address(&BTC)),
+            key(GENESIS, true),
+            established_config(),
+            "x".repeat(MAX_DATA_SERVICE_ID_LEN + 1),
+            BTC,
+            crate::padded(b"BTC"),
+            crate::padded(b"USD"),
+            8,
+            60_000,
+            five(),
+            3,
+            OURS,
+        );
+        assert_eq!(
+            outcome,
+            Err(TrustError::DataServiceIdTooLong {
+                len: MAX_DATA_SERVICE_ID_LEN + 1,
+                max: MAX_DATA_SERVICE_ID_LEN,
+            })
         );
     }
 
@@ -769,6 +862,53 @@ mod tests {
         );
         assert_eq!(stored.decimals, 6);
         assert_eq!(stored.max_age_ms, 30_000);
+    }
+
+    #[test]
+    fn a_registration_cannot_be_written_into_another_feeds_account() {
+        // A retired account is empty, so it remembers no feed id and a
+        // registration cannot compare against one. Without the address check it
+        // would write `ETH` into `BTC`'s account, where nothing looks for it --
+        // and `BTC` would then answer `AlreadyRegistered` to a registration and
+        // `FeedMismatch` to a retirement, which are the only two ways out.
+        let outcome = register(
+            retired(),
+            key(GENESIS, true),
+            established_config(),
+            SERVICE.to_owned(),
+            crate::padded(b"ETH"),
+            crate::padded(b"ETH"),
+            crate::padded(b"USD"),
+            8,
+            60_000,
+            five(),
+            3,
+            OURS,
+        );
+        assert_eq!(outcome, Err(TrustError::FeedMismatch));
+    }
+
+    #[test]
+    fn a_first_registration_at_another_feeds_address_is_refused_too() {
+        // The claim would catch this one -- `validate_execution` compares the
+        // derived address against the account -- but it would catch it as a LEZ
+        // rule violation on the post-state rather than as this program refusing
+        // its input, and the two read very differently to whoever has to fix it.
+        let outcome = register(
+            untouched(trust_address(&crate::padded(b"ETH"))),
+            key(GENESIS, true),
+            established_config(),
+            SERVICE.to_owned(),
+            BTC,
+            crate::padded(b"BTC"),
+            crate::padded(b"USD"),
+            8,
+            60_000,
+            five(),
+            3,
+            OURS,
+        );
+        assert_eq!(outcome, Err(TrustError::FeedMismatch));
     }
 
     #[test]

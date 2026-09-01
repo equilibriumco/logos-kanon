@@ -17,7 +17,7 @@ use lee_core::program::{validate_execution, AccountPostState, ProgramId};
 use pull_lib::verifier_core::value::median;
 use pull_lib::{TimeError, VerifyError, CLOCK_ACCOUNT_ID};
 use reference_consumer_pull::authority::{self, config_address};
-use reference_consumer_pull::trust::{self, FeedTrust, TRUST_ACCOUNT_SEED};
+use reference_consumer_pull::trust::{self, FeedTrust};
 use reference_consumer_pull::{
     open_order, padded, settle, OrderAccount, SettleError, TrustError, ORDER_ACCOUNT_SEED,
 };
@@ -42,9 +42,11 @@ const THRESHOLD: u8 = 3;
 const SERVICE: &str = "redstone-primary-prod";
 
 /// How far past the clock a package may be dated before it reads as future.
-/// `verifier-core`'s constant, restated because it is not part of the surface a
-/// consumer links.
-const MAX_AHEAD_MS: u64 = 3 * 60 * 1000;
+///
+/// `pull-lib`'s, because a consumer explaining `FuturePackage` to its users needs
+/// the bound as much as it needs `MAX_MAX_AGE_MS`. Reached through the re-export
+/// rather than restated, so this file cannot disagree with the code it tests.
+use pull_lib::MAX_AHEAD_MS;
 
 fn key(id: [u8; 32], signs: bool) -> AccountWithMetadata {
     AccountWithMetadata {
@@ -114,7 +116,7 @@ fn feed_id(v: &Vector) -> [u8; 32] {
 }
 
 fn trust_address(feed: &[u8; 32]) -> AccountId {
-    compute_pda(&OURS, &[feed, &seed_from_str(TRUST_ACCOUNT_SEED)])
+    trust::trust_address(&OURS, feed)
 }
 
 fn order_address() -> AccountId {
@@ -278,17 +280,17 @@ fn the_post_states_pass_lez() {
     // this test -- a version that appended the accounts the program forgot would
     // assert that LEZ accepts a list this program does not produce.
     let v = vectors::named("BTC");
-    let pre = vec![opened(&v, 1), registered(&v), clock_at(v.timestamp_ms)];
+    let order = opened(&v, 1);
+    let trust = registered(&v);
+    let clock = clock_at(v.timestamp_ms);
+    // The same values, cloned rather than rebuilt: `validate_execution` compares
+    // post-states against these, so a second construction would be checking the
+    // program's output against a pre-state it never received. Deterministic today,
+    // and the day a builder gains state the failure would present as a LEZ rule
+    // violation rather than as a test bug.
+    let pre = vec![order.clone(), trust.clone(), clock.clone()];
 
-    let posts = settle(
-        opened(&v, 1),
-        registered(&v),
-        clock_at(v.timestamp_ms),
-        feed_id(&v),
-        &v.payload,
-        OURS,
-    )
-    .expect("fills");
+    let posts = settle(order, trust, clock, feed_id(&v), &v.payload, OURS).expect("fills");
     validate_execution(&pre, &posts, OURS).expect("LEZ accepts the fill");
 }
 
@@ -309,10 +311,21 @@ fn a_fill_moves_the_filled_flag_and_nothing_else() {
     .expect("the order fills");
     let now = stored(posts[0].account());
 
-    assert_eq!(now.owner, was.owner);
-    assert_eq!(now.feed_id, was.feed_id);
-    assert_eq!(now.limit_price_q64, was.limit_price_q64);
-    assert!(!was.filled && now.filled, "only the flag moves");
+    // Every field at once rather than the four this used to name: `base_asset`,
+    // `quote_asset`, `decimals` and `max_age_ms` are what `terms_still_hold`
+    // reads, so a settlement that moved one would make every later settlement of
+    // the order answer `ScaleChanged` or `WindowChanged`. Written as a struct
+    // update so a field added later is covered without anybody remembering to add
+    // it, which is the same reason `terms_still_hold` destructures without `..`.
+    assert!(!was.filled);
+    assert_eq!(
+        now,
+        OrderAccount {
+            filled: true,
+            ..was
+        },
+        "a fill moves the flag and nothing else"
+    );
 
     assert_eq!(
         posts[0].account().program_owner,

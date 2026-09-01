@@ -581,10 +581,7 @@ mod tests {
     }
 
     fn trust_address(feed_id: &[u8; 32]) -> AccountId {
-        compute_pda(
-            &OURS,
-            &[feed_id, &seed_from_str(crate::trust::TRUST_ACCOUNT_SEED)],
-        )
+        crate::trust::trust_address(&OURS, feed_id)
     }
 
     /// A registered trust account for `feed_id`, with five signers and a
@@ -1001,6 +998,7 @@ mod tests {
             TrustError::TrustUndecodable,
             TrustError::FeedMismatch,
             TrustError::Deregistered,
+            TrustError::DataServiceIdTooLong { len: 65, max: 64 },
             TrustError::TrustTooLarge,
         ]
     }

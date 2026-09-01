@@ -86,8 +86,16 @@ empties the account and `register` admits the emptied-and-ours state as a third
 pre-state — the same round trip the push path's `deregister_feed` and `register_feed`
 make, and the same three states.
 
-What it costs is not hidden: orders against a retired feed answer `Deregistered` until it
-is registered again, and if it returns on different terms they never fill — a changed pair
+A re-registration is bound to its feed by the account's *address* rather than by a stored
+id, because a retired account is empty and remembers nothing. `deregister` and
+`rotate_signers` compare the id they read; `register` compares the address the named feed
+derives. Without that, registering `ETH` into `BTC`'s retired account writes a feed where
+nothing will look for it and leaves `BTC` answering `AlreadyRegistered` to a registration
+and `FeedMismatch` to a retirement — the only two ways out, both closed.
+
+What the recovery path costs is not hidden: orders against a retired feed answer
+`Deregistered` until it is registered again, and if it returns on different terms they
+never fill — a changed pair
 answers `AssetMismatch`, a changed scale or window answers `ScaleChanged` or
 `WindowChanged`.
 
