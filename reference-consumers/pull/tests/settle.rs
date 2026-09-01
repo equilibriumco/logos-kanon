@@ -548,6 +548,125 @@ fn the_same_pair_re_registers_and_the_order_still_fills() {
     .expect("the same pair is not a change");
 }
 
+/// The same feed and pair registered again with different terms, which is the one
+/// route by which a scale or a window can move under an open order.
+fn re_registered_with(v: &Vector, decimals: u8, max_age_ms: u64) -> AccountWithMetadata {
+    let feed = feed_id(v);
+    let posts = trust::register(
+        retired(v),
+        key(GENESIS, true),
+        established(),
+        SERVICE.to_owned(),
+        feed,
+        feed,
+        padded(b"USD"),
+        decimals,
+        max_age_ms,
+        v.signers.iter().map(|s| s.0).collect(),
+        THRESHOLD,
+        OURS,
+    )
+    .expect("the id is not spent");
+    as_chain_leaves_it(&posts[0], trust_address(&feed))
+}
+
+#[test]
+fn a_widened_window_cannot_fill_an_order_priced_under_a_narrower_one() {
+    // The recovery path's sharp edge. Only the roster rotates in place, but the
+    // authority may retire a feed and register the id again with a different
+    // window -- and an owner that accepted a one-minute-old price did not thereby
+    // accept a fifteen-minute-old one.
+    //
+    // The payload here is ten minutes stale against the order's own window and
+    // comfortably fresh against the new one, so a consumer that read the window
+    // from the current registration would fill it.
+    let v = vectors::named("BTC");
+    let order = opened(&v, 1);
+    let ten_minutes_later = v.timestamp_ms + 10 * 60 * 1000;
+
+    assert_eq!(
+        settle(
+            order,
+            re_registered_with(&v, DECIMALS, 15 * 60 * 1000),
+            clock_at(ten_minutes_later),
+            feed_id(&v),
+            &v.payload,
+            OURS
+        ),
+        Err(SettleError::WindowChanged {
+            priced_at: MAX_AGE_MS,
+            registered: 15 * 60 * 1000,
+        })
+    );
+}
+
+#[test]
+fn a_changed_scale_cannot_fill_an_order_priced_on_another_one() {
+    // The same route, and the quieter half. A limit is a `Q64.64` number, and the
+    // exponent is what turns a payload's integer into one -- so the identical wire
+    // value under six decimals rather than eight is a hundredfold different price.
+    // An order filled against it would answer a question its owner never asked.
+    let v = vectors::named("BTC");
+    let order = opened(&v, 1);
+
+    assert_eq!(
+        settle(
+            order,
+            re_registered_with(&v, 6, MAX_AGE_MS),
+            clock_at(v.timestamp_ms),
+            feed_id(&v),
+            &v.payload,
+            OURS
+        ),
+        Err(SettleError::ScaleChanged {
+            priced_at: DECIMALS,
+            registered: 6,
+        })
+    );
+}
+
+#[test]
+fn a_re_registration_on_the_same_terms_leaves_an_order_settleable() {
+    // The other half, and what stops the check above being a blanket refusal of
+    // every re-registration. Retiring a feed does not spend its id, and an order
+    // whose terms come back unchanged is unaffected -- so an authority correcting
+    // a roster mistake by retiring and re-registering does not have to tell every
+    // owner to re-open.
+    let v = vectors::named("BTC");
+    let order = opened(&v, 1);
+
+    settle(
+        order,
+        re_registered_with(&v, DECIMALS, MAX_AGE_MS),
+        clock_at(v.timestamp_ms),
+        feed_id(&v),
+        &v.payload,
+        OURS,
+    )
+    .expect("unchanged terms are not a change");
+}
+
+#[test]
+fn a_rotation_leaves_an_orders_terms_alone() {
+    // The line between what an authority may move under an open order and what it
+    // may not. A rotation changes who may speak for the feed and nothing else, so
+    // an order priced before it is still settleable -- which is why the terms
+    // check has to name the fields it binds rather than refuse any difference.
+    let v = vectors::named("BTC");
+    let mut widened: Vec<[u8; 20]> = v.signers.iter().map(|s| s.0).collect();
+    widened.push([0xEE; 20]);
+
+    settle(
+        opened(&v, 1),
+        rotated(&v, widened, THRESHOLD),
+        clock_at(v.timestamp_ms),
+        feed_id(&v),
+        &v.payload,
+        OURS,
+    )
+    .expect("a rotation is not a change to an order's terms");
+}
+
 #[test]
 fn a_price_below_the_limit_leaves_the_order_open() {
     let v = vectors::named("BTC");

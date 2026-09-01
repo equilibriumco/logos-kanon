@@ -7,15 +7,21 @@
 //! # An order fixes what it is priced against
 //!
 //! It stores the feed id, and [`settle`] requires the trust account it is handed
-//! to be that feed's. So an order opened against BTC cannot be filled from an
-//! ETH price by passing a different trust account, and cannot be repriced by an
-//! authority registering something else: the pair, the scale and the window are
-//! fixed at registration and [`crate::trust::rotate_signers`] moves only the
-//! roster and its threshold.
+//! to be that feed's, so an order opened against BTC cannot be filled from an ETH
+//! price by passing a different trust account.
+//!
+//! It also stores the terms it was priced under — the pair its owner signed for,
+//! the scale its limit is on, and the staleness window it accepted — and
+//! [`settle`] refuses if the registration no longer matches. That is not
+//! belt-and-braces. [`crate::trust::rotate_signers`] moves only the roster, but a
+//! registration can be retired and made again on different terms, which is the
+//! recovery path for a mistake; without this an order would be filled under a
+//! window or an exponent its owner never accepted.
 //!
 //! What an authority *can* change under an open order is who may speak for its
-//! feed. That is the point of having an authority at all, and it is the same
-//! exposure a push consumer has to `update_signer_set`.
+//! feed. That is the point of having an authority at all, it is deliberately not
+//! part of an order's terms, and it is the same exposure a push consumer has to
+//! `update_signer_set`.
 //!
 //! # An order id is spent once
 //!
@@ -59,6 +65,19 @@ pub struct OrderAccount {
     pub base_asset: [u8; 32],
     /// The quote asset the owner expected when it signed.
     pub quote_asset: [u8; 32],
+    /// The scale [`Self::limit_price_q64`] was priced on.
+    ///
+    /// Captured from the registration rather than supplied, because it is the
+    /// program's parameter and not a claim the owner would know to make. Bound to
+    /// the order all the same: the exponent decides what a payload's integer means,
+    /// so the same wire value under a different `decimals` is a different price,
+    /// and a limit compared against it would mean something its owner never chose.
+    pub decimals: u8,
+    /// The staleness window the order was priced under.
+    ///
+    /// Also captured, and also binding: an owner that accepted a one-minute-old
+    /// price did not accept a fifteen-minute-old one.
+    pub max_age_ms: u64,
     /// The price at or above which the order fills, on the `Q64.64` scale
     /// `verifier-core` converts a RedStone value to.
     pub limit_price_q64: u128,
@@ -192,6 +211,30 @@ pub enum SettleError {
         /// What the order requires.
         limit: u128,
     },
+    /// The feed's scale has changed since the order was priced.
+    ///
+    /// Reachable through the recovery path and only through it: only the roster
+    /// and its threshold rotate, but the authority may retire a feed and register
+    /// the id again with a different exponent. An order's limit is on the scale it
+    /// was priced on, so filling it against another one would answer a question
+    /// its owner never asked.
+    ScaleChanged {
+        /// The scale the order was priced on.
+        priced_at: u8,
+        /// The scale registered now.
+        registered: u8,
+    },
+    /// The feed's staleness window has changed since the order was priced.
+    ///
+    /// Same route and the same reasoning. An owner that accepted a one-minute-old
+    /// price did not thereby accept a fifteen-minute-old one, and widening the
+    /// window under an open order would do exactly that.
+    WindowChanged {
+        /// The window the order was priced under.
+        priced_at: u64,
+        /// The window registered now.
+        registered: u64,
+    },
     /// The serialised order does not fit an account's data. See
     /// [`OpenError::OrderTooLarge`].
     OrderTooLarge,
@@ -228,6 +271,8 @@ impl SettleError {
             Self::OrderIsForAnotherFeed => 1404,
             Self::OrderTooLarge => 1405,
             Self::LimitNotReached { .. } => 1406,
+            Self::ScaleChanged { .. } => 1407,
+            Self::WindowChanged { .. } => 1408,
             Self::Trust(err) => err.code(),
             Self::Verify(err) => crate::verify_code(*err),
         }
@@ -247,6 +292,20 @@ impl fmt::Display for SettleError {
             Self::LimitNotReached { price, limit } => {
                 write!(f, "the verified price {price} is below the limit {limit}")
             }
+            Self::ScaleChanged {
+                priced_at,
+                registered,
+            } => write!(
+                f,
+                "this order was priced at {priced_at} decimals and the feed now reports {registered}"
+            ),
+            Self::WindowChanged {
+                priced_at,
+                registered,
+            } => write!(
+                f,
+                "this order was priced under a {priced_at} ms window and the feed now allows {registered}"
+            ),
             Self::Trust(err) => write!(f, "{err}"),
             Self::Verify(err) => write!(f, "{err:?}"),
         }
@@ -311,6 +370,8 @@ pub fn open_order(
         feed_id,
         base_asset,
         quote_asset,
+        decimals: registered.decimals,
+        max_age_ms: registered.max_age_ms,
         limit_price_q64,
         filled: false,
     };
@@ -370,6 +431,8 @@ pub fn settle(
         return Err(SettleError::Trust(TrustError::FeedMismatch));
     }
 
+    terms_still_hold(&registered, &stored)?;
+
     let verified = verify(
         &registered,
         &AssetPair::new(stored.base_asset, stored.quote_asset),
@@ -401,6 +464,56 @@ pub fn settle(
         AccountPostState::new(trust.account),
         AccountPostState::new(clock.account),
     ])
+}
+
+/// Refuses a settlement whose registration no longer describes the order's terms.
+///
+/// Every field of a registration is accounted for here, in one destructuring with
+/// no `..`, so a field added to [`FeedTrust`] stops this compiling until somebody
+/// decides whether it binds an open order. That is the only mechanism keeping the
+/// two in step — an order that silently stopped tracking a new parameter would be
+/// filled against terms its owner never saw — and it is the same reason the error
+/// blocks have no wildcard arm.
+///
+/// Cheap, and before the verification, so nothing cryptographic is paid for a
+/// settlement that cannot happen.
+fn terms_still_hold(registered: &FeedTrust, order: &OrderAccount) -> Result<(), SettleError> {
+    let FeedTrust {
+        // A label for the consumer's own records, read by nothing in
+        // verification, so it cannot change what an order means.
+        data_service_id: _,
+        // Checked in `settle` against the order and against the instruction's own
+        // argument, which the guest constrains this account's address to.
+        feed_id: _,
+        // Checked by `verify_feed`, against the pair the owner signed for. Left to
+        // it deliberately: that comparison is what U7 asks a consumer to
+        // demonstrate, and duplicating it here would make it dead again.
+        base_asset: _,
+        quote_asset: _,
+        // Bound to the order. These two decide what its limit means and how old a
+        // payload may be, and neither is something an owner agreed to have moved.
+        decimals,
+        max_age_ms,
+        // Deliberately mutable under an open order: rotating who may speak for a
+        // feed is the whole reason this program has an authority, and an order is
+        // a claim about a price rather than about a roster.
+        signers: _,
+        threshold: _,
+    } = registered;
+
+    if *decimals != order.decimals {
+        return Err(SettleError::ScaleChanged {
+            priced_at: order.decimals,
+            registered: *decimals,
+        });
+    }
+    if *max_age_ms != order.max_age_ms {
+        return Err(SettleError::WindowChanged {
+            priced_at: order.max_age_ms,
+            registered: *max_age_ms,
+        });
+    }
+    Ok(())
 }
 
 /// The verification itself, over what this program trusts for the feed.
@@ -907,6 +1020,14 @@ mod tests {
             SettleError::OrderIsForAnotherFeed,
             SettleError::OrderTooLarge,
             SettleError::LimitNotReached { price: 1, limit: 2 },
+            SettleError::ScaleChanged {
+                priced_at: 8,
+                registered: 6,
+            },
+            SettleError::WindowChanged {
+                priced_at: 60_000,
+                registered: 900_000,
+            },
         ];
         causes.extend(
             [

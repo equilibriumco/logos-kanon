@@ -14,9 +14,14 @@
 //! estate where one feed's set has moved, and the repair once feeds are live is
 //! a migration rather than an edit.
 //!
-//! This is deliberately the same shape the push side stores in its `FeedAccount`.
-//! One configuration behind both modes is what makes ADR 2's "one verification,
-//! two modes" visible to somebody reading the two programs side by side.
+//! This is deliberately the shape the push side stores in its `FeedAccount`, so
+//! that ADR 2's "one verification, two modes" is visible to somebody reading the
+//! two programs side by side. The two are not identical and the differences are
+//! each a decision rather than drift: this carries the `dataServiceId` RFP-020
+//! names in a pull consumer's configuration, and it has no pause flag, because
+//! pausing is an aggregator's lever over a feed it publishes to others while a
+//! consumer that wants to stop acting simply stops sending settlements. What is
+//! the same is everything a verification reads.
 //!
 //! # What a caller may reach, and what only the authority may
 //!
@@ -35,9 +40,15 @@
 //! `update_signer_set` takes both for the same reason.
 //!
 //! Nothing else about a feed rotates. The pair, the scale and the window are
-//! fixed at registration, because open orders were priced against them — an
-//! order is a claim about a price of *this* pair on *this* scale, and moving
-//! either under it would change what the order means rather than what it trusts.
+//! fixed for as long as a registration lives, because open orders were priced
+//! against them — an order is a claim about a price of *this* pair on *this*
+//! scale, and moving either under it would change what the order means rather
+//! than what it trusts.
+//!
+//! [`deregister`] is the one way they move, and it is why an order records them:
+//! a registration can be retired and made again on other terms, so an order that
+//! carried only its feed id would be settled under whatever the current
+//! registration says. `crate::order::settle` refuses that.
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use core::fmt;

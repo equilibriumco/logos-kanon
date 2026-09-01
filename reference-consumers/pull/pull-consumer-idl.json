@@ -69,6 +69,14 @@
             }
           },
           {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "max_age_ms",
+            "type": "u64"
+          },
+          {
             "name": "limit_price_q64",
             "type": "u128"
           },
