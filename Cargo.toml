@@ -68,9 +68,13 @@ license = "MIT OR Apache-2.0"
 # anything published resolves to whatever exists at build time.
 verifier-core = { path = "verifier-core", version = "0.1.0" }
 pull-lib = { path = "pull-lib", version = "0.1.0" }
-# Declared here for `methods`' push-write measurement (M2-18), which needs the
-# instruction it is measuring. The guest spells its own path, because the guest
-# workspace does not see this table.
+# Two callers, and neither is a product dependency of the other's: `methods`'
+# push-write measurement (M2-18) needs the instruction it is measuring, and
+# reference consumer A names it as a dev-dependency because a test that writes a
+# price account the way the aggregator really does is worth more than one that
+# constructs six fields to suit. Reading a price needs the account type from
+# `kanon-idl`, not the program that writes it. The guests spell their own paths,
+# because a guest workspace does not see this table.
 aggregator-program = { path = "aggregator-program", version = "0.1.0" }
 kanon-clock = { path = "kanon-clock", version = "0.1.0" }
 kanon-idl = { path = "kanon-idl", version = "0.1.0" }
