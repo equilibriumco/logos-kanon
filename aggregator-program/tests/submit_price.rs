@@ -18,6 +18,7 @@
 
 use aggregator_program::manage::deregister_feed;
 use aggregator_program::publish::{PublishError, REDSTONE_SOURCE_ID};
+use aggregator_program::register::FEED_ACCOUNT_SEED;
 use aggregator_program::submit::{submit_price, SubmitError, PRICE_ACCOUNT_SEED};
 use aggregator_program::FeedAccount;
 use kanon_clock::CLOCK_ACCOUNT_ID;
@@ -28,7 +29,7 @@ use spel_framework::pda::{compute_pda, seed_from_str};
 use verifier_core::decode::{EMPTY_ENVELOPE_BYTES, REDSTONE_MARKER};
 use verifier_core::feed::MAX_AHEAD_MS;
 use verifier_core::value::median;
-use verifier_core::VerifyError;
+use verifier_core::{DecodeError, VerifyError};
 
 #[path = "../../verifier-core/tests/support/vectors.rs"]
 mod vectors;
@@ -112,6 +113,29 @@ const PRICE_ACCOUNT_FOR_THE_FEED: [u8; 32] = [
     0x57, 0xA3, 0x74, 0x1A, 0x9E, 0x3D, 0x92, 0xA8, 0xCC, 0x05, 0x0E, 0xF6, 0x0C, 0xB5, 0x8E, 0xE1,
     0xBF, 0x08, 0x6B, 0xE4, 0xE6, 0xE8, 0xA3, 0x19, 0x2F, 0x61, 0x74, 0x7E, 0x8D, 0xE4, 0xC2, 0xE8,
 ];
+
+/// A feed account at the address its own id derives, as `register_feed` claims it.
+///
+/// The shared `FEED_ACCOUNT_ID` above is fine for tests about one feed, and wrong
+/// for any test about two: it puts every feed at one address, so two feeds share a
+/// derived price account and a test that means to keep them apart never had them
+/// apart.
+fn feed_account_at_its_own_address(state: &FeedAccount) -> AccountWithMetadata {
+    let id = compute_pda(&OURS, &[&state.feed_id, &seed_from_str(FEED_ACCOUNT_SEED)]);
+    account(OURS, borsh::to_vec(state).expect("serialises"), *id.value())
+}
+
+/// The price account for a feed held at its own derived address.
+fn price_account_for(feed: &AccountWithMetadata) -> AccountWithMetadata {
+    AccountWithMetadata {
+        account: Account::default(),
+        is_authorized: false,
+        account_id: compute_pda(
+            &OURS,
+            &[feed.account_id.value(), &seed_from_str(PRICE_ACCOUNT_SEED)],
+        ),
+    }
+}
 
 /// The address the constraint derives, computed the way a client would.
 fn price_account_id() -> AccountId {
@@ -771,76 +795,118 @@ fn no_registrable_scale_lets_a_captured_price_overflow_its_conversion() {
 }
 
 #[test]
-fn an_upstream_failure_on_one_feed_leaves_another_untouched() {
-    // R3: an upstream error on one feed does not affect push mode for other feeds
-    // handled by the same node.
+fn a_submission_writes_only_its_own_feeds_price_account() {
+    // R3's channel, and the only one two feeds could share: an address. Each feed
+    // account sits where its own id derives, and each price account where that
+    // feed account's id derives -- so BTC's write and ETH's write land in
+    // different places, and neither can reach the other's account.
     //
-    // Structural rather than defended, and the IDL is where the structure is
-    // legible: a submission's accounts are `feed`, `price_account` and `clock`,
-    // and the only writable one is *that feed's own* price account. There is no
-    // account two feeds both write, so a failure on one has nothing to reach the
-    // other through. `only_a_submission_may_write_a_price` in `tests/idl.rs` is
-    // the other half, and `two_feeds_are_two_accounts` is why the addresses
-    // differ at all.
-    //
-    // What this adds is the behaviour, over each upstream failure a payload can
-    // carry. Every case drives a real refusal on BTC and then requires ETH to
-    // publish the value it should -- asserted on the price rather than on
-    // `is_ok`, so a submission that succeeded while writing something else would
-    // still fail here.
+    // This is the assertion the earlier version of this test was missing. It used
+    // the shared `FEED_ACCOUNT_ID` fixture, which puts every feed at one address:
+    // the two feeds it meant to keep apart were never apart, and the derivation
+    // could have ignored the feed id entirely without failing anything.
     let btc = vector("BTC");
     let eth = vector("ETH");
 
-    let mut stranger = feed_state(&btc);
-    stranger.signers = vec![[0xAA; 20]; 3];
+    let btc_feed = feed_account_at_its_own_address(&feed_state(&btc));
+    let eth_feed = feed_account_at_its_own_address(&feed_state(&eth));
+    let btc_price = price_account_for(&btc_feed);
+    let eth_price = price_account_for(&eth_feed);
 
-    let failures: Vec<(&str, FeedAccount, Vec<u8>, u64)> = vec![
+    assert_ne!(
+        btc_feed.account_id, eth_feed.account_id,
+        "two feed ids have to derive two feed accounts"
+    );
+    assert_ne!(
+        btc_price.account_id, eth_price.account_id,
+        "two feeds have to derive two price accounts, or a write to one is a write to the other"
+    );
+
+    // BTC publishes. The account it writes is BTC's, at BTC's address.
+    let posts = submit(
+        btc_feed,
+        btc_price.clone(),
+        clock_at(btc.timestamp_ms),
+        &btc.payload,
+    )
+    .expect("BTC publishes");
+    assert_eq!(
+        posts[1].account().data,
+        Data::from(&written(&posts)),
+        "the second post-state is the price account"
+    );
+    assert_eq!(written(&posts).price, expected_price(&btc));
+
+    // ETH, submitted afterwards against its own account, publishes ETH's price
+    // and not the one BTC just wrote.
+    let eth_posts = submit(
+        eth_feed,
+        eth_price,
+        clock_at(eth.timestamp_ms),
+        &eth.payload,
+    )
+    .expect("ETH publishes");
+    assert_eq!(written(&eth_posts).price, expected_price(&eth));
+    assert_ne!(
+        written(&eth_posts).price,
+        expected_price(&btc),
+        "ETH published BTC's price, so the two feeds are not separate"
+    );
+}
+
+#[test]
+fn every_upstream_failure_refuses_with_its_own_cause_and_writes_nothing() {
+    // R3's other half, and the honest name for it. A refusal produces `Err`
+    // rather than post-states, so there is no partial write for another feed to
+    // inherit -- that is R2's atomicity, and it is the return type here rather
+    // than something a test can observe.
+    //
+    // What this does check is that each upstream failure a payload can carry is
+    // refused, and refused with its *own* cause. The variant is asserted rather
+    // than `expect_err` taking anything, because an earlier version of this test
+    // used three copies of one signer address and answered
+    // `Config(DuplicateSigner)` -- caught before the payload was read at all --
+    // while claiming to exercise `UnauthorisedSigner`. Asserting the cause is what
+    // stops a case quietly testing something else.
+    let v = vector("BTC");
+
+    let mut strangers = feed_state(&v);
+    strangers.signers = vec![[0xAA; 20], [0xBB; 20], [0xCC; 20]];
+
+    let cases: Vec<(&str, FeedAccount, Vec<u8>, u64, SubmitError)> = vec![
         (
             "a payload that is not a payload",
-            feed_state(&btc),
-            btc.payload[..btc.payload.len() / 2].to_vec(),
-            btc.timestamp_ms,
+            feed_state(&v),
+            v.payload[..v.payload.len() / 2].to_vec(),
+            v.timestamp_ms,
+            SubmitError::Verify(VerifyError::Malformed(DecodeError::MissingMarker)),
         ),
         (
             "a roster that authorises none of the signers",
-            stranger,
-            btc.payload.clone(),
-            btc.timestamp_ms,
+            strangers,
+            v.payload.clone(),
+            v.timestamp_ms,
+            SubmitError::Verify(VerifyError::UnauthorisedSigner),
         ),
         (
             "a payload the clock has left behind",
-            feed_state(&btc),
-            btc.payload.clone(),
-            btc.timestamp_ms + MAX_AGE_MS + 1,
+            feed_state(&v),
+            v.payload.clone(),
+            v.timestamp_ms + MAX_AGE_MS + 1,
+            SubmitError::Verify(VerifyError::StalePackage),
         ),
     ];
 
-    for (name, state, payload, now) in failures {
-        // `Err` rather than post-states is the type saying what R2 says: a body
-        // that refuses writes nothing at all, so there is no partial write for
-        // the next feed to inherit.
-        submit(
-            feed_account(&state),
-            no_price_account(),
-            clock_at(now),
-            &payload,
-        )
-        .expect_err(&format!(
-            "{name}: BTC has to fail for this to test anything"
-        ));
-
-        let posts = submit(
-            feed_account(&feed_state(&eth)),
-            no_price_account(),
-            clock_at(eth.timestamp_ms),
-            &eth.payload,
-        )
-        .unwrap_or_else(|e| panic!("{name}: ETH must still publish, got {e:?}"));
-
+    for (name, state, payload, now, expected) in cases {
         assert_eq!(
-            written(&posts).price,
-            expected_price(&eth),
-            "{name}: ETH published the wrong price"
+            submit(
+                feed_account(&state),
+                no_price_account(),
+                clock_at(now),
+                &payload,
+            ),
+            Err(expected),
+            "{name}: refused with a different cause than the one this case is for"
         );
     }
 }

@@ -5,6 +5,7 @@
 //! instruction with a stale artefact would ship an SDK and a CLI built against a
 //! surface the program no longer has, and nothing else in the build would notice.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
@@ -76,16 +77,25 @@ fn only_a_submission_may_write_a_price() {
     let idl = committed_idl();
     let instructions = idl["instructions"].as_array().expect("an array");
 
-    let mut writers = Vec::new();
-    let mut readers = Vec::new();
+    // Sets rather than vectors: the answer is about *which* instructions, not the
+    // order the IDL happens to list them in, and a second reader arriving would
+    // otherwise make this test depend on where it sits in the file.
+    //
+    // Matched on the account's name, which is a convention rather than a type --
+    // the IDL carries no account types, so an instruction taking a price account
+    // under another parameter name would not be seen here. All ten call it
+    // `price_account`; `the_committed_idl_matches_the_guest_source` is what keeps
+    // this reading the real surface, and a rename would show up there as a diff.
+    let mut writers = BTreeSet::new();
+    let mut readers = BTreeSet::new();
     for ix in instructions {
         let name = ix["name"].as_str().expect("a name");
         for account in ix["accounts"].as_array().expect("accounts") {
             if account["name"] == "price_account" {
                 if account["writable"] == serde_json::Value::Bool(true) {
-                    writers.push(name);
+                    writers.insert(name);
                 } else {
-                    readers.push(name);
+                    readers.insert(name);
                 }
             }
         }
@@ -93,12 +103,12 @@ fn only_a_submission_may_write_a_price() {
 
     assert_eq!(
         writers,
-        vec!["submit_price"],
+        BTreeSet::from(["submit_price"]),
         "exactly one instruction may write a price, and it is the submission"
     );
     assert_eq!(
         readers,
-        vec!["register_feed"],
+        BTreeSet::from(["register_feed"]),
         "the only other instruction that sees a price account reads it, for the \
          pair check ADR 33 records"
     );
