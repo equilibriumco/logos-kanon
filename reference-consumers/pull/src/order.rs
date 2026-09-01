@@ -23,6 +23,20 @@
 //! part of an order's terms, and it is the same exposure a push consumer has to
 //! `update_signer_set`.
 //!
+//! # An order cannot be withdrawn
+//!
+//! There is no cancellation. [`open_order`] and [`settle`] are the whole surface,
+//! and [`settle`] is permissionless, so an order stays settleable by anybody the
+//! moment the market crosses its limit — for as long as its feed is registered.
+//! The only stop is the authority retiring the feed, which reaches every order
+//! against it at once.
+//!
+//! Deliberate, and `[M3-06:02]` records why: cancellation is a venue's concern
+//! and demonstrates nothing about pull verification, while a cancel racing a
+//! settle in the same block is a trading question this consumer should not be
+//! answering. Anybody lifting this into something real needs it first — it is one
+//! signed handler over an account its owner already owns.
+//!
 //! # An order id is spent once
 //!
 //! LEZ rule 4 forbids a program giving up ownership of an account and rule 3

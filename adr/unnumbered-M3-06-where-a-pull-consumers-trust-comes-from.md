@@ -121,6 +121,25 @@ on the trust account would work and would put a write on the trust account in ev
 `open_order`, turning a read-only account into a contended one for a check the authority
 can make off-chain. Retire-and-re-register reaches the same place without that.
 
+*Rejected: letting an owner cancel an order.* There is no withdrawal: `open_order` and
+`settle` are the only entry points, `settle` is permissionless, and an order stays
+settleable by anybody the moment the market crosses it, for as long as its feed is
+registered. An owner who regrets a limit has no lever, and the only stop is the authority
+retiring the feed, which hits every order against it at once.
+
+That is a real property of this program and not an oversight, so it is recorded here
+rather than left to be discovered. The reason is what the domain is for: the order exists
+to be an *action gated on a verified price*, and cancellation is a venue's concern that
+would demonstrate nothing about pull verification while adding an instruction, an account
+state and a race — a cancel and a settle for the same order in one block have to resolve,
+and resolving them is a trading question this consumer has no business answering.
+
+Anybody lifting this into something real needs it, and needs it before they take the
+program live rather than after. It is a signed instruction on an account its owner
+already owns, so it costs one handler and no new trust: check the signer against the
+stored `owner`, then empty the account the way `deregister` empties a trust. What it must
+not do is reopen the id, for the reason the module header gives.
+
 *Rejected: an authority with a revoke.* The aggregator has one because RFP-001 asks for
 it. A consumer that revoked its own authority would freeze every trust account it owns
 with no way back and nothing gained, so the surface is not carried here.

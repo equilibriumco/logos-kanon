@@ -465,6 +465,82 @@ mod tests {
     }
 
     #[test]
+    fn an_unconfigured_build_refuses_to_establish_an_authority() {
+        // What this covers that the host suite cannot: that the handler reads
+        // `GENESIS_AUTHORITY` rather than a genesis of its own, and that a build
+        // nobody configured refuses everyone instead of accepting the first
+        // caller. The host tests pass a genesis in as an argument, so only here is
+        // the constant itself -- and `genesis_from_hex` and `nibble` beneath it --
+        // on a test path at all.
+        //
+        // It asserts the unconfigured case because that is the one CI can build. A
+        // configured build is a deployment concern, and `[M3-06:02]` records that
+        // the key is a build input. The aggregator's
+        // `an_unconfigured_build_refuses_to_establish_an_authority` is the same
+        // test for the same reason; this is the half of that pairing the consumer
+        // was missing.
+        assert_eq!(
+            super::GENESIS_AUTHORITY,
+            [0u8; 32],
+            "CI builds carry no genesis key"
+        );
+
+        let config = AccountWithMetadata {
+            account: Account::default(),
+            is_authorized: false,
+            account_id: config_id(),
+        };
+        let mut authority = account(id([0xA1; 32]), true);
+        authority.account.program_owner = [42u32; 8];
+
+        let ctx = super::ProgramContext::new(OURS, [0u32; 8]);
+        let refused = super::kanon_pull_consumer::establish_authority(ctx, config, authority)
+            .expect_err("a build with no genesis authority must refuse");
+
+        // By code rather than by variant: `SpelError` carries no `PartialEq`, and
+        // the code is the part a caller acts on.
+        assert_eq!(
+            refused.error_code(),
+            SpelError::from(reference_consumer_pull::AuthorityError::NoGenesisAuthority)
+                .error_code()
+        );
+    }
+
+    #[test]
+    fn the_genesis_key_is_decoded_from_its_hex_exactly() {
+        // The test above asserts what an unconfigured build does, and that is all
+        // it can assert: `option_env!` takes the `None` branch in CI, so
+        // `genesis_from_hex` and `nibble` are never called and the constant is
+        // `[0; 32]` either way. Measured -- breaking `nibble`'s `a..f` arm, or
+        // replacing `&GENESIS_AUTHORITY` at the call site with a literal
+        // `&[0u8; 32]`, leaves that test green.
+        //
+        // So the decode is exercised directly. It is the half of a build input
+        // that a build can get wrong silently: a mis-decoded key produces a
+        // deployment whose authority nobody holds, on the one instruction that
+        // cannot be retried.
+        const KEY: [u8; 32] = super::genesis_from_hex(
+            "0123456789abcdefABCDEF0000000000000000000000000000000000000000ff",
+        );
+
+        assert_eq!(KEY[0], 0x01, "0 and 1");
+        assert_eq!(KEY[1], 0x23);
+        assert_eq!(KEY[4], 0x89, "the digit and letter boundary");
+        assert_eq!(KEY[5], 0xab, "lower-case a-f");
+        assert_eq!(KEY[7], 0xef);
+        assert_eq!(KEY[8], 0xAB, "upper-case A-F decodes the same");
+        assert_eq!(KEY[10], 0xEF);
+        assert_eq!(KEY[31], 0xff, "the last byte, so the walk covers the width");
+
+        // Every nibble arm, so a shifted offset in one of them is caught rather
+        // than averaged away by the spot checks above.
+        const ALL_ZERO: [u8; 32] = super::genesis_from_hex(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        );
+        assert_eq!(ALL_ZERO, [0u8; 32]);
+    }
+
+    #[test]
     fn a_trust_account_for_another_feed_is_refused_by_settles_validator() {
         // The dispatcher's half of the rule the body also checks. Without the
         // constraint a caller could hand `settle` any trust account this program
