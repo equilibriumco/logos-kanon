@@ -117,8 +117,10 @@ pub enum OpenError {
     PairMismatch,
     /// The serialised order does not fit an account's data.
     ///
-    /// Unreachable: an order is a hundred and fifty-three bytes against a 100 KiB
-    /// limit. Kept
+    /// Unreachable: an order is 154 bytes against a 100 KiB limit, and every field
+    /// is fixed-width so that is the size rather than a maximum.
+    /// `an_order_is_far_smaller_than_an_accounts_data_limit` measures it, because
+    /// this number has been counted by hand and got wrong twice. Kept
     /// because the alternative is `expect`, and a panic in a guest aborts the
     /// transaction instead of refusing the instruction.
     OrderTooLarge,
@@ -758,6 +760,15 @@ mod tests {
             ),
             Err(OpenError::PairMismatch)
         );
+    }
+
+    #[test]
+    fn an_order_is_far_smaller_than_an_accounts_data_limit() {
+        // `OrderTooLarge` documents itself as unreachable, and the claim rests on
+        // a byte count. Measured rather than counted, because counting it by hand
+        // produced 89 and then 153 for encodings that were 81 and 145.
+        let order = stored(&opened(BTC, u128::MAX));
+        assert_eq!(borsh::to_vec(&order).expect("serialises").len(), 154);
     }
 
     #[test]
