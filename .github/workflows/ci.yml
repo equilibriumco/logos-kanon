@@ -78,6 +78,8 @@ jobs:
           cargo fmt --all --manifest-path e2e/Cargo.toml -- --check
           cargo fmt --all \
             --manifest-path reference-consumers/pull/guest/Cargo.toml -- --check
+          cargo fmt --all \
+            --manifest-path reference-consumers/aggregator-read/guest/Cargo.toml -- --check
 
       # RISC0_SKIP_BUILD is required, not a shortcut. `cargo clippy` exports a
       # rustc wrapper that the guest build inherits, and clippy-driver has no
@@ -363,6 +365,9 @@ jobs:
           cargo test --release --locked \
             --manifest-path reference-consumers/pull/guest/Cargo.toml \
             --bin pull_consumer
+          cargo test --release --locked \
+            --manifest-path reference-consumers/aggregator-read/guest/Cargo.toml \
+            --bin aggregator_read_consumer
 
   licenses:
     name: cargo deny
@@ -391,6 +396,7 @@ jobs:
             m0 \
             methods/guest \
             reference-consumers/pull/guest \
+            reference-consumers/aggregator-read/guest \
             m0/cost-baseline/methods-software/guest \
             m0/cost-baseline/methods-accelerated/guest \
             m0/cost-baseline/methods-mixed/guest \
