@@ -13,6 +13,21 @@ fn committed_path() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("pull-consumer-idl.json")
 }
 
+fn idl() -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(committed_path()).expect("committed"))
+        .expect("the IDL is JSON")
+}
+
+fn instruction(name: &str) -> serde_json::Value {
+    idl()["instructions"]
+        .as_array()
+        .expect("an instructions array")
+        .iter()
+        .find(|ix| ix["name"] == name)
+        .unwrap_or_else(|| panic!("{name} is in the IDL"))
+        .clone()
+}
+
 #[test]
 fn the_committed_idl_matches_the_guest_source() {
     let generated = Command::new(env!("CARGO_BIN_EXE_generate-pull-consumer-idl"))
@@ -36,61 +51,37 @@ fn the_committed_idl_matches_the_guest_source() {
     );
 }
 
-fn instruction(name: &str) -> serde_json::Value {
-    let idl: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(committed_path()).expect("committed"))
-            .expect("the IDL is JSON");
-    idl["instructions"]
-        .as_array()
-        .expect("an instructions array")
-        .iter()
-        .find(|ix| ix["name"] == name)
-        .unwrap_or_else(|| panic!("{name} is in the IDL"))
-        .clone()
-}
-
 #[test]
-fn the_idl_declares_the_order_derivation_a_client_has_to_reproduce() {
-    // The test above proves the generator and the artefact agree. It cannot prove
-    // either says what was intended, and this is the part somebody outside this
-    // repository depends on: an order's address is derived rather than announced,
-    // so a client that cannot compute it cannot open an order or find one again.
-    let accounts = instruction("open_order")["accounts"].clone();
-
-    let order = &accounts[0];
-    assert_eq!(order["name"], "order");
-    assert_eq!(order["writable"], true);
+fn nothing_in_settles_instruction_data_can_reach_the_signer_set() {
+    // SEC2, read off the published surface. The security model of pull mode is
+    // that the roster is the consumer's, and a reader who wants to check that
+    // claim without reading the program can check it here: `settle` takes a feed
+    // id and a payload. No signer list, no threshold, no window, no pair.
+    //
+    // Asserted against the IDL rather than the source because the IDL is what a
+    // caller builds against, and because an added parameter shows up here as a
+    // failure rather than as a diff nobody read.
     assert_eq!(
-        order["pda"]["seeds"],
+        instruction("settle")["args"],
         serde_json::json!([
-            { "kind": "arg", "path": "order_id" },
-            { "kind": "const", "value": reference_consumer_pull::ORDER_ACCOUNT_SEED },
+            { "name": "feed_id", "type": { "array": ["u8", 32] } },
+            { "name": "payload", "type": { "vec": "u8" } },
         ]),
-        "one order per id, at an address a client has to be able to derive"
+        "a settlement takes the bytes to verify and the feed to verify them for"
     );
 
-    let owner = &accounts[1];
-    assert_eq!(owner["name"], "owner");
-    assert_eq!(
-        owner["signer"], true,
-        "opening an order is a statement about its owner"
-    );
-    assert_eq!(owner["writable"], false);
-}
-
-#[test]
-fn the_idl_declares_settle_as_permissionless_and_the_clock_as_read_only() {
-    // Both halves matter to a caller building a transaction, and both are
-    // decisions rather than defaults. No signer, because the sender attests to
-    // nothing about a payload; the clock read-only, because ADR 13 makes it the
-    // only admissible source of "now" and nothing writes it.
+    // And the accounts it reads for configuration are not writable by it, so a
+    // settlement cannot move what the program trusts even for the feed it names.
     let accounts = instruction("settle")["accounts"].clone();
-
     assert_eq!(accounts[0]["name"], "order");
     assert_eq!(accounts[0]["writable"], true);
-
-    assert_eq!(accounts[1]["name"], "clock");
-    assert_eq!(accounts[1]["writable"], false);
+    assert_eq!(accounts[1]["name"], "trust");
+    assert_eq!(
+        accounts[1]["writable"], false,
+        "a settlement reads what the program trusts and never writes it"
+    );
+    assert_eq!(accounts[2]["name"], "clock");
+    assert_eq!(accounts[2]["writable"], false);
 
     for account in accounts.as_array().expect("accounts") {
         assert_eq!(
@@ -101,31 +92,89 @@ fn the_idl_declares_settle_as_permissionless_and_the_clock_as_read_only() {
 }
 
 #[test]
-fn nothing_in_settles_instruction_data_can_reach_the_signer_set() {
-    // SEC2, read off the published surface. The security model of pull mode is
-    // that the roster is the consumer's, and a reader who wants to check that
-    // claim without reading the program can check it here: `settle` takes a
-    // payload and nothing else. No signer list, no threshold, no window, no pair.
+fn every_instruction_that_moves_what_the_program_trusts_declares_a_signer() {
+    // The other half of SEC2, and the half a compiled roster did not have. The
+    // roster is state now, so what protects it is the authority gate -- and a
+    // client reading this IDL has to be told that these four need a signature,
+    // because `signer` metadata is what a transaction builder acts on.
     //
-    // Asserted against the IDL rather than the source because the IDL is what a
-    // caller builds against, and because an added parameter would show up here as
-    // a failure rather than as a diff nobody read.
-    let args = instruction("settle")["args"].clone();
-    assert_eq!(
-        args,
-        serde_json::json!([{ "name": "payload", "type": { "vec": "u8" } }]),
-        "a settlement takes the bytes to verify and no configuration"
-    );
+    // The gate is enforced in Rust as well: the dispatcher checks the flag and
+    // `authority::authorise` checks the key. A missing annotation here would not
+    // be an authorisation hole, but it would be a silent change to what every
+    // generated client believes.
+    for name in [
+        "establish_authority",
+        "nominate_authority",
+        "accept_authority",
+        "register_feed_trust",
+        "rotate_signers",
+    ] {
+        let accounts = instruction(name)["accounts"].clone();
+        assert!(
+            accounts
+                .as_array()
+                .expect("accounts")
+                .iter()
+                .any(|a| a["signer"] == true),
+            "{name} changes what this program trusts and declares no signer"
+        );
+    }
+}
 
-    // `open_order` chooses which compiled feed an order is against, and that is
-    // the whole of what instruction data may influence. An index is not a roster.
-    let args = instruction("open_order")["args"].clone();
+#[test]
+fn the_idl_declares_every_derivation_a_client_has_to_reproduce() {
+    // None of these addresses is announced anywhere: a client computes them or it
+    // cannot build a transaction at all. The seeds are the contract.
     assert_eq!(
-        args,
+        instruction("establish_authority")["accounts"][0]["pda"]["seeds"],
         serde_json::json!([
-            { "name": "order_id", "type": { "array": ["u8", 32] } },
-            { "name": "feed", "type": "u8" },
-            { "name": "limit_price_q64", "type": "u128" },
+            { "kind": "const", "value": reference_consumer_pull::CONFIG_ACCOUNT_SEED },
+        ]),
+        "one config account per program"
+    );
+    assert_eq!(
+        instruction("register_feed_trust")["accounts"][0]["pda"]["seeds"],
+        serde_json::json!([
+            { "kind": "arg", "path": "feed_id" },
+            { "kind": "const", "value": reference_consumer_pull::TRUST_ACCOUNT_SEED },
+        ]),
+        "one trust account per feed, at the address its id derives"
+    );
+    assert_eq!(
+        instruction("open_order")["accounts"][0]["pda"]["seeds"],
+        serde_json::json!([
+            { "kind": "arg", "path": "order_id" },
+            { "kind": "const", "value": reference_consumer_pull::ORDER_ACCOUNT_SEED },
+        ]),
+        "one order per id"
+    );
+    // `settle` constrains the trust account it reads to the feed it names, which
+    // is what stops a caller substituting another feed's roster.
+    assert_eq!(
+        instruction("settle")["accounts"][1]["pda"]["seeds"],
+        serde_json::json!([
+            { "kind": "arg", "path": "feed_id" },
+            { "kind": "const", "value": reference_consumer_pull::TRUST_ACCOUNT_SEED },
         ])
     );
+}
+
+#[test]
+fn the_owner_constraint_is_deliberately_absent_from_the_idl() {
+    // Recorded as a test because it is surprising and the natural fix is wrong.
+    // Ownership of the order, the trust and the config is checked in Rust rather
+    // than by `#[account(owner = ...)]`, because SPEL's IDL generator parses
+    // `owner` and discards it — a declarative constraint would be invisible to
+    // every generated client while looking, in the source, as though it were
+    // published. If a later SPEL starts emitting it, this fails and the choice is
+    // worth revisiting.
+    for instructions in idl()["instructions"].as_array().expect("instructions") {
+        for account in instructions["accounts"].as_array().expect("accounts") {
+            assert!(
+                account.get("owner").is_none(),
+                "SPEL began publishing `owner`: move the ownership checks back to \
+                 constraints and delete this test"
+            );
+        }
+    }
 }

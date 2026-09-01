@@ -1,25 +1,26 @@
 //! The SPEL program: reference consumer B's entry point, as LEZ executes it.
 //!
-//! Two instructions, both thin. The logic is in `reference-consumer-pull`, which
+//! Seven instructions, all thin. The logic is in `reference-consumer-pull`, which
 //! the host workspace can test; this file is the seam between that and LEZ, and
 //! the seam is where the two things `pull-lib` cannot check are settled.
 //!
-//! **The clock's bytes are bound to the account they came from.** `clock` below
-//! is one `AccountWithMetadata` the dispatcher supplied, and `settle` reads its
-//! id and its data out of that one struct. A consumer that took a timestamp as
-//! an argument, or paired the pinned account id with bytes of its own, would pass
-//! every check in `pull-lib` and be lying to its own users about how fresh a
-//! price is.
+//! **The clock's bytes are bound to the account they came from.** `clock` in
+//! `settle` is one `AccountWithMetadata` the dispatcher supplied, and the logic
+//! reads its id and its data out of that one struct. A consumer that took a
+//! timestamp as an argument, or paired the pinned account id with bytes of its
+//! own, would pass every check in `pull-lib` and be lying to its own users about
+//! how fresh a price is.
 //!
-//! **Nothing a caller sends reaches the signer set.** The instruction data below
-//! is an order id, a feed index, a limit price and a payload. There is no
-//! parameter for a roster, a threshold or a window, because those are constants
-//! in `reference-consumer-pull` — see its module header on why that is the whole
-//! of pull mode's security model.
+//! **Nothing a caller sends reaches the signer set.** The roster lives in a trust
+//! account this program owns, and the two instructions that write one stand
+//! behind the authority gate. `settle` takes a payload and an order; it writes
+//! neither the trust account nor the config.
 //!
-//! Accounts are declared subject first, the order account before the clock, the
-//! way the aggregator declares the feed before the accounts it reads. The order
-//! matters because it is positional on the wire.
+//! Accounts are declared subject first: the order on the two order instructions,
+//! the trust account on the two that change a feed, the config on the three that
+//! change the authority. The rule is worth stating because the order is
+//! positional on the wire and a caller building several has otherwise to
+//! remember which.
 
 #![cfg_attr(not(test), no_main)]
 
@@ -30,40 +31,234 @@ use spel_framework::prelude::*;
 #[cfg(not(test))]
 risc0_zkvm::guest::entry!(main);
 
+/// This build's genesis authority: the only signer that may establish the config
+/// account, and nothing afterwards.
+///
+/// A build input rather than a committed key, so a devnet deployment and a real
+/// one do not share one. All zeros is a build nobody configured, and `establish`
+/// refuses it — which is what stops a forgotten key becoming an open first write,
+/// the race whoever watches for a deployment would otherwise win.
+///
+/// Set it at build time:
+///
+/// ```sh
+/// KANON_PULL_GENESIS_AUTHORITY=<64 hex characters> cargo build
+/// ```
+///
+/// It recurs per build and not per deployment: a program's id is its image id, so
+/// a rebuild from unchanged inputs lands on the same config account while a build
+/// with a changed input presents a fresh one. The aggregator's `[M2-06:01]` works
+/// through the same mechanism.
+const GENESIS_AUTHORITY: [u8; 32] = match option_env!("KANON_PULL_GENESIS_AUTHORITY") {
+    Some(hex) => genesis_from_hex(hex),
+    None => [0u8; 32],
+};
+
+/// Decodes the genesis key at compile time, so a malformed one is a build failure
+/// rather than a deployment that cannot be established.
+const fn genesis_from_hex(hex: &str) -> [u8; 32] {
+    let bytes = hex.as_bytes();
+    assert!(
+        bytes.len() == 64,
+        "KANON_PULL_GENESIS_AUTHORITY must be 64 hex characters"
+    );
+    let mut key = [0u8; 32];
+    let mut i = 0;
+    while i < 32 {
+        key[i] = (nibble(bytes[i * 2]) << 4) | nibble(bytes[i * 2 + 1]);
+        i += 1;
+    }
+    key
+}
+
+const fn nibble(character: u8) -> u8 {
+    match character {
+        b'0'..=b'9' => character - b'0',
+        b'a'..=b'f' => character - b'a' + 10,
+        b'A'..=b'F' => character - b'A' + 10,
+        _ => panic!("KANON_PULL_GENESIS_AUTHORITY is not hexadecimal"),
+    }
+}
+
 #[lez_program]
 mod kanon_pull_consumer {
     #[allow(unused_imports)]
     use super::*;
+
+    /// Establishes this program's authority from the key it was built with.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — the authority's account, at
+    ///    `for_public_pda(program, sha256(zero_pad_32("KANON_PULL_CONFIG")))`.
+    ///    `mut` and not `init`: `init` emits its own `AccountAlreadyInitialized`
+    ///    in the dispatcher, which would hide the difference between an
+    ///    authority already established and an address somebody squatted, and
+    ///    those are two different pieces of advice.
+    /// 2. `authority` — the signer claiming to be this build's genesis key.
+    #[instruction]
+    pub fn establish_authority(
+        ctx: ProgramContext,
+        // `r#const` and not `const`: the seed is parsed as a `syn::Expr` and a
+        // bare keyword is not one, so the documented spelling fails to parse
+        // before the seed parser sees it.
+        #[account(mut, pda = [r#const("KANON_PULL_CONFIG")])] config: AccountWithMetadata,
+        #[account(signer)] authority: AccountWithMetadata,
+    ) -> SpelResult {
+        let post_states = reference_consumer_pull::authority::establish(
+            config,
+            authority,
+            &GENESIS_AUTHORITY,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
+    }
+
+    /// Records a key that may take the authority over once it accepts.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — the authority's account.
+    /// 2. `authority` — the current authority, signing.
+    #[instruction]
+    pub fn nominate_authority(
+        ctx: ProgramContext,
+        #[account(mut, pda = [r#const("KANON_PULL_CONFIG")])] config: AccountWithMetadata,
+        #[account(signer)] authority: AccountWithMetadata,
+        nominee: [u8; 32],
+    ) -> SpelResult {
+        let post_states = reference_consumer_pull::authority::nominate(
+            config,
+            authority,
+            nominee,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
+    }
+
+    /// Takes the authority over, as the nominee.
+    ///
+    /// Two steps rather than one so a mistyped nomination costs a second
+    /// nomination rather than the program's whole administrative surface.
+    ///
+    /// Expected accounts:
+    /// 1. `config` — the authority's account.
+    /// 2. `nominee` — the nominated key, signing.
+    #[instruction]
+    pub fn accept_authority(
+        ctx: ProgramContext,
+        #[account(mut, pda = [r#const("KANON_PULL_CONFIG")])] config: AccountWithMetadata,
+        #[account(signer)] nominee: AccountWithMetadata,
+    ) -> SpelResult {
+        let post_states =
+            reference_consumer_pull::authority::accept(config, nominee, ctx.self_program_id)?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
+    }
+
+    /// Registers what this consumer trusts for one feed.
+    ///
+    /// Expected accounts:
+    /// 1. `trust` — the feed's trust account, at
+    ///    `for_public_pda(program, sha256(feed_id || zero_pad_32("KANON_PULL_TRUST")))`.
+    ///    Declared rather than checked in code, because the derivation is what a
+    ///    client has to reproduce and the constraint is what publishes it in the
+    ///    IDL.
+    /// 2. `authority` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority it is checked against.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a registration is the feed's whole configuration, and naming each field is what makes it checkable from the IDL"
+    )]
+    #[instruction]
+    pub fn register_feed_trust(
+        ctx: ProgramContext,
+        #[account(mut, pda = [arg("feed_id"), r#const("KANON_PULL_TRUST")])]
+        trust: AccountWithMetadata,
+        #[account(signer)] authority: AccountWithMetadata,
+        #[account(pda = [r#const("KANON_PULL_CONFIG")])] config: AccountWithMetadata,
+        data_service_id: String,
+        feed_id: [u8; 32],
+        base_asset: [u8; 32],
+        quote_asset: [u8; 32],
+        decimals: u8,
+        max_age_ms: u64,
+        signers: Vec<[u8; 20]>,
+        threshold: u8,
+    ) -> SpelResult {
+        let post_states = reference_consumer_pull::trust::register(
+            trust,
+            authority,
+            config,
+            data_service_id,
+            feed_id,
+            base_asset,
+            quote_asset,
+            decimals,
+            max_age_ms,
+            signers,
+            threshold,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
+    }
+
+    /// Replaces one feed's signer set and threshold, together.
+    ///
+    /// The instruction RedStone's rotation schedule is the reason for. A rotation
+    /// names its feed as well as addressing it, so an operator rotating five
+    /// feeds cannot move the wrong one by transposing two accounts.
+    ///
+    /// Expected accounts:
+    /// 1. `trust` — the feed's trust account.
+    /// 2. `authority` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority it is checked against.
+    #[instruction]
+    pub fn rotate_signers(
+        ctx: ProgramContext,
+        #[account(mut, pda = [arg("feed_id"), r#const("KANON_PULL_TRUST")])]
+        trust: AccountWithMetadata,
+        #[account(signer)] authority: AccountWithMetadata,
+        #[account(pda = [r#const("KANON_PULL_CONFIG")])] config: AccountWithMetadata,
+        feed_id: [u8; 32],
+        signers: Vec<[u8; 20]>,
+        threshold: u8,
+    ) -> SpelResult {
+        let post_states = reference_consumer_pull::trust::rotate_signers(
+            trust,
+            authority,
+            config,
+            feed_id,
+            signers,
+            threshold,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
+    }
 
     /// Opens an order at the price its owner is prepared to trade at.
     ///
     /// Expected accounts:
     /// 1. `order` — the order's account, at
     ///    `for_public_pda(program, sha256(order_id || zero_pad_32("KANON_PULL_ORDER")))`.
-    ///    Declared rather than checked in code, because the derivation is what a
-    ///    client has to reproduce and the constraint is what publishes it in the
-    ///    IDL. `mut` and not `init`: `init` emits its own
-    ///    `AccountAlreadyInitialized` in the dispatcher, which would hide the
-    ///    difference between an id already in use and an address somebody
-    ///    squatted, and those are two different pieces of advice.
     /// 2. `owner` — the signer the order belongs to.
+    /// 3. `trust` — the feed's trust account, read and never written. An order
+    ///    against a feed nobody registered could never settle, so the
+    ///    registration is required at the open where the owner can still act on
+    ///    it.
     #[instruction]
     pub fn open_order(
         ctx: ProgramContext,
-        // `r#const` and not `const`: the seed is parsed as a `syn::Expr` and a
-        // bare keyword is not one, so the documented spelling fails to parse
-        // before the seed parser sees it.
         #[account(mut, pda = [arg("order_id"), r#const("KANON_PULL_ORDER")])]
         order: AccountWithMetadata,
         #[account(signer)] owner: AccountWithMetadata,
+        #[account(pda = [arg("feed_id"), r#const("KANON_PULL_TRUST")])] trust: AccountWithMetadata,
         order_id: [u8; 32],
-        feed: u8,
+        feed_id: [u8; 32],
         limit_price_q64: u128,
     ) -> SpelResult {
         let post_states = reference_consumer_pull::open_order(
             order,
             owner,
-            feed,
+            trust,
+            feed_id,
             limit_price_q64,
             order_id,
             ctx.self_program_id,
@@ -76,8 +271,8 @@ mod kanon_pull_consumer {
     ///
     /// Permissionless, like the aggregator's `submit_price` and for the same
     /// reason: the sender attests to nothing about the bytes. Authenticity comes
-    /// from the signatures in `payload`, checked against the consumer's own
-    /// signer set.
+    /// from the signatures in `payload`, checked against the roster `trust`
+    /// holds.
     ///
     /// Expected accounts:
     /// 1. `order` — the order to fill. Owned by this program and holding an
@@ -87,24 +282,33 @@ mod kanon_pull_consumer {
     ///    `owner` and discards it, so a constraint no client can see is worse
     ///    than one that carries its own error.
     ///
-    ///    No `pda` constraint here, unlike `open_order`. It would buy nothing:
-    ///    every account this program owns is an order account, so a caller
-    ///    passing one at an underived address is passing an account that fails
-    ///    the ownership check, and a caller passing a real order is settling the
-    ///    order it named. The derivation is published on `open_order`, which is
-    ///    where a client needs it.
-    /// 2. `clock` — the LEZ clock program's every-block account, read-only, and
+    ///    No `pda` constraint, unlike `open_order`. It would buy nothing: the
+    ///    order's own contents decide which feed is verified, and an account at
+    ///    an underived address fails the ownership check. The derivation is
+    ///    published on `open_order`, which is where a client needs it.
+    /// 2. `trust` — what this program trusts for `feed_id`. Read and never
+    ///    written, and constrained to the named feed's address so a caller cannot
+    ///    substitute another feed's roster.
+    /// 3. `clock` — the LEZ clock program's every-block account, read-only, and
     ///    the only admissible source of "now" (ADR 13). Passed whole, which is
     ///    what binds its bytes to its id.
     #[instruction]
     pub fn settle(
         ctx: ProgramContext,
         #[account(mut)] order: AccountWithMetadata,
+        #[account(pda = [arg("feed_id"), r#const("KANON_PULL_TRUST")])] trust: AccountWithMetadata,
         clock: AccountWithMetadata,
+        feed_id: [u8; 32],
         payload: Vec<u8>,
     ) -> SpelResult {
-        let post_states =
-            reference_consumer_pull::settle(order, clock, &payload, ctx.self_program_id)?;
+        let post_states = reference_consumer_pull::settle(
+            order,
+            trust,
+            clock,
+            feed_id,
+            &payload,
+            ctx.self_program_id,
+        )?;
         // Fully qualified deliberately. `#[lez_program]` rewrites a call whose
         // path is exactly the two segments `SpelOutput::execute` into
         // `execute_with_claims`, which takes `&[Account]` and a generated claims
@@ -119,14 +323,15 @@ mod kanon_pull_consumer {
 mod tests {
     use nssa_core::account::{Account, AccountId, AccountWithMetadata, Data, Nonce};
     use nssa_core::program::{InstructionData, ProgramId};
-    use reference_consumer_pull::ORDER_ACCOUNT_SEED;
+    use reference_consumer_pull::{CONFIG_ACCOUNT_SEED, ORDER_ACCOUNT_SEED, TRUST_ACCOUNT_SEED};
     use spel_framework::error::SpelError;
     use spel_framework::pda::{compute_pda, seed_from_str};
 
     const OURS: ProgramId = [7u32; 8];
     const ORDER_ID: [u8; 32] = [0x0D; 32];
+    const FEED_ID: [u8; 32] = [0xFE; 32];
 
-    fn account(id: [u8; 32], signs: bool) -> AccountWithMetadata {
+    fn account(id: AccountId, signs: bool) -> AccountWithMetadata {
         AccountWithMetadata {
             account: Account {
                 program_owner: OURS,
@@ -135,60 +340,192 @@ mod tests {
                 nonce: Nonce(0),
             },
             is_authorized: signs,
-            account_id: AccountId::new(id),
+            account_id: id,
         }
     }
 
-    /// The address the constraint should accept, derived the way a client would.
-    fn order_account_id() -> AccountId {
+    fn id(raw: [u8; 32]) -> AccountId {
+        AccountId::new(raw)
+    }
+
+    /// A generated validator takes only the arguments its own constraints name,
+    /// so a `feed_id` seed appears and a signer list does not.
+    ///
+    /// The addresses the constraints should accept, derived the way a client
+    /// would. Each hashes the seed constant the logic crate exports, while the
+    /// constraint hashes an `r#const` literal in this file — so these are also
+    /// the assertion that the two spellings agree.
+    fn config_id() -> AccountId {
+        compute_pda(&OURS, &[&seed_from_str(CONFIG_ACCOUNT_SEED)])
+    }
+
+    fn trust_id() -> AccountId {
+        compute_pda(&OURS, &[&FEED_ID, &seed_from_str(TRUST_ACCOUNT_SEED)])
+    }
+
+    fn order_id() -> AccountId {
         compute_pda(&OURS, &[&ORDER_ID, &seed_from_str(ORDER_ACCOUNT_SEED)])
     }
 
-    /// The generated validator takes only the arguments its constraints name,
-    /// so `order_id` is here and the feed index and limit price are not.
-    fn validate_open(order_id: AccountId, owner_signs: bool) -> Result<(), SpelError> {
-        let accounts = [
-            account(*order_id.value(), false),
-            account([0xA0; 32], owner_signs),
-        ];
-        let instruction: InstructionData = Vec::new();
-        super::kanon_pull_consumer::__validate_open_order(&accounts, &OURS, &instruction, &ORDER_ID)
+    #[test]
+    fn the_declared_accounts_pass_every_generated_validator() {
+        let empty: InstructionData = Vec::new();
+
+        super::kanon_pull_consumer::__validate_establish_authority(
+            &[account(config_id(), false), account(id([0xA1; 32]), true)],
+            &OURS,
+            &empty,
+        )
+        .expect("the config derivation is the declared one");
+
+        super::kanon_pull_consumer::__validate_rotate_signers(
+            &[
+                account(trust_id(), false),
+                account(id([0xA1; 32]), true),
+                account(config_id(), false),
+            ],
+            &OURS,
+            &empty,
+            &FEED_ID,
+        )
+        .expect("the trust derivation is the declared one");
+
+        super::kanon_pull_consumer::__validate_open_order(
+            &[
+                account(order_id(), false),
+                account(id([0xA0; 32]), true),
+                account(trust_id(), false),
+            ],
+            &OURS,
+            &empty,
+            &ORDER_ID,
+            &FEED_ID,
+        )
+        .expect("the order derivation is the declared one");
+
+        super::kanon_pull_consumer::__validate_settle(
+            &[
+                account(order_id(), false),
+                account(trust_id(), false),
+                account(id(*b"/LEZ/ClockProgramAccount/0000001"), false),
+            ],
+            &OURS,
+            &empty,
+            &FEED_ID,
+        )
+        .expect("settle's trust constraint accepts the named feed's address");
     }
 
     #[test]
-    fn the_declared_order_accounts_pass_the_generated_validator() {
-        // Also the assertion that this file and `reference-consumer-pull` derive
-        // the same address: the constraint hashes `r#const("KANON_PULL_ORDER")`
-        // and this hashes `ORDER_ACCOUNT_SEED`, and only one of the two is a
-        // literal here.
-        validate_open(order_account_id(), true).expect("the derived address is the declared one");
-    }
-
-    #[test]
-    fn an_order_account_at_another_address_is_refused_by_the_generated_validator() {
-        // Without the constraint an order could be opened at an address nobody
-        // can derive, which is an order no client could ever find again.
+    fn a_trust_account_for_another_feed_is_refused_by_settles_validator() {
+        // The dispatcher's half of the rule the body also checks. Without the
+        // constraint a caller could hand `settle` any trust account this program
+        // owns -- another feed's roster, with another feed's threshold -- and the
+        // body's own comparison would be the only thing standing in the way.
+        let empty: InstructionData = Vec::new();
+        let other = compute_pda(&OURS, &[&[0xAB; 32], &seed_from_str(TRUST_ACCOUNT_SEED)]);
         assert!(
             matches!(
-                validate_open(AccountId::new([0x11; 32]), true),
+                super::kanon_pull_consumer::__validate_settle(
+                    &[
+                        account(order_id(), false),
+                        account(other, false),
+                        account(id(*b"/LEZ/ClockProgramAccount/0000001"), false),
+                    ],
+                    &OURS,
+                    &empty,
+                    &FEED_ID,
+                ),
                 Err(SpelError::PdaMismatch { .. })
             ),
-            "an address nobody derived has to be refused"
+            "another feed's trust account has to be refused"
         );
     }
 
     #[test]
-    fn an_owner_that_did_not_sign_is_refused_by_the_generated_validator() {
-        // The dispatcher's half of the gate. `open_order` checks the flag too,
-        // so a missing annotation here would not be an authorisation hole
-        // today -- but it would be a silent change to the IDL's `signer`
-        // metadata, which is what a client builds a transaction from.
-        assert!(
-            matches!(
-                validate_open(order_account_id(), false),
-                Err(SpelError::Unauthorized { .. })
+    fn an_account_at_an_underived_address_is_refused_by_the_generated_validator() {
+        let empty: InstructionData = Vec::new();
+        assert!(matches!(
+            super::kanon_pull_consumer::__validate_establish_authority(
+                &[
+                    account(id([0x11; 32]), false),
+                    account(id([0xA1; 32]), true)
+                ],
+                &OURS,
+                &empty,
             ),
-            "an unsigned owner has to be refused"
-        );
+            Err(SpelError::PdaMismatch { .. })
+        ));
+        assert!(matches!(
+            super::kanon_pull_consumer::__validate_open_order(
+                &[
+                    account(id([0x11; 32]), false),
+                    account(id([0xA0; 32]), true),
+                    account(trust_id(), false),
+                ],
+                &OURS,
+                &empty,
+                &ORDER_ID,
+                &FEED_ID,
+            ),
+            Err(SpelError::PdaMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn every_instruction_that_moves_what_the_program_trusts_refuses_an_unsigned_caller() {
+        // Five handlers, and `#[account(signer)]` is repeated by hand on each, so
+        // a missing annotation is a per-handler mistake and testing one proves
+        // nothing about the other four. The logic checks the flag too, which is
+        // why a gap would not be an authorisation hole today -- but it would be an
+        // unnoticed change to the IDL's `signer` metadata, which is what a client
+        // builds a transaction from.
+        let empty: InstructionData = Vec::new();
+        let unsigned = account(id([0xA1; 32]), false);
+
+        let outcomes = [
+            super::kanon_pull_consumer::__validate_establish_authority(
+                &[account(config_id(), false), unsigned.clone()],
+                &OURS,
+                &empty,
+            ),
+            super::kanon_pull_consumer::__validate_nominate_authority(
+                &[account(config_id(), false), unsigned.clone()],
+                &OURS,
+                &empty,
+            ),
+            super::kanon_pull_consumer::__validate_accept_authority(
+                &[account(config_id(), false), unsigned.clone()],
+                &OURS,
+                &empty,
+            ),
+            super::kanon_pull_consumer::__validate_register_feed_trust(
+                &[
+                    account(trust_id(), false),
+                    unsigned.clone(),
+                    account(config_id(), false),
+                ],
+                &OURS,
+                &empty,
+                &FEED_ID,
+            ),
+            super::kanon_pull_consumer::__validate_rotate_signers(
+                &[
+                    account(trust_id(), false),
+                    unsigned,
+                    account(config_id(), false),
+                ],
+                &OURS,
+                &empty,
+                &FEED_ID,
+            ),
+        ];
+
+        for outcome in outcomes {
+            assert!(
+                matches!(outcome, Err(SpelError::Unauthorized { .. })),
+                "an unsigned caller has to be refused, got {outcome:?}"
+            );
+        }
     }
 }
