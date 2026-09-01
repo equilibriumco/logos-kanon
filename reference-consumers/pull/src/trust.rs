@@ -151,6 +151,13 @@ pub enum TrustError {
     TrustAccountUnusable,
     /// No trust is registered for this feed.
     NotRegistered,
+    /// This feed's trust was registered and then retired.
+    ///
+    /// Its own cause because an operator needs "the authority retired this" and
+    /// not "the bytes were unreadable", and the two go to different people. It is
+    /// also the state a re-registration writes over, which is why an emptied
+    /// account is not a fault in [`register`].
+    Deregistered,
     /// The trust account's bytes are not a trust.
     TrustUndecodable,
     /// The account addressed is not the feed the instruction named.
@@ -190,6 +197,7 @@ impl TrustError {
             Self::AlreadyRegistered => 2001,
             Self::TrustAccountUnusable => 2002,
             Self::NotRegistered => 2003,
+            Self::Deregistered => 2007,
             Self::TrustUndecodable => 2004,
             Self::FeedMismatch => 2005,
             Self::TrustTooLarge => 2006,
@@ -207,6 +215,7 @@ impl fmt::Display for TrustError {
                 f.write_str("the account at this feed's address is not one this program can write")
             }
             Self::NotRegistered => f.write_str("no trust is registered for this feed"),
+            Self::Deregistered => f.write_str("this feed's trust was retired"),
             Self::TrustUndecodable => f.write_str("the trust account's bytes are not a trust"),
             Self::FeedMismatch => {
                 f.write_str("that account is not the feed this instruction named")
@@ -250,7 +259,17 @@ pub fn register(
 ) -> Result<Vec<AccountPostState>, TrustError> {
     authorise(&config, &authority, self_program_id)?;
 
-    if trust.account != Account::default() {
+    // Three states, not two, and the third is what makes a mis-registration
+    // recoverable. LEZ rule 4 forbids this program giving up ownership and rule 3
+    // forbids resetting the nonce, so a retired account stays ours for ever and
+    // cannot be handed back as `Account::default()`. A registration therefore has
+    // to accept an emptied account of our own, or retiring `BTC` once would spend
+    // the id for the life of the build.
+    let first = trust.account == Account::default();
+    let retired = !first
+        && trust.account.program_owner == self_program_id
+        && trust.account.data.as_ref().is_empty();
+    if !first && !retired {
         return Err(if trust.account.program_owner == self_program_id {
             TrustError::AlreadyRegistered
         } else {
@@ -276,9 +295,67 @@ pub fn register(
     let mut account = trust.account;
     account.data = serialise(&stored)?;
 
-    Ok(vec![
+    // From the same discriminator the check used, and not from the account's
+    // owner. A re-registration must not claim: LEZ refuses a claim on an account
+    // whose owner is not the default one, so claiming again would fail the
+    // transaction rather than be ignored.
+    let trust_post = if first {
         AutoClaim::pda_from_seeds(&[&feed_id, &seed_from_str(TRUST_ACCOUNT_SEED)])
-            .to_post_state(account),
+            .to_post_state(account)
+    } else {
+        AccountPostState::new(account)
+    };
+
+    Ok(vec![
+        trust_post,
+        AccountPostState::new(authority.account),
+        AccountPostState::new(config.account),
+    ])
+}
+
+/// Retires what this consumer trusts for one feed.
+///
+/// The recovery path for a registration that was wrong. Only the roster and its
+/// threshold rotate, because the pair, the scale and the window are what open
+/// orders were priced against — so a mistyped pair or exponent has no in-place
+/// correction, and without this it would spend the feed id for the life of the
+/// build.
+///
+/// What it costs is stated rather than hedged: **orders against a retired feed
+/// cannot settle.** [`crate::order::settle`] answers [`TrustError::Deregistered`]
+/// until the authority registers the feed again, and if it comes back under a
+/// different pair those orders answer `AssetMismatch` for ever, because an order
+/// carries the pair its owner signed for. That is the intended outcome — an order
+/// priced against a pair this feed no longer claims is an order whose meaning
+/// changed — and it is why retiring is the authority's decision and not a
+/// caller's.
+///
+/// The data is emptied and the ownership is not released, because LEZ does not
+/// allow the second. [`register`] recognises the result as its third pre-state.
+///
+/// # Errors
+///
+/// [`TrustError`] when the signer is not the authority, or the account is not the
+/// named feed's registration.
+pub fn deregister(
+    trust: AccountWithMetadata,
+    authority: AccountWithMetadata,
+    config: AccountWithMetadata,
+    feed_id: [u8; 32],
+    self_program_id: ProgramId,
+) -> Result<Vec<AccountPostState>, TrustError> {
+    authorise(&config, &authority, self_program_id)?;
+
+    let stored = read(&trust, self_program_id)?;
+    if stored.feed_id != feed_id {
+        return Err(TrustError::FeedMismatch);
+    }
+
+    let mut account = trust.account;
+    account.data = Data::default();
+
+    Ok(vec![
+        AccountPostState::new(account),
         AccountPostState::new(authority.account),
         AccountPostState::new(config.account),
     ])
@@ -337,6 +414,10 @@ pub fn read(
     // not own is a signer set of the caller's choosing.
     if trust.account.program_owner != self_program_id {
         return Err(TrustError::NotRegistered);
+    }
+    // Before the decode, so a retirement reads as one rather than as corruption.
+    if trust.account.data.as_ref().is_empty() {
+        return Err(TrustError::Deregistered);
     }
     FeedTrust::try_from_slice(trust.account.data.as_ref()).map_err(|_| TrustError::TrustUndecodable)
 }
@@ -619,6 +700,141 @@ mod tests {
             ),
             Err(TrustError::Config(ConfigError::DuplicateSigner))
         );
+    }
+
+    /// A feed registered and then retired: ours, empty, at its derived address.
+    fn retired() -> AccountWithMetadata {
+        let posts = deregister(
+            registered(),
+            key(GENESIS, true),
+            established_config(),
+            BTC,
+            OURS,
+        )
+        .expect("a registered feed retires");
+        as_chain_leaves_it(&posts[0], trust_address(&BTC))
+    }
+
+    #[test]
+    fn a_feed_id_survives_being_retired() {
+        // The round trip is the point. A trust account's address is its feed id's,
+        // and LEZ will not let a program hand an account back -- rule 4 forbids
+        // giving up ownership, rule 3 forbids resetting the nonce -- so if a
+        // retired account could not hold a new registration, one wrong pair would
+        // spend the id for the life of the build.
+        let emptied = retired();
+        assert!(emptied.account.data.as_ref().is_empty());
+        assert_eq!(read(&emptied, OURS), Err(TrustError::Deregistered));
+
+        let pre = vec![emptied.clone(), key(GENESIS, true), established_config()];
+        let again = register(
+            emptied,
+            key(GENESIS, true),
+            established_config(),
+            SERVICE.to_owned(),
+            BTC,
+            // A different pair, which is the whole reason to retire: only the
+            // roster and the threshold rotate, so a mistyped pair has no in-place
+            // correction.
+            crate::padded(b"XBT"),
+            crate::padded(b"EUR"),
+            6,
+            30_000,
+            vec![[9u8; 20], [8u8; 20], [7u8; 20]],
+            2,
+            OURS,
+        )
+        .expect("the id is not spent");
+        validate_execution(&pre, &again, OURS).expect("LEZ accepts the re-registration");
+        assert!(
+            again[0].required_claim().is_none(),
+            "a re-registration must not claim an account this program already owns"
+        );
+
+        let stored = read(&as_chain_leaves_it(&again[0], trust_address(&BTC)), OURS).expect("ok");
+        assert_eq!(
+            stored.pair(),
+            AssetPair::new(crate::padded(b"XBT"), crate::padded(b"EUR"))
+        );
+        assert_eq!(stored.decimals, 6);
+        assert_eq!(stored.max_age_ms, 30_000);
+    }
+
+    #[test]
+    fn a_deregistration_passes_lez() {
+        let pre = vec![registered(), key(GENESIS, true), established_config()];
+        let posts = deregister(
+            registered(),
+            key(GENESIS, true),
+            established_config(),
+            BTC,
+            OURS,
+        )
+        .expect("ok");
+        validate_execution(&pre, &posts, OURS).expect("LEZ accepts the retirement");
+    }
+
+    #[test]
+    fn only_the_authority_can_deregister() {
+        assert_eq!(
+            deregister(
+                registered(),
+                key([0xAA; 32], true),
+                established_config(),
+                BTC,
+                OURS
+            ),
+            Err(TrustError::Authority(AuthorityError::Unauthorised))
+        );
+    }
+
+    #[test]
+    fn a_deregistration_names_the_feed_it_retires() {
+        assert_eq!(
+            deregister(
+                registered(),
+                key(GENESIS, true),
+                established_config(),
+                crate::padded(b"ETH"),
+                OURS
+            ),
+            Err(TrustError::FeedMismatch)
+        );
+    }
+
+    #[test]
+    fn a_retired_feed_cannot_be_retired_twice() {
+        assert_eq!(
+            deregister(
+                retired(),
+                key(GENESIS, true),
+                established_config(),
+                BTC,
+                OURS
+            ),
+            Err(TrustError::Deregistered)
+        );
+    }
+
+    #[test]
+    fn a_registered_feed_is_still_refused_a_registration() {
+        // The third state is not a licence to overwrite: only an emptied account
+        // is re-registerable, and a live one is `AlreadyRegistered`.
+        let outcome = register(
+            registered(),
+            key(GENESIS, true),
+            established_config(),
+            SERVICE.to_owned(),
+            BTC,
+            crate::padded(b"BTC"),
+            crate::padded(b"USD"),
+            8,
+            60_000,
+            five(),
+            3,
+            OURS,
+        );
+        assert_eq!(outcome, Err(TrustError::AlreadyRegistered));
     }
 
     #[test]
