@@ -769,3 +769,78 @@ fn no_registrable_scale_lets_a_captured_price_overflow_its_conversion() {
         .unwrap_or_else(|e| panic!("{} at decimals = 0 has to convert, got {e:?}", v.feed_id));
     }
 }
+
+#[test]
+fn an_upstream_failure_on_one_feed_leaves_another_untouched() {
+    // R3: an upstream error on one feed does not affect push mode for other feeds
+    // handled by the same node.
+    //
+    // Structural rather than defended, and the IDL is where the structure is
+    // legible: a submission's accounts are `feed`, `price_account` and `clock`,
+    // and the only writable one is *that feed's own* price account. There is no
+    // account two feeds both write, so a failure on one has nothing to reach the
+    // other through. `only_a_submission_may_write_a_price` in `tests/idl.rs` is
+    // the other half, and `two_feeds_are_two_accounts` is why the addresses
+    // differ at all.
+    //
+    // What this adds is the behaviour, over each upstream failure a payload can
+    // carry. Every case drives a real refusal on BTC and then requires ETH to
+    // publish the value it should -- asserted on the price rather than on
+    // `is_ok`, so a submission that succeeded while writing something else would
+    // still fail here.
+    let btc = vector("BTC");
+    let eth = vector("ETH");
+
+    let mut stranger = feed_state(&btc);
+    stranger.signers = vec![[0xAA; 20]; 3];
+
+    let failures: Vec<(&str, FeedAccount, Vec<u8>, u64)> = vec![
+        (
+            "a payload that is not a payload",
+            feed_state(&btc),
+            btc.payload[..btc.payload.len() / 2].to_vec(),
+            btc.timestamp_ms,
+        ),
+        (
+            "a roster that authorises none of the signers",
+            stranger,
+            btc.payload.clone(),
+            btc.timestamp_ms,
+        ),
+        (
+            "a payload the clock has left behind",
+            feed_state(&btc),
+            btc.payload.clone(),
+            btc.timestamp_ms + MAX_AGE_MS + 1,
+        ),
+    ];
+
+    for (name, state, payload, now) in failures {
+        // `Err` rather than post-states is the type saying what R2 says: a body
+        // that refuses writes nothing at all, so there is no partial write for
+        // the next feed to inherit.
+        submit(
+            feed_account(&state),
+            no_price_account(),
+            clock_at(now),
+            &payload,
+        )
+        .expect_err(&format!(
+            "{name}: BTC has to fail for this to test anything"
+        ));
+
+        let posts = submit(
+            feed_account(&feed_state(&eth)),
+            no_price_account(),
+            clock_at(eth.timestamp_ms),
+            &eth.payload,
+        )
+        .unwrap_or_else(|e| panic!("{name}: ETH must still publish, got {e:?}"));
+
+        assert_eq!(
+            written(&posts).price,
+            expected_price(&eth),
+            "{name}: ETH published the wrong price"
+        );
+    }
+}

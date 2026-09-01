@@ -25,7 +25,7 @@ Not tracked here: the Servicing obligations from the proposal's *Servicing
 and SLA* section. They are contractual rather than code and have no test to
 name; monthly operating reports are their evidence.
 
-Right now: **3 verified, 16 partial, 17 planned**, of 36 requirements.
+Right now: **5 verified, 16 partial, 15 planned**, of 36 requirements.
 
 ## Functionality
 
@@ -121,18 +121,22 @@ Refuse-on-unavailable is the pattern being demonstrated: a consumer must never f
 
 | Requirement | Status | Tasks | Implemented in | Verified by |
 | --- | --- | --- | --- | --- |
-| **R1** | planned | `M2‑04` | `aggregator‑program` | — |
+| **R1** | verified | `M2‑04` | `aggregator‑program`, `kanon‑idl/aggregator‑idl.json` | `only_a_submission_may_write_a_price`, `the_post_states_are_the_feed_then_the_three_it_passes_through`, `an_update_moves_price_and_timestamp_and_nothing_else` |
 | **R2** | verified | `M2‑07` | `aggregator‑program` | `a_derived_address_can_be_squatted_and_this_pins_the_refusal`, `a_squatted_feed_account_passes_the_validator_and_the_body_refuses_it`, `registering_the_same_feed_id_twice_is_refused`, `a_feed_id_that_is_already_registered_is_refused`, `a_registration_lands_and_claims_the_address_the_constraint_checks` |
-| **R3** | planned | `M2‑05` | `aggregator‑program` | — |
+| **R3** | verified | `M2‑05` | `aggregator‑program` | `an_upstream_failure_on_one_feed_leaves_another_untouched`, `two_feeds_are_two_accounts`, `rotating_one_feed_leaves_another_alone`, `only_a_submission_may_write_a_price` |
 | **R4** | planned | `M4‑05`, `M4‑08` | `kanon‑relayer` | — |
 
 **R1** — A price read is read-only and never modifies adaptor state
+
+In push mode a read is an account read: a consumer decodes the canonical `OraclePriceAccount` and sends this program no transaction at all, so there is no read instruction to make read-only and none to test. The requirement is therefore asserted from the other side, on the surface a caller actually sees -- of the ten instructions the IDL declares, exactly one takes a price account it may write, and it is `submit_price`. `only_a_submission_may_write_a_price` pins that against the committed artefact. `register_feed` is why it is a test rather than a glance: it does take the price account, because it reads the pair a feed id has already published so a re-registration cannot repoint the id at another pair (ADR 33), and it takes it read-only and returns it untouched -- `the_post_states_are_the_feed_then_the_three_it_passes_through` asserts the post-state equals the pre-state. An instruction that acquired a *writable* price account merely to read it would pass every test that checks what a body returns, since a post-state equal to its pre-state satisfies them all; the IDL is where that becomes visible. `an_update_moves_price_and_timestamp_and_nothing_else` covers the converse for the one writer: the instruction that may write moves only the two fields a new observation changes. The pull side writes nothing by construction -- `verify_price` takes slices and returns a value -- and M3-01 carries it.
 
 **R2** — Feed registration is atomic: partial failure leaves existing registrations intact
 
 Atomicity is structural rather than engineered: LEZ applies a state diff whole, so a body that returns `Err` writes nothing at all and no registration can fail after writing part of itself. That is what R2 asks for and it holds for every instruction in this program, not only this one. Uniqueness is a separate property the address decision buys -- a feed lives at the address its id derives (ADR 33), so a second registration of one id is refused before anything is written and two ids cannot collide -- and it is why `register_feed` needs no rollback path. Both are asserted below; the atomicity reading is the one a reader checking the requirement should find first. What neither covers is a squatted address: the account can be made permanently unwritable by anyone, which is a platform question rather than this program's, recorded in `m0/versions.md` question 4 and pinned at both layers by `a_derived_address_can_be_squatted_and_this_pins_the_refusal` and `a_squatted_feed_account_passes_the_validator_and_the_body_refuses_it` -- the second recording which layer answers. The feed account carried `#[account(init)]` until M2-09 needed a third pre-state for it; the dispatcher answered `AccountAlreadyInitialized` then, and the body's `AlreadyRegistered` answers now. Permanent either way.
 
 **R3** — An upstream error on one feed does not affect push mode for other feeds handled by the same node
+
+Isolation here is structural before it is behavioural, and the structure is what makes the behaviour cheap to believe. A submission takes three accounts -- the feed, its price account and the clock -- and the only writable one is *that feed's own* price account, which `only_a_submission_may_write_a_price` reads off the IDL. Two feeds derive two feed accounts and therefore two price accounts (`two_feeds_are_two_accounts`), so there is no account both write and nothing for a failure on one to reach the other through. The clock and the admin config are shared and read-only. `an_upstream_failure_on_one_feed_leaves_another_untouched` is the behaviour over each upstream failure a payload can carry -- a malformed payload, a roster that authorises none of its signers, and a payload the clock has left behind -- each driving a real refusal on BTC and then requiring ETH to publish the price it should, asserted on the value rather than on success so a submission that wrote something else would still fail. That a refusal writes nothing at all is R2's atomicity and is the type here rather than a test: the body returns `Err` instead of post-states, so no partial write survives for the next feed to inherit. `rotating_one_feed_leaves_another_alone` is the administrative half. What this row does not reach is the relayer: R3 names "the same node", and a node that stops submitting for every feed because one upstream is down is a failure this program cannot see. That is the relayer's isolation and it is M4's.
 
 **R4** — Temporary upstream errors leave the daemon recoverable, able to push again once feeds return
 
