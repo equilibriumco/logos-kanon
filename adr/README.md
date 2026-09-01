@@ -55,6 +55,7 @@ they describe the design being proposed for acceptance.
 | [M2-19:01](unnumbered-M2-19-the-end-to-end-tests-resolve-in-their-own-workspace.md) | The end-to-end tests resolve in their own workspace | accepted, unnumbered, extends 7 |
 | [M3-01:01](unnumbered-M3-01-the-pull-library-is-a-call-not-a-layer.md) | The pull library is a call, not a layer | accepted, unnumbered |
 | [M3-04:01](unnumbered-M3-04-where-a-two-mode-test-can-live.md) | Where a test that needs both modes can live | accepted, unnumbered |
+| [M3-05:01](unnumbered-M3-05-where-a-reading-consumers-trust-comes-from.md) | Where a reading consumer's trust comes from | accepted, unnumbered |
 | [M3-06:01](unnumbered-M3-06-where-a-pull-consumers-program-lives.md) | Where a pull consumer's program lives | accepted, unnumbered |
 | [M3-06:02](unnumbered-M3-06-where-a-pull-consumers-trust-comes-from.md) | Where a pull consumer's trust comes from | accepted, unnumbered |
 
@@ -191,6 +192,19 @@ table, and a compiled roster would meet that certain event with a redeployment �
 which in LEZ moves every derived address and abandons every open order. So the
 consumer carries an authority, a trust account per feed, and a rotation that is a
 transaction.
+
+[M3-05:01] is the same question put to the other mode, and it is worth reading beside
+[M3-06:02] because the answer matches while the argument does not. A reading consumer
+sends the aggregator no transaction, so what it has to decide is which account to
+believe — and nothing in the six published fields says who wrote one. `source_id` names
+RedStone rather than a program, so the only binding is the address, which hashes the
+aggregator's program id, which is its image id. A compiled id looked defensible here in
+a way a compiled roster never did: the address would simply go dead and every read would
+refuse, which is what U7 asks for. What decides it is the cost of recovery rather than
+the failure itself. Following the rebuild would mean rebuilding the consumer, and that
+moves the consumer's own accounts — so an aggregator fix would cost the order book. The
+trigger differs, the mechanism is the one ADR 33 describes, and the answer is the same
+account-behind-a-gate on both sides.
 
 ADR 29 closes a range that only had one end. ADR 18 gave staleness a two-sided window and
 left `maxAge` to the feed; registration refused zero and nothing else. But `freshness`
