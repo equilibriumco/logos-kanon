@@ -65,13 +65,19 @@ a before-and-after: the new build's account is refused under the old registratio
   two and `terms_still_hold` the second and third. Holding the account's pair against
   itself would satisfy the words of U7 and check nothing, which is the mistake
   `[M3-06:02]` records B making and fixing.
-- **The consumer's staleness window is not the aggregator's, and is legitimately
+- **The consumer's staleness window is not the aggregator's, and may legitimately be
   wider.** The aggregator's `max_age_ms` bounds how old a package may be when it is
   verified; this one bounds how old a published price may be when it is read, and that
-  clock keeps running after the write. `this_consumer_is_never_stricter_about_time_than_the_verifier`
-  pins the ordering, because the other direction would refuse observations the
-  aggregator was entitled to publish. The window is bounded at a day, since a
-  `max_age_ms` near `u64::MAX` puts the lower edge at zero and turns the check off.
+  clock keeps running after the write. How wide it is stays the authority's policy —
+  `register` accepts anything from a millisecond up, and a narrow window refusing a
+  price the aggregator published is the consumer exercising exactly the judgement U7
+  asks it to have. What is fixed is the ceiling either side of that: it is bounded at a
+  day, since a `max_age_ms` near `u64::MAX` puts the window's lower edge at zero and
+  turns the check off, and
+  `the_registrable_window_reaches_at_least_as_wide_as_the_verifiers` keeps the bound
+  from being the thing that forces strictness. The skew allowance is not configurable
+  at all and is the verifier's own value, which
+  `the_skew_allowance_is_the_verifiers` pins.
 - **The price account is the one account in the program with no `pda` constraint.** SPEL
   derives a constraint's address under `self_program_id`, and this address is another
   program's, so the constraint cannot express it. The check moves into Rust and runs

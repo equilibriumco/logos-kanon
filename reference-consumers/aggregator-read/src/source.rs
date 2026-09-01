@@ -56,10 +56,12 @@ pub const SOURCE_ACCOUNT_SEED: &str = "KANON_READ_SOURCE";
 /// timestamp at all — a configuration field that silently disables the check it
 /// configures. Reference consumer B found the same hole in its own window.
 ///
-/// Wider than `verifier_core::MAX_MAX_AGE_MS` on purpose, and the test beside it
-/// pins the ordering: a published price starts ageing when it is written, so a
-/// consumer whose window was narrower than the verifier's would refuse prices
-/// the aggregator was entitled to publish.
+/// The ceiling is wider than `verifier_core::MAX_MAX_AGE_MS` on purpose, because
+/// a published price starts ageing once it is written and a bound below the
+/// verifier's would stop an authority registering a window the aggregator's own
+/// freshness rules already allow. It bounds what may be registered and nothing
+/// more: anything from a millisecond up is accepted, and how wide a given feed's
+/// window is remains the authority's policy.
 pub const MAX_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// What this consumer's authority says about one feed.

@@ -80,11 +80,23 @@ fn two_feeds_under_one_aggregator_are_two_price_accounts() {
     );
 }
 
-/// Narrower would mean refusing observations the aggregator was entitled to
-/// publish, which is the direction that breaks a working deployment rather than
-/// loosening it.
+/// The skew allowance is a constant rather than a registered value, so this one
+/// really is a statement about every read: a consumer that tolerated less skew
+/// than the verifier would refuse observations the aggregator was entitled to
+/// publish, and neither operator would have chosen that.
 #[test]
-fn this_consumer_is_never_stricter_about_time_than_the_verifier() {
+fn the_skew_allowance_is_the_verifiers() {
     assert_eq!(MAX_AHEAD_MS, verifier_core::feed::MAX_AHEAD_MS);
+}
+
+/// A ceiling, and only a ceiling.
+///
+/// It says an authority *may* register a window at least as wide as the
+/// verifier's, not that any particular source has one: `register` accepts
+/// anything from one millisecond up, and a narrow window refusing a price the
+/// aggregator published is the consumer exercising the policy U7 asks it to
+/// have. What this rules out is the ceiling itself forcing that choice.
+#[test]
+fn the_registrable_window_reaches_at_least_as_wide_as_the_verifiers() {
     const { assert!(MAX_MAX_AGE_MS >= verifier_core::feed::MAX_MAX_AGE_MS) };
 }

@@ -474,7 +474,10 @@ mod tests {
         let empty: InstructionData = Vec::new();
 
         super::kanon_aggregator_read_consumer::__validate_establish_authority(
-            &[account(id([0x11; 32]), false), account(id([0xA1; 32]), true)],
+            &[
+                account(id([0x11; 32]), false),
+                account(id([0xA1; 32]), true),
+            ],
             &OURS,
             &empty,
         )
