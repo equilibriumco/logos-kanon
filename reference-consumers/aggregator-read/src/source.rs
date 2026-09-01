@@ -372,7 +372,7 @@ mod tests {
     use super::*;
     use crate::authority::{config_address, ConfigAccount};
     use lee_core::account::Nonce;
-    use lee_core::program::validate_execution;
+    use lee_core::program::{validate_execution, Claim};
 
     const OURS: ProgramId = [7u32; 8];
     const WALLET: ProgramId = [42u32; 8];
@@ -734,10 +734,11 @@ mod tests {
     /// Rather than restating LEZ's rules: hand what each instruction returned to
     /// the function that enforces them, over the pre-states it was really given.
     ///
-    /// The claim branch in `write_source` is what these are for. A first write
-    /// claims the address and a re-registration into a retired account must not,
-    /// and `required_claim()` only says which branch was taken -- LEZ is what
-    /// says the result is one a chain would apply.
+    /// What it does not cover is the claim. `validate_execution` never reads
+    /// `required_claim` -- the claim loop in LEZ's state machine applies it
+    /// afterwards -- so the branch in `write_source` needs the two assertions
+    /// beside this one, and `the_claimed_seed_derives_the_address_it_was_written_to`
+    /// for the half neither of those reaches.
     #[test]
     fn every_write_to_a_source_passes_lez() {
         let stored = PriceSource {
@@ -780,6 +781,26 @@ mod tests {
         )
         .expect("retires");
         validate_execution(&pre, &posts, OURS).expect("LEZ accepts a retirement");
+    }
+
+    /// The rule `validate_execution` cannot see. LEZ's claim loop refuses a claim
+    /// whose seed does not derive the account it is attached to
+    /// (`MismatchedPdaClaim`), and a registration that claimed the wrong address
+    /// would be refused on chain while passing every assertion above.
+    #[test]
+    fn the_claimed_seed_derives_the_address_it_was_written_to() {
+        let posts =
+            register_at(empty_source(), AUTHORITY, feed_id(), AGGREGATOR, MAX_AGE_MS).expect("ok");
+
+        let Some(Claim::Pda(seed)) = posts[0].required_claim() else {
+            panic!("a first registration claims its address as a PDA");
+        };
+
+        assert_eq!(
+            AccountId::for_public_pda(&OURS, &seed),
+            source_address(&OURS, &feed_id()),
+            "the claimed seed has to derive the address the account is at"
+        );
     }
 
     #[test]
