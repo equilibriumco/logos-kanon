@@ -127,6 +127,28 @@ fn registered(v: &Vector) -> AccountWithMetadata {
     registered_with(v, v.signers.iter().map(|s| s.0).collect(), THRESHOLD)
 }
 
+/// A registration that labels this capture's feed with a pair of the caller's
+/// choosing, which is how a mislabelling is reached.
+fn registered_as(v: &Vector, base: [u8; 32], quote: [u8; 32]) -> AccountWithMetadata {
+    let feed = feed_id(v);
+    let posts = trust::register(
+        untouched(trust_address(&feed)),
+        key(GENESIS, true),
+        established(),
+        SERVICE.to_owned(),
+        feed,
+        base,
+        quote,
+        DECIMALS,
+        MAX_AGE_MS,
+        v.signers.iter().map(|s| s.0).collect(),
+        THRESHOLD,
+        OURS,
+    )
+    .expect("a usable registration");
+    as_chain_leaves_it(&posts[0], trust_address(&feed))
+}
+
 fn registered_with(v: &Vector, signers: Vec<[u8; 20]>, threshold: u8) -> AccountWithMetadata {
     let feed = feed_id(v);
     let posts = trust::register(
@@ -169,6 +191,8 @@ fn opened(v: &Vector, limit: u128) -> AccountWithMetadata {
         key(OWNER, true),
         registered(v),
         feed_id(v),
+        feed_id(v),
+        padded(b"USD"),
         limit,
         ORDER_ID,
         OURS,
@@ -382,6 +406,146 @@ fn an_order_opened_before_a_rotation_is_settled_under_the_roster_in_force() {
         Err(SettleError::Verify(VerifyError::UnauthorisedSigner)),
         "the roster in force at settlement is the one that decides"
     );
+}
+
+/// The trust account after the authority retires the feed.
+fn retired(v: &Vector) -> AccountWithMetadata {
+    let feed = feed_id(v);
+    let posts = trust::deregister(registered(v), key(GENESIS, true), established(), feed, OURS)
+        .expect("a registered feed retires");
+    as_chain_leaves_it(&posts[0], trust_address(&feed))
+}
+
+/// The same feed id registered again, under a pair the orders were not opened
+/// against.
+fn re_registered_under_another_pair(v: &Vector) -> AccountWithMetadata {
+    let feed = feed_id(v);
+    let posts = trust::register(
+        retired(v),
+        key(GENESIS, true),
+        established(),
+        SERVICE.to_owned(),
+        feed,
+        padded(b"XBT"),
+        padded(b"EUR"),
+        DECIMALS,
+        MAX_AGE_MS,
+        v.signers.iter().map(|s| s.0).collect(),
+        THRESHOLD,
+        OURS,
+    )
+    .expect("the id is not spent");
+    as_chain_leaves_it(&posts[0], trust_address(&feed))
+}
+
+#[test]
+fn a_mislabelled_registration_cannot_fill_an_order_its_owner_did_not_intend() {
+    // U7's asset-pair verification, and the attack it answers. RedStone's `BTC`
+    // feed registered as ETH/USD verifies real BTC packages perfectly well: the
+    // signatures are genuine, the threshold is met, the timestamp is fresh. No
+    // signer attests to which assets a feed prices, so nothing in the payload can
+    // catch it.
+    //
+    // The owner's expectation is what catches it, at the open, where the owner can
+    // still walk away.
+    let v = vectors::named("BTC");
+    let feed = feed_id(&v);
+    let mislabelled = registered_as(&v, padded(b"ETH"), padded(b"USD"));
+
+    assert_eq!(
+        open_order(
+            untouched(order_address()),
+            key(OWNER, true),
+            mislabelled,
+            feed,
+            padded(b"BTC"),
+            padded(b"USD"),
+            1,
+            ORDER_ID,
+            OURS
+        ),
+        Err(reference_consumer_pull::OpenError::PairMismatch)
+    );
+}
+
+#[test]
+fn an_order_cannot_be_filled_under_a_pair_its_owner_never_signed_for() {
+    // The settlement half of the same check, and the reason the order stores the
+    // pair rather than re-reading it. An authority may retire a feed and register
+    // the id again under another pair -- that is the recovery path for a
+    // mis-registration -- and an order opened before that must not fill under the
+    // new meaning.
+    //
+    // This is also what makes `AssetMismatch` reachable in this consumer at all.
+    // A version that passed the trust account's own pair as the expected one had a
+    // comparison that could not fail, which is not asset-pair verification.
+    let v = vectors::named("BTC");
+    let order = opened(&v, 1);
+
+    assert_eq!(
+        settle(
+            order,
+            re_registered_under_another_pair(&v),
+            clock_at(v.timestamp_ms),
+            feed_id(&v),
+            &v.payload,
+            OURS
+        ),
+        Err(SettleError::Verify(VerifyError::AssetMismatch))
+    );
+}
+
+#[test]
+fn a_retired_feed_refuses_a_settlement_as_retired() {
+    // Its own cause. An operator needs "the authority retired this" rather than
+    // "the bytes were unreadable", and the two go to different people.
+    let v = vectors::named("BTC");
+    assert_eq!(
+        settle(
+            opened(&v, 1),
+            retired(&v),
+            clock_at(v.timestamp_ms),
+            feed_id(&v),
+            &v.payload,
+            OURS
+        ),
+        Err(SettleError::Trust(TrustError::Deregistered))
+    );
+}
+
+#[test]
+fn the_same_pair_re_registers_and_the_order_still_fills() {
+    // The other half, and the one the recovery path exists for: retiring a feed
+    // does not spend its id, and an order priced against a pair that comes back
+    // unchanged is unaffected.
+    let v = vectors::named("BTC");
+    let order = opened(&v, 1);
+    let feed = feed_id(&v);
+    let posts = trust::register(
+        retired(&v),
+        key(GENESIS, true),
+        established(),
+        SERVICE.to_owned(),
+        feed,
+        feed,
+        padded(b"USD"),
+        DECIMALS,
+        MAX_AGE_MS,
+        v.signers.iter().map(|s| s.0).collect(),
+        THRESHOLD,
+        OURS,
+    )
+    .expect("the id is not spent");
+
+    settle(
+        order,
+        as_chain_leaves_it(&posts[0], trust_address(&feed)),
+        clock_at(v.timestamp_ms),
+        feed,
+        &v.payload,
+        OURS,
+    )
+    .expect("the same pair is not a change");
 }
 
 #[test]

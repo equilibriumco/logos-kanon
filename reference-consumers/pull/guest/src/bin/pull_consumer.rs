@@ -1,6 +1,6 @@
 //! The SPEL program: reference consumer B's entry point, as LEZ executes it.
 //!
-//! Seven instructions, all thin. The logic is in `reference-consumer-pull`, which
+//! Eight instructions, all thin. The logic is in `reference-consumer-pull`, which
 //! the host workspace can test; this file is the seam between that and LEZ, and
 //! the seam is where the two things `pull-lib` cannot check are settled.
 //!
@@ -233,6 +233,41 @@ mod kanon_pull_consumer {
         Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
     }
 
+    /// Retires what this consumer trusts for one feed.
+    ///
+    /// The recovery path for a registration that was wrong. Only the roster and
+    /// its threshold rotate, so a mistyped pair, exponent or window has no
+    /// in-place correction — and without this the feed id would be spent for the
+    /// life of the build, because its address derives from the id and LEZ never
+    /// releases ownership.
+    ///
+    /// Orders against a retired feed cannot settle until it is registered again,
+    /// and if it returns under a different pair they never can. That is the
+    /// intended outcome and the reason this is the authority's instruction.
+    ///
+    /// Expected accounts:
+    /// 1. `trust` — the feed's trust account.
+    /// 2. `authority` — the signer claiming to be the authority.
+    /// 3. `config` — the account holding the authority it is checked against.
+    #[instruction]
+    pub fn deregister_feed_trust(
+        ctx: ProgramContext,
+        #[account(mut, pda = [arg("feed_id"), r#const("KANON_PULL_TRUST")])]
+        trust: AccountWithMetadata,
+        #[account(signer)] authority: AccountWithMetadata,
+        #[account(pda = [r#const("KANON_PULL_CONFIG")])] config: AccountWithMetadata,
+        feed_id: [u8; 32],
+    ) -> SpelResult {
+        let post_states = reference_consumer_pull::trust::deregister(
+            trust,
+            authority,
+            config,
+            feed_id,
+            ctx.self_program_id,
+        )?;
+        Ok(spel_framework::SpelOutput::execute(post_states, vec![]))
+    }
+
     /// Opens an order at the price its owner is prepared to trade at.
     ///
     /// Expected accounts:
@@ -243,6 +278,15 @@ mod kanon_pull_consumer {
     ///    against a feed nobody registered could never settle, so the
     ///    registration is required at the open where the owner can still act on
     ///    it.
+    ///
+    /// `base_asset` and `quote_asset` are the owner's own expectation, not a
+    /// convenience. Nothing on the wire says which assets a feed prices, so a
+    /// registration that labelled RedStone's `BTC` feed as ETH/USD would verify
+    /// real BTC packages and fill an order its owner believed was for ether. The
+    /// owner names the pair it is signing for, this refuses the order if the
+    /// registration disagrees, and the order carries the pair afterwards so a
+    /// settlement compares two independently written records rather than one
+    /// against itself.
     #[instruction]
     pub fn open_order(
         ctx: ProgramContext,
@@ -252,6 +296,8 @@ mod kanon_pull_consumer {
         #[account(pda = [arg("feed_id"), r#const("KANON_PULL_TRUST")])] trust: AccountWithMetadata,
         order_id: [u8; 32],
         feed_id: [u8; 32],
+        base_asset: [u8; 32],
+        quote_asset: [u8; 32],
         limit_price_q64: u128,
     ) -> SpelResult {
         let post_states = reference_consumer_pull::open_order(
@@ -259,6 +305,8 @@ mod kanon_pull_consumer {
             owner,
             trust,
             feed_id,
+            base_asset,
+            quote_asset,
             limit_price_q64,
             order_id,
             ctx.self_program_id,
@@ -474,9 +522,9 @@ mod tests {
 
     #[test]
     fn every_instruction_that_moves_what_the_program_trusts_refuses_an_unsigned_caller() {
-        // Five handlers, and `#[account(signer)]` is repeated by hand on each, so
+        // Six handlers, and `#[account(signer)]` is repeated by hand on each, so
         // a missing annotation is a per-handler mistake and testing one proves
-        // nothing about the other four. The logic checks the flag too, which is
+        // nothing about the other five. The logic checks the flag too, which is
         // why a gap would not be an authorisation hole today -- but it would be an
         // unnoticed change to the IDL's `signer` metadata, which is what a client
         // builds a transaction from.
@@ -510,6 +558,16 @@ mod tests {
                 &FEED_ID,
             ),
             super::kanon_pull_consumer::__validate_rotate_signers(
+                &[
+                    account(trust_id(), false),
+                    unsigned.clone(),
+                    account(config_id(), false),
+                ],
+                &OURS,
+                &empty,
+                &FEED_ID,
+            ),
+            super::kanon_pull_consumer::__validate_deregister_feed_trust(
                 &[
                     account(trust_id(), false),
                     unsigned,

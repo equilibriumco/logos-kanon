@@ -30,7 +30,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use core::fmt;
 use lee_core::account::{Account, AccountWithMetadata, Data};
 use lee_core::program::{AccountPostState, ProgramId};
-use pull_lib::{verify_price, InProgramBackend, VerifiedFeed, VerifyError};
+use pull_lib::{verify_price, AssetPair, InProgramBackend, VerifiedFeed, VerifyError};
 use serde::{Deserialize, Serialize};
 use spel_framework::pda::seed_from_str;
 use spel_framework::spel_output::AutoClaim;
@@ -49,6 +49,16 @@ pub struct OrderAccount {
     pub owner: [u8; 32],
     /// The RedStone feed this order is priced against.
     pub feed_id: [u8; 32],
+    /// The base asset the owner expected when it signed.
+    ///
+    /// Recorded from the owner's own instruction data, not copied from the trust
+    /// account, and that difference is the whole point: it is the second,
+    /// independently written record that makes `verify_feed`'s pair comparison a
+    /// real check rather than a value compared against itself. See
+    /// [`open_order`].
+    pub base_asset: [u8; 32],
+    /// The quote asset the owner expected when it signed.
+    pub quote_asset: [u8; 32],
     /// The price at or above which the order fills, on the `Q64.64` scale
     /// `verifier-core` converts a RedStone value to.
     pub limit_price_q64: u128,
@@ -77,9 +87,19 @@ pub enum OpenError {
     /// Refused at the open rather than discovered at every settlement, where the
     /// owner can still do something about it.
     Trust(TrustError),
+    /// The pair the owner expected is not the pair this program has registered
+    /// for that feed.
+    ///
+    /// The owner's protection, taken at the moment it commits. A registration
+    /// that labelled RedStone's `BTC` feed as ETH/USD would otherwise verify real
+    /// BTC packages and fill an order its owner believed was for ether — and no
+    /// signer attests to which assets a feed prices, so nothing downstream could
+    /// catch it. Refused here, where the owner can still walk away.
+    PairMismatch,
     /// The serialised order does not fit an account's data.
     ///
-    /// Unreachable: an order is eighty-nine bytes against a 100 KiB limit. Kept
+    /// Unreachable: an order is a hundred and fifty-three bytes against a 100 KiB
+    /// limit. Kept
     /// because the alternative is `expect`, and a panic in a guest aborts the
     /// transaction instead of refusing the instruction.
     OrderTooLarge,
@@ -99,7 +119,8 @@ impl OpenError {
             Self::OwnerDidNotSign => 1301,
             Self::AlreadyOpen => 1302,
             Self::OrderAccountUnusable => 1303,
-            Self::OrderTooLarge => 1304,
+            Self::PairMismatch => 1304,
+            Self::OrderTooLarge => 1305,
             Self::Trust(err) => err.code(),
         }
     }
@@ -112,6 +133,9 @@ impl fmt::Display for OpenError {
             Self::AlreadyOpen => f.write_str("an order is already open at this id's address"),
             Self::OrderAccountUnusable => {
                 f.write_str("the account at this id's address is not one this program can write")
+            }
+            Self::PairMismatch => {
+                f.write_str("the pair you expected is not the one registered for that feed")
             }
             Self::OrderTooLarge => f.write_str("the serialised order does not fit the account"),
             Self::Trust(err) => write!(f, "{err}"),
@@ -241,11 +265,17 @@ impl From<SettleError> for spel_framework::error::SpelError {
 ///
 /// [`OpenError`] when the owner did not sign, the address already holds
 /// something, or no trust is registered for `feed_id`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the owner's expected pair is what makes the settlement's pair check real, and it has to be named separately from the feed it is checked against"
+)]
 pub fn open_order(
     order: AccountWithMetadata,
     owner: AccountWithMetadata,
     trust: AccountWithMetadata,
     feed_id: [u8; 32],
+    base_asset: [u8; 32],
+    quote_asset: [u8; 32],
     limit_price_q64: u128,
     order_id: [u8; 32],
     self_program_id: ProgramId,
@@ -268,10 +298,19 @@ pub fn open_order(
     if registered.feed_id != feed_id {
         return Err(OpenError::Trust(TrustError::FeedMismatch));
     }
+    // The owner's expectation against the program's registration, once, here.
+    // Nothing on the wire says which assets a feed prices -- no signer attests to
+    // it -- so this comparison is the only place a mislabelled registration can
+    // be caught, and the owner is the party that has to catch it.
+    if registered.pair() != AssetPair::new(base_asset, quote_asset) {
+        return Err(OpenError::PairMismatch);
+    }
 
     let stored = OrderAccount {
         owner: *owner.account_id.value(),
         feed_id,
+        base_asset,
+        quote_asset,
         limit_price_q64,
         filled: false,
     };
@@ -331,7 +370,12 @@ pub fn settle(
         return Err(SettleError::Trust(TrustError::FeedMismatch));
     }
 
-    let verified = verify(&registered, payload, &clock)?;
+    let verified = verify(
+        &registered,
+        &AssetPair::new(stored.base_asset, stored.quote_asset),
+        payload,
+        &clock,
+    )?;
     if verified.price < stored.limit_price_q64 {
         return Err(SettleError::LimitNotReached {
             price: verified.price,
@@ -366,33 +410,29 @@ pub fn settle(
 /// reader looking for what a caller can influence should find nothing here.
 fn verify(
     registered: &FeedTrust,
+    expected: &AssetPair,
     payload: &[u8],
     clock: &AccountWithMetadata,
 ) -> Result<VerifiedFeed, SettleError> {
     let signers = registered.signer_addresses();
     let config = registered.config(&signers).map_err(TrustError::Config)?;
 
-    // `expected` is the trust account's own pair, which makes `verify_feed`'s
-    // comparison structurally dead here rather than merely unreachable. That is
-    // worth stating instead of hiding, because the parameter looks like it
-    // prevents something it cannot: in pull mode both sides of it are the
-    // consumer's, so it can only catch a consumer that disagrees with itself,
-    // and a consumer with one source of truth never does.
+    // `expected` is the order's, and the configuration is the trust account's, so
+    // this is two independently written records held against each other rather
+    // than a value compared with itself. Which is what the parameter is for: the
+    // push path passes the price account's pair against the feed account's
+    // configuration for exactly the same reason (ADR 32), and a version of this
+    // consumer that read both from one account had a comparison that could not
+    // fail.
     //
-    // The push path is the contrast and it is not a thicker version of the same
-    // check. There the pair comes from the price account and the configuration
-    // from the feed account, so the comparison holds two independently written
-    // records against each other (ADR 32). A pull consumer that grows a second
-    // record -- an order that stores the pair it was priced against, say -- gets
-    // a real check back by passing that one. This one has nowhere else to read
-    // it from, and inventing a second copy to compare against the first would be
-    // a check on this program's own serialisation.
-    let expected = *config.feed.assets();
-
+    // Reachable, and not only in principle. An authority may retire a feed and
+    // register the id again under another pair, at which point every order opened
+    // before that answers `AssetMismatch` instead of filling under a meaning its
+    // owner never signed for.
     Ok(verify_price(
         payload,
         &config,
-        &expected,
+        expected,
         clock.account_id.value(),
         clock.account.data.as_ref(),
         &InProgramBackend::new(),
@@ -459,6 +499,8 @@ mod tests {
             key([0xA0; 32], true),
             registered(feed_id),
             feed_id,
+            feed_id,
+            crate::padded(b"USD"),
             limit,
             ORDER_ID,
             OURS,
@@ -478,6 +520,8 @@ mod tests {
             key([0xA0; 32], true),
             registered(BTC),
             BTC,
+            BTC,
+            crate::padded(b"USD"),
             42,
             ORDER_ID,
             OURS,
@@ -512,6 +556,8 @@ mod tests {
             key([0xA0; 32], true),
             registered(BTC),
             BTC,
+            BTC,
+            crate::padded(b"USD"),
             1,
             ORDER_ID,
             OURS,
@@ -530,6 +576,8 @@ mod tests {
                 key([0xA0; 32], false),
                 registered(BTC),
                 BTC,
+                BTC,
+                crate::padded(b"USD"),
                 1,
                 ORDER_ID,
                 OURS
@@ -546,6 +594,8 @@ mod tests {
                 key([0xA0; 32], true),
                 registered(BTC),
                 BTC,
+                BTC,
+                crate::padded(b"USD"),
                 2,
                 ORDER_ID,
                 OURS
@@ -564,12 +614,47 @@ mod tests {
                 key([0xA0; 32], true),
                 registered(BTC),
                 BTC,
+                BTC,
+                crate::padded(b"USD"),
                 1,
                 ORDER_ID,
                 OURS
             ),
             Err(OpenError::OrderAccountUnusable)
         );
+    }
+
+    #[test]
+    fn a_pair_the_owner_did_not_expect_is_refused_at_the_open() {
+        // The attack this exists to close: a registration that labels RedStone's
+        // `BTC` feed as ETH/USD verifies real BTC packages, so an order opened
+        // against it would fill at the bitcoin price while its owner believed it
+        // was trading ether. No signer attests to which assets a feed prices, so
+        // the owner's own expectation is the only thing that can catch it.
+        assert_eq!(
+            open_order(
+                untouched(order_address()),
+                key([0xA0; 32], true),
+                registered(BTC),
+                BTC,
+                crate::padded(b"ETH"),
+                crate::padded(b"USD"),
+                1,
+                ORDER_ID,
+                OURS
+            ),
+            Err(OpenError::PairMismatch)
+        );
+    }
+
+    #[test]
+    fn an_order_carries_the_pair_its_owner_signed_for() {
+        // Stored rather than re-read at settlement, and that is what makes
+        // `verify_feed`'s pair comparison two records held against each other
+        // rather than one compared with itself.
+        let order = stored(&opened(BTC, 1));
+        assert_eq!(order.base_asset, BTC);
+        assert_eq!(order.quote_asset, crate::padded(b"USD"));
     }
 
     #[test]
@@ -582,6 +667,8 @@ mod tests {
                 key([0xA0; 32], true),
                 untouched(trust_address(&BTC)),
                 BTC,
+                BTC,
+                crate::padded(b"USD"),
                 1,
                 ORDER_ID,
                 OURS
@@ -598,6 +685,8 @@ mod tests {
                 key([0xA0; 32], true),
                 registered(ETH),
                 BTC,
+                BTC,
+                crate::padded(b"USD"),
                 1,
                 ORDER_ID,
                 OURS
@@ -787,6 +876,7 @@ mod tests {
             TrustError::NotRegistered,
             TrustError::TrustUndecodable,
             TrustError::FeedMismatch,
+            TrustError::Deregistered,
             TrustError::TrustTooLarge,
         ]
     }
@@ -796,6 +886,7 @@ mod tests {
             OpenError::OwnerDidNotSign,
             OpenError::AlreadyOpen,
             OpenError::OrderAccountUnusable,
+            OpenError::PairMismatch,
             OpenError::OrderTooLarge,
         ]
     }

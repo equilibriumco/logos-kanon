@@ -108,6 +108,7 @@ fn every_instruction_that_moves_what_the_program_trusts_declares_a_signer() {
         "accept_authority",
         "register_feed_trust",
         "rotate_signers",
+        "deregister_feed_trust",
     ] {
         let accounts = instruction(name)["accounts"].clone();
         assert!(
@@ -139,6 +140,21 @@ fn the_idl_declares_every_derivation_a_client_has_to_reproduce() {
             { "kind": "const", "value": reference_consumer_pull::TRUST_ACCOUNT_SEED },
         ]),
         "one trust account per feed, at the address its id derives"
+    );
+    // `open_order` publishes the owner's expected pair as instruction data, which
+    // a client has to fill in rather than leave to the program. That is the
+    // independent record `settle` compares against the registration, so a client
+    // that omitted it would be asking the program to check a value against
+    // itself.
+    assert_eq!(
+        instruction("open_order")["args"],
+        serde_json::json!([
+            { "name": "order_id", "type": { "array": ["u8", 32] } },
+            { "name": "feed_id", "type": { "array": ["u8", 32] } },
+            { "name": "base_asset", "type": { "array": ["u8", 32] } },
+            { "name": "quote_asset", "type": { "array": ["u8", 32] } },
+            { "name": "limit_price_q64", "type": "u128" },
+        ])
     );
     assert_eq!(
         instruction("open_order")["accounts"][0]["pda"]["seeds"],
