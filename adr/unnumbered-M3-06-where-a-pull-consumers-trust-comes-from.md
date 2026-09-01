@@ -38,9 +38,12 @@ one feed's set has moved, and the repair once feeds are live is a migration rath
 an edit — and its consequence list says a pull consumer configures its own set per feed
 too. The argument reaches the threshold and the window as well, because a threshold is
 only meaningful against the set it counts, so `FeedTrust` carries all of it and is the
-pull-side counterpart of the `FeedAccount` the push side stores — the same fields in the
-same shape, in an account governed by this program's own authority rather than the
-aggregator's. One configuration
+pull-side counterpart of the `FeedAccount` the push side stores, in an account governed
+by this program's own authority rather than the aggregator's. Counterpart rather than
+copy: everything a verification reads is the same, and the two differences are decisions —
+this carries the `dataServiceId` that RFP-020 puts in a pull consumer's configuration, and
+it has no pause flag, because pausing is a lever an aggregator needs over a feed it
+publishes to others and a consumer that wants to stop acting stops sending settlements. One configuration
 shape behind both modes is what makes ADR 2's "one verification, two modes" visible to
 somebody reading the two programs side by side.
 
@@ -85,8 +88,21 @@ pre-state — the same round trip the push path's `deregister_feed` and `registe
 make, and the same three states.
 
 What it costs is not hidden: orders against a retired feed answer `Deregistered` until it
-is registered again, and if it returns under a different pair they answer `AssetMismatch`
-for ever. That is the intended outcome rather than a gap — an order priced against a pair
+is registered again, and if it returns on different terms they never fill — a changed pair
+answers `AssetMismatch`, a changed scale or window answers `ScaleChanged` or
+`WindowChanged`.
+
+**Which means an order binds the terms it was priced under, not only its pair.** The first
+version of the recovery path bound the pair alone, on the reasoning that the pair, the
+scale and the window are fixed at registration — true of `rotate_signers` and untrue of
+retire-and-re-register, which the same change had just introduced. A feed re-registered
+with a fifteen-minute window would have let a ten-minute-old payload fill an order whose
+owner accepted one minute, and a re-registration at six decimals rather than eight would
+have rescaled every limit by a hundred. So `OrderAccount` carries `decimals` and
+`max_age_ms` as well, captured from the registration rather than supplied — they are the
+program's parameters and not claims an owner would know to make — and `terms_still_hold`
+destructures `FeedTrust` with no `..`, so a field added later stops the crate compiling
+until somebody decides whether it binds an open order. That is the intended outcome rather than a gap — an order priced against a pair
 this feed no longer claims is an order whose meaning changed — and it is only safe
 *because* an order carries its own pair. The two decisions hold each other up: without
 the recovery path a mis-registration is permanent, and without the order's own pair the
