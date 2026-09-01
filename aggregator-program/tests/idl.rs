@@ -5,6 +5,7 @@
 //! instruction with a stale artefact would ship an SDK and a CLI built against a
 //! surface the program no longer has, and nothing else in the build would notice.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
@@ -35,23 +36,82 @@ fn the_committed_idl_matches_the_guest_source() {
     );
 }
 
-/// The `submit_price` accounts the committed artefact declares, by name.
-fn submit_price_accounts() -> serde_json::Value {
+/// The committed artefact, parsed.
+fn committed_idl() -> serde_json::Value {
     let committed_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("kanon-idl")
         .join("aggregator-idl.json");
-    let idl: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(committed_path).expect("committed"))
-            .expect("the IDL is JSON");
+    serde_json::from_str(&std::fs::read_to_string(committed_path).expect("committed"))
+        .expect("the IDL is JSON")
+}
 
-    idl["instructions"]
+/// The `submit_price` accounts the committed artefact declares, by name.
+fn submit_price_accounts() -> serde_json::Value {
+    committed_idl()["instructions"]
         .as_array()
         .expect("an instructions array")
         .iter()
         .find(|ix| ix["name"] == "submit_price")
         .expect("submit_price is in the IDL")["accounts"]
         .clone()
+}
+
+#[test]
+fn only_a_submission_may_write_a_price() {
+    // R1: a price read is read-only and never modifies adaptor state.
+    //
+    // In push mode a read is an account read -- a consumer decodes the canonical
+    // account and sends no transaction to this program at all, so there is no
+    // instruction to make read-only. What can be asserted is the converse, and
+    // the IDL is where it is legible to a caller rather than only true: of the ten
+    // instructions, exactly one declares a price account it may write.
+    //
+    // `register_feed` is the case that makes this worth a test rather than a
+    // glance. It *does* take the price account -- it reads the pair a feed id has
+    // already published, so a re-registration cannot repoint the id at another
+    // pair (ADR 33) -- and it takes it read-only. An instruction that acquired a
+    // writable price account for a read would be invisible in every test that
+    // checks what a body returns, because a post-state that happens to equal its
+    // pre-state passes them all. It is visible here.
+    let idl = committed_idl();
+    let instructions = idl["instructions"].as_array().expect("an array");
+
+    // Sets rather than vectors: the answer is about *which* instructions, not the
+    // order the IDL happens to list them in, and a second reader arriving would
+    // otherwise make this test depend on where it sits in the file.
+    //
+    // Matched on the account's name, which is a convention rather than a type --
+    // the IDL carries no account types, so an instruction taking a price account
+    // under another parameter name would not be seen here. All ten call it
+    // `price_account`; `the_committed_idl_matches_the_guest_source` is what keeps
+    // this reading the real surface, and a rename would show up there as a diff.
+    let mut writers = BTreeSet::new();
+    let mut readers = BTreeSet::new();
+    for ix in instructions {
+        let name = ix["name"].as_str().expect("a name");
+        for account in ix["accounts"].as_array().expect("accounts") {
+            if account["name"] == "price_account" {
+                if account["writable"] == serde_json::Value::Bool(true) {
+                    writers.insert(name);
+                } else {
+                    readers.insert(name);
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        writers,
+        BTreeSet::from(["submit_price"]),
+        "exactly one instruction may write a price, and it is the submission"
+    );
+    assert_eq!(
+        readers,
+        BTreeSet::from(["register_feed"]),
+        "the only other instruction that sees a price account reads it, for the \
+         pair check ADR 33 records"
+    );
 }
 
 #[test]
