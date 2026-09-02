@@ -916,8 +916,8 @@ fn every_upstream_failure_refuses_with_its_own_cause_and_writes_nothing() {
 fn a_package_carrying_an_unusable_value_is_refused_by_the_submission_path() {
     // S3's "invalid value", and the one dimension no captured payload can reach:
     // `ValueOutOfRange` is raised for a zero, negative or over-wide value
-    // (`feed.rs:411`), and RedStone does not sign those, so there is nothing to
-    // capture. The payload here is signed by keys this test holds, over values it
+    // (`feed.rs:411`), and the captures committed here contain none -- so this
+    // signs its own. The payload here is signed by keys this test holds, over values it
     // chose, and the feed is registered against those keys' addresses -- so every
     // check before the value passes and the value is what refuses.
     //
@@ -930,13 +930,13 @@ fn a_package_carrying_an_unusable_value_is_refused_by_the_submission_path() {
     let feed_id = b"BTC";
     let now = 1_700_000_000_000u64;
 
-    let mut state = FeedAccount {
+    // `feed_state` already stores the padded BTC id and `MAX_AGE_MS`, so only the
+    // roster and threshold move -- this test's keys rather than the capture's.
+    let state = FeedAccount {
         signers,
         threshold: 3,
         ..feed_state(&vector("BTC"))
     };
-    state.feed_id = padded_feed_id(feed_id);
-    state.max_age_ms = MAX_AGE_MS;
 
     // Zero, and negative. Negative means the top bit of the *32-byte* value
     // (`Value::is_negative` reads `self.0[0] & 0x80`), and `from_be_slice`
@@ -964,11 +964,4 @@ fn a_package_carrying_an_unusable_value_is_refused_by_the_submission_path() {
             "{label}: an unusable value has to refuse before it is published"
         );
     }
-}
-
-/// A feed id padded the way the wire pads it.
-fn padded_feed_id(name: &[u8]) -> [u8; 32] {
-    let mut id = [0u8; 32];
-    id[..name.len()].copy_from_slice(name);
-    id
 }

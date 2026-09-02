@@ -3,6 +3,10 @@
 - **Status**: accepted, unnumbered
 - **Milestone**: M2 (`M2-16`)
 - **Requirements**: S3
+- **Supersedes**: [21](0021-property-tests-for-the-invariants-examples-cannot-reach.md)
+  and [23](0023-the-accept-and-reject-suite-is-shaped-by-the-contract.md), on the
+  rejected alternative only — both refused a feature-gated `test_support`, and
+  their reason turned out to be right about the risk
 - **Artefacts**: `verifier-core/Cargo.toml`, `verifier-core/src/lib.rs`,
   `verifier-core/src/test_support.rs`, `aggregator-program/tests/submit_price.rs`
 
@@ -11,8 +15,13 @@
 S3 asks for a test per named dimension per mode, and one of its dimensions cannot
 be reached with the payloads this repository committed. "Invalid value" is
 `VerifyError::ValueOutOfRange`, raised for a package carrying a zero, negative or
-over-wide value (`feed.rs:411`). **RedStone does not sign such values**, so no
-capture contains one and none ever will.
+over-wide value (`feed.rs:411`). **The production captures committed here contain
+none**, so a test for this dimension has to sign its own deterministic fixture.
+
+Narrower than "RedStone does not sign such values", which is what an earlier draft
+of this record said and is not true: RedStone's own connector repository carries
+zero-value fixtures and code that filters them. What holds is the claim about
+*these* captures.
 
 The captures are otherwise the right fixture and ADR 19 says why: what is
 RedStone's in them is the packages and the signatures over them, which is the part
@@ -48,14 +57,41 @@ consumer enables it as a dev-dependency:
 verifier-core = { workspace = true, features = ["test-fixtures"] }
 ```
 
-**It is not a shipped surface, and three things keep it that way.** The feature is
-off by default, so `cargo build -p verifier-core` does not compile it. The `no_std`
-job builds the guest-reachable crates with default features for
-`riscv32im-unknown-none-elf`, so a shipped build that enabled it would fail there —
-`test_support` declares `extern crate std` and pulls in a signing key, neither of
-which belongs in a guest. And it is reached from `tests/`, so it sits outside
-`--edges normal,build` and cannot enter the closure M3-02's `pull-independence` job
-pins; measured, both walks are byte-identical with the feature present.
+### ADR 21 and ADR 23 rejected this, and they were right about the risk
+
+Both records considered a feature-gated `test_support` and refused it, for the same
+reason: *"fixture code does not belong in the published surface of a crate a
+consumer program links"* (ADR 23, on ADR 21's grounds). This record supersedes that
+rejection, and only because it can hold the line mechanically — the first draft
+could not, and said so wrongly.
+
+**What the first draft claimed, and why it was wrong.** It named three guards: the
+feature being off by default, the `no_std` job, and M3-02's closure walk. Review
+showed the middle one does not hold and the third never could:
+
+- the `no_std` job builds `-p verifier-core -p pull-lib -p kanon-clock`. It never
+  builds `aggregator-program`, so a feature enabled *by* `aggregator-program` is
+  outside what it compiles;
+- and reaching it would not help. The product guest targets
+  `riscv32im-risc0-zkvm-elf`, and risc0's toolchain **ships `std` for that
+  target** — `extern crate std` is no barrier where the guest actually builds.
+  `cargo build -p kanon-methods` with the feature on a normal edge succeeds and
+  compiles the fixtures into the ELF;
+- the closure walk compares package *names*, and a feature adds no package.
+
+So all that separated the fixtures from a shipped guest was one word:
+`[dev-dependencies]` rather than `[dependencies]`.
+
+**`verifier-core/tests/feature_edges.rs` is what makes it a rule.** It walks each
+product guest's `--edges normal` tree and refuses `test-fixtures` anywhere in it,
+and it discovers the guest workspaces from the root manifest's `exclude` list so a
+guest added later is covered without anyone remembering. Its second test enables
+the feature deliberately and requires it to appear, because an assertion about an
+absence proves nothing until something can make it present. Verified by moving the
+dependency to a normal edge: the guard fails with the offending line.
+
+The feature is still off by default, and it is still reached only from `tests/`.
+Those remain true; they are simply no longer the whole argument.
 
 ## Consequences
 
