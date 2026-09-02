@@ -426,3 +426,191 @@ fn terms_still_hold(registered: &PriceSource, order: &OrderAccount) -> Result<()
 fn write(order: &OrderAccount) -> Option<Data> {
     Data::try_from(borsh::to_vec(order).ok()?).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source::source_address;
+    use kanon_clock::CLOCK_ACCOUNT_ID;
+    use lee_core::account::{AccountId, Nonce};
+    use spel_framework::pda::compute_pda;
+
+    const OURS: ProgramId = [7u32; 8];
+    const WALLET: ProgramId = [42u32; 8];
+    const AGGREGATOR: ProgramId = [11u32; 8];
+    const DEFAULT: ProgramId = [0u32; 8];
+
+    const OWNER: [u8; 32] = [0xA0; 32];
+    const ORDER_ID: [u8; 32] = [0x0D; 32];
+    const BASE: [u8; 32] = [1u8; 32];
+    const QUOTE: [u8; 32] = [2u8; 32];
+    const MAX_AGE_MS: u64 = 60_000;
+    const LIMIT: u128 = 1;
+
+    fn feed(name: &[u8]) -> [u8; 32] {
+        let mut id = [0u8; 32];
+        id[..name.len()].copy_from_slice(name);
+        id
+    }
+
+    fn at(id: AccountId, owner: ProgramId, data: Vec<u8>) -> AccountWithMetadata {
+        AccountWithMetadata {
+            account: Account {
+                program_owner: owner,
+                balance: 0,
+                data: Data::try_from(data).expect("fits"),
+                nonce: Nonce(0),
+            },
+            is_authorized: false,
+            account_id: id,
+        }
+    }
+
+    fn key(id: [u8; 32], signs: bool) -> AccountWithMetadata {
+        let mut key = at(AccountId::new(id), WALLET, Vec::new());
+        key.account.balance = 500;
+        key.is_authorized = signs;
+        key
+    }
+
+    fn order_address() -> AccountId {
+        compute_pda(&OURS, &[&ORDER_ID, &seed_from_str(ORDER_ACCOUNT_SEED)])
+    }
+
+    /// A source account this program owns, registered for `feed_id`.
+    fn registered(feed_id: [u8; 32]) -> AccountWithMetadata {
+        let stored = PriceSource {
+            feed_id,
+            aggregator: AGGREGATOR,
+            base_asset: BASE,
+            quote_asset: QUOTE,
+            max_age_ms: MAX_AGE_MS,
+        };
+        at(
+            source_address(&OURS, &feed_id),
+            OURS,
+            borsh::to_vec(&stored).expect("serialises"),
+        )
+    }
+
+    fn open(
+        order: AccountWithMetadata,
+        owner: AccountWithMetadata,
+        source: AccountWithMetadata,
+        feed_id: [u8; 32],
+    ) -> Result<Vec<AccountPostState>, OpenError> {
+        open_order(
+            order, owner, source, feed_id, BASE, QUOTE, LIMIT, ORDER_ID, OURS,
+        )
+    }
+
+    /// An order account holding a usable order against `feed_id`.
+    fn opened(feed_id: [u8; 32]) -> AccountWithMetadata {
+        let posts = open(
+            at(order_address(), DEFAULT, Vec::new()),
+            key(OWNER, true),
+            registered(feed_id),
+            feed_id,
+        )
+        .expect("a usable order");
+        let mut account = at(order_address(), OURS, Vec::new());
+        account.account = posts[0].account().clone();
+        account.account.program_owner = OURS;
+        account
+    }
+
+    #[test]
+    fn an_owner_that_did_not_sign_cannot_open_an_order() {
+        let btc = feed(b"BTC");
+        assert_eq!(
+            open(
+                at(order_address(), DEFAULT, Vec::new()),
+                key(OWNER, false),
+                registered(btc),
+                btc,
+            ),
+            Err(OpenError::OwnerDidNotSign),
+            "the pair and the window an order stores are the owner's claim, so an \
+             unsigned open would record somebody else's expectation as theirs"
+        );
+    }
+
+    /// The occupied-address branch, and the reason it cannot be left to the
+    /// dispatcher: `settle` writes in place, so the guest declares the order
+    /// account `mut` rather than `init` and nothing upstream refuses a second
+    /// open. Without this branch a re-open would reset `filled` to false and a
+    /// filled order could be filled again.
+    #[test]
+    fn an_order_id_is_spent_once() {
+        let btc = feed(b"BTC");
+        assert_eq!(
+            open(opened(btc), key(OWNER, true), registered(btc), btc),
+            Err(OpenError::AlreadyOpen),
+        );
+    }
+
+    /// The same branch's other side, and a different cause on purpose: an
+    /// account somebody else already owns is not an order this program spent.
+    #[test]
+    fn a_squatted_order_address_is_refused_as_unusable_and_not_as_taken() {
+        let btc = feed(b"BTC");
+        let squatted = at(order_address(), WALLET, Vec::new());
+        assert_eq!(
+            open(squatted, key(OWNER, true), registered(btc), btc),
+            Err(OpenError::OrderAccountUnusable),
+        );
+    }
+
+    /// `source::read` checks ownership and decodes; it does not check that the
+    /// account it was handed is the one the named feed derives. This is what
+    /// ties the id an order stores to a registration that exists.
+    #[test]
+    fn an_open_that_names_one_feed_and_addresses_another_is_refused() {
+        assert_eq!(
+            open(
+                at(order_address(), DEFAULT, Vec::new()),
+                key(OWNER, true),
+                registered(feed(b"ETH")),
+                feed(b"BTC"),
+            ),
+            Err(OpenError::Source(SourceError::FeedMismatch)),
+        );
+    }
+
+    /// The settlement half of the same check, which is load-bearing for a claim
+    /// made elsewhere: `terms_still_hold` does not bind `feed_id`, and cites
+    /// this check as the reason it does not have to.
+    #[test]
+    fn a_source_account_for_another_feed_cannot_be_substituted() {
+        let btc = feed(b"BTC");
+        assert_eq!(
+            settle(
+                opened(btc),
+                registered(feed(b"ETH")),
+                at(AccountId::new([0x9E; 32]), AGGREGATOR, Vec::new()),
+                at(AccountId::new(CLOCK_ACCOUNT_ID), DEFAULT, Vec::new()),
+                btc,
+                OURS,
+            ),
+            Err(SettleError::Source(SourceError::FeedMismatch)),
+            "a source for another feed prices another market, and substituting one \
+             is how an order fills against a price its owner never agreed to"
+        );
+    }
+
+    #[test]
+    fn an_order_accounts_bytes_that_are_not_an_order_are_reported_as_such() {
+        let btc = feed(b"BTC");
+        assert_eq!(
+            settle(
+                at(order_address(), OURS, vec![0xFF; 8]),
+                registered(btc),
+                at(AccountId::new([0x9E; 32]), AGGREGATOR, Vec::new()),
+                at(AccountId::new(CLOCK_ACCOUNT_ID), DEFAULT, Vec::new()),
+                btc,
+                OURS,
+            ),
+            Err(SettleError::OrderUndecodable),
+        );
+    }
+}
