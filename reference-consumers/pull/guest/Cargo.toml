@@ -40,6 +40,12 @@ spel-framework = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" 
 serde = { version = "1", features = ["derive"] }
 nssa_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", package = "lee_core" }
 
+[dev-dependencies]
+# Test-only, and it reaches no shipped build: the handler test builds a trust
+# account's bytes directly, because `trust::register` cannot run here (this
+# build's `GENESIS_AUTHORITY` is all zeroes, so no config can be established).
+borsh = { version = "1", default-features = false, features = ["derive"] }
+
 # The mixed configuration, and it has to be the same one `methods/guest`
 # declares: accelerate secp256k1 recovery, leave keccak256 in software. Not a
 # style choice duplicated for tidiness -- a consumer verifying a payload runs the

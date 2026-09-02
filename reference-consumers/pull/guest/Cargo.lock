@@ -1639,6 +1639,7 @@ dependencies = [
 name = "reference-consumer-pull-guest"
 version = "0.1.0"
 dependencies = [
+ "borsh",
  "lee_core",
  "reference-consumer-pull",
  "risc0-zkvm",
