@@ -45,10 +45,12 @@ A compiled aggregator id is smaller, and its failure mode is not obviously bad: 
 derived address goes dead, every read refuses `Unavailable`, and refusing is what U7
 asks for. That is a real argument and it is why this was worth writing down.
 
-It loses on what recovery costs. Following the rebuild would mean rebuilding this
-consumer, and a rebuild moves this program's own id — so the config account, every
-source account and every open order move with it and the previous build's state is
-abandoned. An aggregator fix would cost the order book. `[M3-06:02]` rejected a compiled
+It loses on what recovery costs. Following the rebuild would mean changing the
+compiled constant and rebuilding this consumer, which is a changed input and so moves
+this program's own id — the config account, every source account and every open order
+move with it and the previous build's state is abandoned. (A rebuild from unchanged
+inputs reproduces the id and strands nothing; `[M2-06:01]` measured that. It is a
+changed input that costs, and following an aggregator is one.) An aggregator fix would cost the order book. `[M3-06:02]` rejected a compiled
 roster on the same mechanism with a different trigger: B follows RedStone's signer
 rotations, this consumer follows the aggregator's builds. Neither event is the
 consumer's to schedule and both are certain.
@@ -97,8 +99,8 @@ a before-and-after: the new build's account is refused under the old registratio
 - **An authority can repoint a feed under an open order.** The exposure that comes with
   the decision. What it cannot change silently is what the order means: `terms_still_hold`
   destructures a whole `PriceSource` with no `..`, binds the pair and the window, and
-  deliberately does not bind the aggregator — following a rebuild moves where a price is
-  read from, not what it means.
+  deliberately does not bind the aggregator — following a rebuild that moved the id
+  changes where a price is read from, not what it means.
 - **This consumer's guest pins the hash and not the signature crates.** It recovers no
   signatures, so risc0's `k256` and `crypto-bigint` forks buy it nothing; it derives
   three multi-seed PDAs per settlement, and `compute_pda` combines those with SHA-256,

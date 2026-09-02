@@ -197,9 +197,11 @@ mod kanon_aggregator_read_consumer {
     /// Points one feed at another aggregator build.
     ///
     /// The instruction the aggregator's own rebuild schedule is the reason for:
-    /// a program's id is its image id, so every aggregator build moves every
-    /// price account it writes, and a consumer with the id compiled in would
-    /// answer that with a redeployment of its own.
+    /// a program's id is its image id, so an aggregator build whose inputs
+    /// changed moves every price account it writes, and a consumer with the id
+    /// compiled in would answer that with a redeployment of its own. A rebuild
+    /// from unchanged inputs reproduces the id and needs nothing
+    /// (`[M2-06:01]`).
     ///
     /// Expected accounts:
     /// 1. `source` — the feed's source account.

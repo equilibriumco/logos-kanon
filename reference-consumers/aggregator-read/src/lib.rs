@@ -56,8 +56,10 @@
 //! something no reader could copy.
 //!
 //! The aggregator's id lives in state rather than in the build, because a
-//! program's id is its RISC0 image id: every aggregator build moves every price
-//! account it writes. `[M3-05:01]` records that decision, and
+//! program's id is its RISC0 image id: an aggregator build whose inputs changed
+//! moves every price account it writes. A rebuild from unchanged inputs
+//! reproduces the id and moves nothing, which `[M2-06:01]` measured.
+//! `[M3-05:01]` records that decision, and
 //! [`source::update_aggregator`] is what it buys.
 #![forbid(unsafe_code)]
 
