@@ -82,8 +82,8 @@ question the whole M3-02 gate exists to keep closed.
   dispatcher, the account constraints and the validator exist only after expansion, so
   no test in the root workspace can reach them and the cross-compile proves only that
   they compile. `cargo test --manifest-path reference-consumers/pull/guest/Cargo.toml
-  --bin pull_consumer` is what runs them, and the `guest` job now runs it for both
-  guests.
+  --bin pull_consumer` is what runs them, and the `guest` job runs the equivalent
+  for every guest.
 - **`#[lez_program]` generates this program's instruction enum.** The aggregator points
   the macro at `aggregator_program::Instruction` because its SDK, relayer and CLI build
   transactions against the same definition. A reference consumer has no host-side caller
