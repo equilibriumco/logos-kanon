@@ -1,4 +1,15 @@
 # Reference consumer A: the aggregator-read half.
+#
+# The logic is here so the host workspace can test it; the SPEL program is the
+# guest binary under `guest/`, because that is what LEZ executes. The same split
+# `aggregator-program` and reference consumer B both use.
+#
+# `kanon-idl` is the point of this crate rather than an incidental dependency.
+# The canonical price account is RFP-019's type and reaches this repository
+# through that crate alone, so a consumer that decoded the six fields by hand
+# would be asserting a layout rather than reading one. Consumer B's manifest
+# refuses the same dependency for the opposite reason: F9 asks the pull path to
+# have no aggregator in its closure, and this consumer is defined by having one.
 [package]
 name = "reference-consumer-aggregator-read"
 description = "Reference consumer that reads the canonical price account written by the push aggregator"
@@ -7,4 +18,44 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# The canonical price account, and the `Q64.64` scale its price is on.
 kanon-idl.workspace = true
+
+# LEZ's account and post-state types. A consumer that means to bind the clock's
+# bytes to the account they came from, and a price account's data to the address
+# it was found at, has to name the types its dispatcher hands it.
+lee_core.workspace = true
+
+# The clock, read from the account LEZ supplied rather than from a parameter.
+kanon-clock.workspace = true
+
+# `#[account_type]` for the accounts the IDL publishes, and `generate_idl!` for
+# the binary that emits it.
+spel-framework-macros.workspace = true
+# For `SpelError`, which the guest handler returns. The conversion lives here
+# rather than in the guest because the orphan rule puts it here: the errors are
+# this crate's and `SpelError` is not.
+spel-framework.workspace = true
+borsh = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
+
+# A binary rather than an example, so `tests/idl.rs` can reach it through
+# `CARGO_BIN_EXE_generate-aggregator-read-idl` and assert the committed artefact
+# is current. The name is this package's own: binary names share one directory
+# under `target/`, so two packages emitting `generate-idl` overwrite each other.
+[[bin]]
+name = "generate-aggregator-read-idl"
+path = "src/bin/generate-aggregator-read-idl.rs"
+
+[dev-dependencies]
+# The push side, so the tests can write a price account the way the aggregator
+# really writes one rather than by constructing the six fields to suit. A
+# dev-dependency, so it stays out of `--edges normal,build` and off the path a
+# consumer links.
+aggregator-program.workspace = true
+verifier-core.workspace = true
+# What the committed RedStone capture is encoded in. The fixture reader is
+# `verifier-core/tests/support/vectors.rs`, included by path rather than shared
+# through a crate, so its dependencies are declared by each consumer.
+serde_json = "1"
+hex = "0.4"

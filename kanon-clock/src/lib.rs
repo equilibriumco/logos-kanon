@@ -20,7 +20,16 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-use verifier_core::time::{TimeError, TimeSource};
+use verifier_core::time::TimeSource;
+
+/// Why a clock could not be read, re-exported from where verification defines
+/// it.
+///
+/// A consumer that reads the clock and never calls the verifier -- reference
+/// consumer A is one -- still has to name the error this crate returns, and
+/// making it reach for `verifier_core` to do so would put the verifier in the
+/// manifest of a crate that verifies nothing.
+pub use verifier_core::time::TimeError;
 
 /// The every-block clock account.
 ///
@@ -73,6 +82,16 @@ impl LezClock {
         }
 
         Ok(Self { now_ms, block_id })
+    }
+
+    /// The time the chain is reporting, in milliseconds.
+    ///
+    /// The same value [`TimeSource::now_ms`] yields, as an inherent method so a
+    /// caller that only wants the time does not import the verifier's trait to
+    /// get at it.
+    #[must_use]
+    pub const fn timestamp_ms(&self) -> u64 {
+        self.now_ms
     }
 
     /// The block this reading came from.

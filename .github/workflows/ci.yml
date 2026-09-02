@@ -78,6 +78,8 @@ jobs:
           cargo fmt --all --manifest-path e2e/Cargo.toml -- --check
           cargo fmt --all \
             --manifest-path reference-consumers/pull/guest/Cargo.toml -- --check
+          cargo fmt --all \
+            --manifest-path reference-consumers/aggregator-read/guest/Cargo.toml -- --check
 
       # RISC0_SKIP_BUILD is required, not a shortcut. `cargo clippy` exports a
       # rustc wrapper that the guest build inherits, and clippy-driver has no
@@ -339,14 +341,14 @@ jobs:
           rzup install r0vm 3.0.5
           rzup install rust 1.97.0
 
-      # Cross-compiles both product guests, which is what `kanon-methods` now
-      # builds: the aggregator, and reference consumer B. The cost baseline proved
-      # the toolchain on measurement code; this is the same proof for the crates
-      # that ship, and it is where a dependency added to `verifier-core` that
-      # turns out not to be guest-compatible fails. For the consumer it is also
-      # where `pull-lib` and everything under it is shown to reach riscv32 without
-      # an aggregator crate in the graph -- the closure job says nothing is there,
-      # and this says what is there compiles.
+      # Cross-compiles all three product guests, which is what `kanon-methods`
+      # builds: the aggregator and both reference consumers. The cost baseline
+      # proved the toolchain on measurement code; this is the same proof for the
+      # crates that ship, and it is where a dependency added to `verifier-core`
+      # that turns out not to be guest-compatible fails. For the pull consumer it
+      # is also where `pull-lib` and everything under it is shown to reach riscv32
+      # without an aggregator crate in the graph -- the closure job says nothing is
+      # there, and this says what is there compiles.
       - name: build the product guests
         run: cargo build --release --locked -p kanon-methods
 
@@ -363,6 +365,9 @@ jobs:
           cargo test --release --locked \
             --manifest-path reference-consumers/pull/guest/Cargo.toml \
             --bin pull_consumer
+          cargo test --release --locked \
+            --manifest-path reference-consumers/aggregator-read/guest/Cargo.toml \
+            --bin aggregator_read_consumer
 
   licenses:
     name: cargo deny
@@ -391,6 +396,7 @@ jobs:
             m0 \
             methods/guest \
             reference-consumers/pull/guest \
+            reference-consumers/aggregator-read/guest \
             m0/cost-baseline/methods-software/guest \
             m0/cost-baseline/methods-accelerated/guest \
             m0/cost-baseline/methods-mixed/guest \

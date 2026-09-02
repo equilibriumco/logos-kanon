@@ -1,4 +1,9 @@
-//! The two product guests accelerate the same cryptography.
+//! The two verifying guests accelerate the same cryptography.
+//!
+//! Two of the three product guests recover secp256k1 signatures: the
+//! aggregator's and this one's. Reference consumer A's does not, and
+//! `reference-consumers/aggregator-read/tests/accelerator_pins.rs` is where its
+//! narrower pin list is asserted. This file is about the two that do.
 //!
 //! Each guest is its own workspace, so each carries its own
 //! `[patch.crates-io]`: cargo has no way to share one, and `[M3-06:01]` records
@@ -17,7 +22,7 @@
 //!
 //! It lives in this crate because the consumer's guest is what introduced the
 //! second copy, and because these tests run in the ordinary workspace job;
-//! `kanon-methods` builds both guests but its tests are excluded from it.
+//! `kanon-methods` builds all three guests but its tests are excluded from it.
 
 use std::path::Path;
 
@@ -42,7 +47,7 @@ fn patches(manifest: &str) -> Vec<String> {
 }
 
 #[test]
-fn both_product_guests_pin_the_same_accelerators() {
+fn both_verifying_guests_pin_the_same_accelerators() {
     let aggregator = patches("../../methods/guest/Cargo.toml");
     let consumer = patches("guest/Cargo.toml");
 
@@ -56,7 +61,7 @@ fn both_product_guests_pin_the_same_accelerators() {
 
     assert_eq!(
         consumer, aggregator,
-        "the two product guests have drifted apart on which cryptography they \
+        "the two verifying guests have drifted apart on which cryptography they \
          accelerate. Both verify with the same `verifier-core`, so a difference \
          here means push and pull run different implementations of the same audit \
          (ADR 2), and their cycle figures stop being comparable. Bump both or \
