@@ -506,6 +506,119 @@ mod tests {
         );
     }
 
+    /// The registration handler stores the pair the way its own signature names
+    /// it.
+    ///
+    /// The same class as the test below and reached differently, because a
+    /// registration writes rather than reads: `base_asset` and `quote_asset` are
+    /// adjacent `[u8; 32]` arguments handed straight to `trust::register`, and
+    /// transposing them compiles. It fails closed, but late and everywhere at
+    /// once -- the feed registers, and then every order against it answers
+    /// `PairMismatch` because the owner's pair is compared against a reversed
+    /// registration. So this reads the account the handler produced.
+    #[test]
+    fn the_registration_handler_stores_the_pair_the_way_it_names_it() {
+        use borsh::BorshDeserialize;
+        use reference_consumer_pull::{ConfigAccount, FeedTrust};
+
+        const AUTHORITY: [u8; 32] = [0xA1; 32];
+        const BASE: [u8; 32] = [0xBA; 32];
+        const QUOTE: [u8; 32] = [0x9C; 32];
+
+        let stored_config = ConfigAccount {
+            authority: AUTHORITY,
+            pending: None,
+        };
+        let mut config = account(config_id(), false);
+        config.account.data = Data::try_from(borsh::to_vec(&stored_config).expect("serialises"))
+            .expect("a config fits");
+
+        let mut trust = account(trust_id(), false);
+        trust.account.program_owner = [0u32; 8];
+
+        let ctx = super::ProgramContext::new(OURS, [0u32; 8]);
+        let out = super::kanon_pull_consumer::register_feed_trust(
+            ctx,
+            trust,
+            account(id(AUTHORITY), true),
+            config,
+            "redstone-primary-prod".to_owned(),
+            FEED_ID,
+            BASE,
+            QUOTE,
+            8,
+            60_000,
+            (1..=5u8).map(|i| [i; 20]).collect(),
+            3,
+        )
+        .expect("a usable registration");
+
+        let written = FeedTrust::try_from_slice(out.post_states[0].account().data.as_ref())
+            .expect("the registration wrote a trust account");
+        assert_eq!(written.base_asset, BASE, "the base the handler was given");
+        assert_eq!(written.quote_asset, QUOTE, "and the quote, not the reverse");
+        assert_eq!(written.feed_id, FEED_ID);
+    }
+
+    /// The handler hands each of its four `[u8; 32]` arguments to the parameter
+    /// it names.
+    ///
+    /// `open_order` takes `order_id`, `feed_id`, `base_asset` and `quote_asset`
+    /// adjacently and passes them to the library in a different order, so any
+    /// two of them can be transposed and still compile. Nothing else would
+    /// catch it: the host suite calls the library directly and so agrees with
+    /// whatever it is handed, and the IDL is generated from the signature
+    /// rather than from the call.
+    ///
+    /// It fails closed on chain -- the claim is seeded from `feed_id` while the
+    /// dispatcher derives the address from `order_id`, so every open answers
+    /// `MismatchedPdaClaim` -- but CI would ship it and a devnet would be the
+    /// first sign.
+    ///
+    /// The four ids here are pairwise distinct and the registration agrees with
+    /// exactly one assignment of them, so every transposition refuses: swapping
+    /// `feed_id` with anything reaches `FeedMismatch`, swapping the pair reaches
+    /// `PairMismatch`. Asserting the success is therefore the whole check.
+    #[test]
+    fn the_open_order_handler_passes_each_id_to_the_argument_it_names() {
+        use reference_consumer_pull::trust::trust_address;
+        use reference_consumer_pull::FeedTrust;
+
+        const BASE: [u8; 32] = [0xBA; 32];
+        const QUOTE: [u8; 32] = [0x9C; 32];
+
+        let stored = FeedTrust {
+            data_service_id: "redstone-primary-prod".to_owned(),
+            feed_id: FEED_ID,
+            base_asset: BASE,
+            quote_asset: QUOTE,
+            decimals: 8,
+            max_age_ms: 60_000,
+            signers: (1..=5u8).map(|i| [i; 20]).collect(),
+            threshold: 3,
+        };
+        let mut trust = account(id(*trust_address(&OURS, &FEED_ID).value()), false);
+        trust.account.data =
+            Data::try_from(borsh::to_vec(&stored).expect("serialises")).expect("a trust fits");
+
+        let mut order = account(order_id(), false);
+        order.account.program_owner = [0u32; 8];
+
+        let ctx = super::ProgramContext::new(OURS, [0u32; 8]);
+        super::kanon_pull_consumer::open_order(
+            ctx,
+            order,
+            account(id([0xA0; 32]), true),
+            trust,
+            ORDER_ID,
+            FEED_ID,
+            BASE,
+            QUOTE,
+            1,
+        )
+        .expect("the handler passes the ids the way its own signature names them");
+    }
+
     #[test]
     fn the_genesis_key_is_decoded_from_its_hex_exactly() {
         // The test above asserts what an unconfigured build does, and that is all
