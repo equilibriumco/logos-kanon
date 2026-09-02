@@ -304,7 +304,11 @@ mod kanon_aggregator_read_consumer {
     /// Expected accounts:
     /// 1. `order` — the order account to fill. No `pda` constraint, because the
     ///    order id is not an argument here: the account is identified by being
-    ///    this program's and decoding as an order.
+    ///    this program's and decoding as an order. What keeps that sound is that
+    ///    borsh refuses trailing bytes and this program's three account types
+    ///    encode to different lengths, which `tests/settle.rs`'s
+    ///    `the_account_types_this_program_owns_have_distinct_encoded_lengths`
+    ///    asserts, because nothing else would notice a field added to one of them.
     /// 2. `source` — the feed's source account, which names the aggregator.
     /// 3. `price` — the aggregator's price account. No `pda` constraint: it is
     ///    derived under another program's id, which the constraint cannot

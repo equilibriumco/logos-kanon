@@ -736,3 +736,76 @@ fn no_refusal_returns_a_post_state() {
         );
     }
 }
+
+/// The three account types this program owns cannot be confused for each other.
+///
+/// `settle`'s `order` account carries no `pda` constraint, because the order id
+/// is not one of the instruction's arguments: the account is identified by being
+/// this program's and decoding as an `OrderAccount`. `#[account_type]` expands to
+/// nothing in spel-framework v0.6.0, so none of the three types carries a
+/// discriminator, and the only thing that makes that identification sound is
+/// that borsh refuses trailing bytes and the three encodings have different
+/// lengths.
+///
+/// That is a real property today and an accidental one. A field added to
+/// `PriceSource` that brought it to an order's length would let a caller hand a
+/// source account to `settle`, which would decode it, fill it and write
+/// `filled = true` over a source this program owns. So the property is asserted
+/// where it can be read, rather than left for whoever adds the field.
+#[test]
+fn the_account_types_this_program_owns_have_distinct_encoded_lengths() {
+    use reference_consumer_aggregator_read::authority::ConfigAccount;
+
+    let mut lengths: Vec<(&str, usize)> = Vec::new();
+
+    for (name, config) in [
+        (
+            "ConfigAccount (no pending key)",
+            ConfigAccount {
+                authority: OWNER,
+                pending: None,
+            },
+        ),
+        (
+            "ConfigAccount (a pending key)",
+            ConfigAccount {
+                authority: OWNER,
+                pending: Some(OWNER),
+            },
+        ),
+    ] {
+        lengths.push((name, borsh::to_vec(&config).expect("borsh").len()));
+    }
+
+    let source = PriceSource {
+        feed_id: [0xFEu8; 32],
+        aggregator: AGG,
+        base_asset: BASE,
+        quote_asset: QUOTE,
+        max_age_ms: MAX_AGE_MS,
+    };
+    lengths.push(("PriceSource", borsh::to_vec(&source).expect("borsh").len()));
+
+    let order = OrderAccount {
+        owner: OWNER,
+        feed_id: [0xFEu8; 32],
+        base_asset: BASE,
+        quote_asset: QUOTE,
+        max_age_ms: MAX_AGE_MS,
+        limit_price_q64: 1,
+        filled: false,
+    };
+    lengths.push(("OrderAccount", borsh::to_vec(&order).expect("borsh").len()));
+
+    for (i, (left_name, left)) in lengths.iter().enumerate() {
+        for (right_name, right) in &lengths[i + 1..] {
+            assert_ne!(
+                left, right,
+                "{left_name} and {right_name} both encode to {left} bytes, so an \
+                 account of one type decodes as the other. `settle` identifies an \
+                 order by ownership plus a successful decode, and would fill the \
+                 wrong account"
+            );
+        }
+    }
+}
