@@ -149,11 +149,6 @@ fn a_wrapped_cause_keeps_its_own_number_by_every_route() {
     for cause in every_source_cause() {
         assert_eq!(SettleError::Source(cause).code(), cause.code());
         assert_eq!(OpenError::Source(cause).code(), cause.code());
-        assert_eq!(ReadError::Source(cause).code(), cause.code());
-        assert_eq!(
-            SettleError::Read(ReadError::Source(cause)).code(),
-            cause.code()
-        );
     }
     for cause in every_clock_cause() {
         assert_eq!(ReadError::Clock(cause).code(), clock_code(cause));

@@ -47,7 +47,7 @@ use lee_core::account::{Account, AccountId, AccountWithMetadata};
 use lee_core::program::ProgramId;
 use spel_framework::pda::{compute_pda, seed_from_str};
 
-use crate::source::{PriceSource, SourceError};
+use crate::source::PriceSource;
 
 /// The aggregator's name seed for a feed account (ADR 33).
 pub const FEED_ACCOUNT_SEED: &str = "KANON_FEED_ACCOUNT";
@@ -112,8 +112,6 @@ pub struct Price {
 /// Why a price account could not be turned into a price.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadError {
-    /// The feed's price source could not be read.
-    Source(SourceError),
     /// The clock account was not the chain's.
     Clock(TimeError),
     /// The account offered is not the one this feed's source derives.
@@ -157,12 +155,11 @@ pub enum ReadError {
 impl ReadError {
     /// A stable number per leaf cause, in this program's 2100 block.
     ///
-    /// [`Self::Source`] and [`Self::Clock`] dispatch into their own layers'
-    /// blocks rather than reporting a layer as one number.
+    /// [`Self::Clock`] dispatches into the clock's own block rather than
+    /// reporting a layer as one number.
     #[must_use]
     pub const fn code(&self) -> u32 {
         match self {
-            Self::Source(err) => err.code(),
             Self::Clock(err) => crate::clock_code(*err),
             Self::WrongAccount => 2101,
             Self::Unavailable => 2102,
@@ -179,7 +176,6 @@ impl ReadError {
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Source(err) => write!(f, "{err}"),
             Self::Clock(err) => write!(f, "{err:?}"),
             Self::WrongAccount => {
                 f.write_str("that is not the price account this feed's source derives")
@@ -204,12 +200,6 @@ impl fmt::Display for ReadError {
                 now_ms,
             } => write!(f, "the published price is dated {published_ms}, ahead of {now_ms}"),
         }
-    }
-}
-
-impl From<SourceError> for ReadError {
-    fn from(err: SourceError) -> Self {
-        Self::Source(err)
     }
 }
 
