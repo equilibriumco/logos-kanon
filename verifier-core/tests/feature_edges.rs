@@ -25,11 +25,14 @@
 //! to the one move that matters -- writing `features = ["test-fixtures"]` under
 //! `[dependencies]` instead of `[dev-dependencies]`.
 //!
-//! ADR 21 and ADR 23 both rejected exposing `test_support` behind a feature, for
-//! the reason this file is about: fixture code does not belong in the published
-//! surface of a crate a consumer program links. They were right about the risk.
-//! This is what makes the narrower thing they did not consider -- a dev-only
-//! feature -- hold mechanically rather than by intention.
+//! ADR 21 and ADR 23 both rejected exposing `test_support` behind a feature, for a
+//! reason this file does *not* answer: fixture code existing in the published
+//! surface of a crate a consumer program links. That surface is still there -- the
+//! feature is opt-in API and a third party can enable it in their own build.
+//! `[M2-16:01]` accepts that cost explicitly.
+//!
+//! What this file holds is the narrower line: Kanon's own guests do not enable it
+//! by accident. That is worth having and it is not the same claim.
 
 use std::process::Command;
 

@@ -93,6 +93,29 @@ dependency to a normal edge: the guard fails with the offending line.
 The feature is still off by default, and it is still reached only from `tests/`.
 Those remain true; they are simply no longer the whole argument.
 
+### What the guard does not do, and the cost this record accepts
+
+**The public surface is real and stays.** `test-fixtures` is opt-in API and
+`test_support` is a public module, so any third-party program linking
+`verifier-core` can enable it and ship the fixtures. `feature_edges.rs` walks
+*Kanon's* product guests: it prevents the accidental case here, and says nothing
+about a consumer who enables the feature deliberately in their own build.
+
+That is what ADR 21 and ADR 23 objected to — not the risk of an accident, but
+fixture code existing in the published surface of a crate a consumer program links.
+**This record accepts that cost knowingly**, and it is worth saying so plainly
+rather than letting a mechanical guard read as though it answered the objection:
+
+- the two dimensions that need it (`ValueOutOfRange` here, a fresh timestamp for
+  M2-19) cannot be reached any other way with the fixtures this repository has;
+- a consumer who enables it gets a signing key and a payload builder, which are
+  useless to a production program and harmless to one that wants them for its own
+  tests, so the failure mode is bloat rather than a wrong answer;
+- and it is off by default, so the surface has to be asked for by name.
+
+If the surface itself is judged too high a price, the last alternative below is the
+way out and it is a contained change.
+
 ## Consequences
 
 - **S3's last push-mode dimension closes.**
@@ -108,7 +131,7 @@ Those remain true; they are simply no longer the whole argument.
 - **`ValueOutOfRange` and `ScalingOutOfRange` are different causes** and now have
   different tests. The second is the conversion overflowing rather than the value
   being unusable, and it is unreachable from the captures for a different reason —
-  arithmetic rather than what RedStone will sign.
+  arithmetic rather than the contents of the captures.
 - **M2-19 needs the same builder for a different reason.** The chain clock on a
   standalone sequencer is live wall time, the committed captures are weeks old, and
   `MAX_MAX_AGE_MS` is fifteen minutes — so no captured payload can pass freshness
@@ -135,3 +158,14 @@ Those remain true; they are simply no longer the whole argument.
   dimensions and puts CI on an external service, which is the thing the committed
   captures exist to avoid. It also cannot produce a negative value, since the
   gateway will not serve one.
+- **A separate dev-only crate holding the builder.** The one alternative that
+  removes the objection rather than accepting it: no feature on `verifier-core`, no
+  public `test_support`, nothing a third party can switch on. It works because
+  everything the builder touches is already public — `decode::REDSTONE_MARKER`,
+  `decode::FEED_ID_BYTES`, `backend::Signature`, `backend::SignerAddress` — so it
+  needs no privileged access. The cost is a cycle in the dev graph
+  (`verifier-core` dev-depends on it, it depends on `verifier-core`), which cargo
+  permits but which makes this crate's own tests harder to reason about, plus a
+  manifest, a lockfile entry and a `cargo deny` consideration. Not taken now
+  because the feature is off by default and asked for by name; the right change if
+  the published surface is judged the deciding cost.

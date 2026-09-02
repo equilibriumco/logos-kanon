@@ -1,9 +1,11 @@
 //! Payload fixtures. Compiled under `cfg(test)`, or under the `test-fixtures`
 //! feature for another crate's tests.
 //!
-//! Not a shipped surface, and `[M2-16:01]` records what does and does not enforce
-//! that -- the `no_std` job is weaker evidence than it looks, because risc0's
-//! guest target ships `std`. `tests/feature_edges.rs` is the check that holds it.
+//! Public opt-in API, and `[M2-16:01]` records the cost that accepts: a third party
+//! linking this crate can enable the feature and ship these fixtures. What
+//! `tests/feature_edges.rs` holds is the narrower line -- that *Kanon's* own guests
+//! do not enable it by accident. The `no_std` job is weaker evidence than it looks,
+//! because risc0's guest target ships `std`.
 //!
 //! `decode`'s tests need framing they control byte for byte; `feed`'s tests need
 //! signatures that recover to a known address. One builder serves both:
