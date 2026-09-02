@@ -74,6 +74,11 @@ fn client() -> SequencerClient {
 const TEST_ADMIN_KEY: [u8; 32] = [0x11; 32];
 
 /// The account id the guest must carry as `KANON_GENESIS_ADMIN`.
+///
+/// Written out because it has to appear in a CI job's `env` and on a command
+/// line, neither of which can call a function. `require_a_configured_build`
+/// derives it from [`TEST_ADMIN_KEY`] and refuses to run if the two disagree,
+/// so it is a cache of that derivation rather than a second source of truth.
 const EXPECTED_GENESIS: &str = "5b0e4f6dddea8b9ef3118d6002a25c09ab379653ffb60586f4604f1fa6a0b392";
 
 fn test_admin() -> (lee::PrivateKey, lee::AccountId) {
@@ -89,6 +94,22 @@ fn test_admin() -> (lee::PrivateKey, lee::AccountId) {
 /// file is compiled by the same cargo invocation as the guest, so it sees the
 /// same environment the build did.
 fn require_a_configured_build() {
+    // Derived first, because the constant is a copied string and the env var can
+    // agree with a wrong one. That case is not hypothetical in its consequences:
+    // the guest would carry a genesis authority nobody here holds, every
+    // administrative instruction would be refused, and the first symptom would be
+    // `the authority is established` timing out sixty seconds later -- exactly the
+    // unclear downstream failure this function exists to pre-empt. @frenzox
+    // raised it on #58.
+    let (_, admin_id) = test_admin();
+    let derived = hex::encode(admin_id.value());
+    assert_eq!(
+        EXPECTED_GENESIS, derived,
+        "EXPECTED_GENESIS is not the account id of TEST_ADMIN_KEY. One of the two \
+         was edited without the other; the derived value is the correct one, and it \
+         also has to be updated in the `sequencer` CI job's KANON_GENESIS_ADMIN"
+    );
+
     let configured = option_env!("KANON_GENESIS_ADMIN").unwrap_or("");
     assert_eq!(
         configured, EXPECTED_GENESIS,

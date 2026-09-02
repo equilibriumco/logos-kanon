@@ -71,3 +71,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 # the types that wrote them. Pinned to what the LEZ graph already resolves, the
 # way the product manifest pins it.
 borsh = "1.8.0"
+
+# For one assertion: that `EXPECTED_GENESIS` really is the account id of the
+# test's admin key, rather than a hex string that merely matches the CI job's.
+hex = "0.4"

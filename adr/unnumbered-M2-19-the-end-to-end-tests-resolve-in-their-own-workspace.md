@@ -6,7 +6,8 @@
 - **Extends**: [7](0007-two-workspaces-and-a-lockfile-per-resolution-domain.md),
   on the same argument applied to a third graph
 - **Artefacts**: `e2e/Cargo.toml`, `e2e/Cargo.lock`, `e2e/tests/sequencer_e2e.rs`,
-  `Cargo.toml`, `deny.toml`, `.github/workflows/ci.yml`
+  `Cargo.toml`, `deny.toml`, `traceability/tests/source_boundary.rs`,
+  `.github/workflows/ci.yml`
 
 ## Context
 
@@ -48,10 +49,28 @@ someone else wrote, reached only by a test, is not that.
 The `deny.toml` change is deliberately the smaller one. The seven sources are
 added to the shared `allow-git` rather than given a second config file, because two
 configs would drift on the licence rules — which are the part that must stay
-identical, since the licence gate is a deliverable. What keeps the guarantee narrow
-is structural rather than textual: the product workspace resolves none of those
-sources, and `e2e` is excluded precisely so it cannot start to. `cargo deny` runs
-over `e2e` too, so its licences are still checked.
+identical, since the licence gate is a deliverable. `cargo deny` runs over `e2e`
+too, so its licences are still checked.
+
+That leaves one real hole, which @frenzox found on #58: cargo-deny has no
+per-workspace source policy, so one list permits those seven **anywhere**,
+including in something that ships. The first draft of this record answered that the
+guarantee is "structural rather than textual" — the product resolves none of them
+and `e2e` is excluded so it cannot start to. That was an argument, not a gate, and
+the repository's own standard is that a claim a test could hold should not be left
+to prose.
+
+So each of the seven carries a `# harness-only` comment, and
+`traceability/tests/source_boundary.rs` reads the marker and asserts both
+directions: **no marked source appears in the product `Cargo.lock`**, and **every
+marked source appears in `e2e/Cargo.lock`**. The second is what keeps the marker
+honest — a marker on something the harness does not use would be a live exemption
+nobody is using. Both were checked by making them fail: marking `spel.git`, which
+the product does resolve, fails the first; marking an unused URL fails the second.
+
+The marker is a comment rather than a second TOML list on purpose. It sits on the
+line it describes, so someone editing `allow-git` sees it, and there is no second
+list to disagree with the first.
 
 The tests run in the `sequencer` CI job, which is the only one with a chain to
 reach. That job compiled nothing before this change; it now installs the RISC Zero
@@ -79,6 +98,14 @@ minutes to cover a cold cache.
 - **`e2e` has to be named in every per-workspace CI step.** It is now in the `fmt`,
   `clippy` and `cargo deny` loops. This is the standing cost of the exclude
   pattern, and the same one `m0` and the guests already carry.
+- **A source the harness stops using has to lose its marker.** Otherwise
+  `every_harness_only_source_is_one_the_harness_actually_resolves` fails, which is
+  the intended direction: the alternative is an allowance left standing that the
+  next dependency to reach that repository would inherit silently.
+- **A product crate that genuinely needs one of those sources must say so.** The
+  route is to take the marker off that line and record in `deny.toml` why the
+  source is acceptable in a deliverable — not to weaken the test. The failure
+  message says this, because the cheap way out of a red gate is to edit the gate.
 - **The `sequencer` job is now the slow one.** It builds a 793-package graph on a
   cold cache — five fewer than the 798 above, because `e2e` does not resolve
   `pull-lib`, `kanon-sdk`, `kanon-relayer`, the two reference consumers or

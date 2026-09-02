@@ -204,20 +204,25 @@ allow-git = [
   # node's sources rather than anything Kanon writes, ships or links.
   #
   # One config file rather than a second one for `e2e/`, because two would drift
-  # on the licence rules -- which are the part that must stay identical. The cost
-  # is that these are permitted anywhere, so the narrower guarantee is
-  # structural: the product workspace resolves none of them, and `e2e` is in the
-  # root manifest's `exclude` list precisely so it cannot start to.
+  # on the licence rules -- which are the part that must stay identical.
+  #
+  # `# harness-only` is not decoration. cargo-deny has no per-workspace source
+  # policy, so on its own this list would permit these seven anywhere, including
+  # in something that ships. `traceability/tests/source_boundary.rs` reads the
+  # marker and asserts, both ways, that every source carrying it is absent from
+  # the product lockfile and present in the harness's -- so the narrow policy is
+  # enforced rather than argued. Move a source out of the harness and the check
+  # fails until the marker goes with it. Raised by @frenzox on #58.
   #
   # Logos's own chain, under the node the sequencer runs on.
-  "https://github.com/logos-blockchain/logos-blockchain.git",
-  "https://github.com/logos-blockchain/logos-blockchain-circuits.git",
-  "https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark.git",
+  "https://github.com/logos-blockchain/logos-blockchain.git", # harness-only
+  "https://github.com/logos-blockchain/logos-blockchain-circuits.git", # harness-only
+  "https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark.git", # harness-only
   # Logos's service framework, which the node is built on.
-  "https://github.com/logos-co/Overwatch",
+  "https://github.com/logos-co/Overwatch", # harness-only
   # The node's proving stack: Espresso's jellyfish (both spellings, for the
   # reason LEZ has two) and the sponge library beneath it.
-  "https://github.com/EspressoSystems/jellyfish",
-  "https://github.com/EspressoSystems/jellyfish.git",
-  "https://github.com/arkworks-rs/spongefish.git",
+  "https://github.com/EspressoSystems/jellyfish", # harness-only
+  "https://github.com/EspressoSystems/jellyfish.git", # harness-only
+  "https://github.com/arkworks-rs/spongefish.git", # harness-only
 ]

@@ -3366,6 +3366,7 @@ dependencies = [
  "aggregator-program",
  "borsh",
  "common",
+ "hex",
  "kanon-clock",
  "kanon-methods",
  "lee",
