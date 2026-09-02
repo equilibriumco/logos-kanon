@@ -62,3 +62,8 @@ risc0-zkvm.workspace = true
 # `verifier-core/tests/support/vectors.rs`, included by path rather than shared
 # through a crate, so its dependencies are declared by each consumer.
 hex = "0.4"
+# The signed-payload builder, for the one S3 dimension no captured payload can
+# reach: a package carrying a zero or negative value. RedStone does not sign
+# those, so there is nothing to capture -- `[M2-16:01]` records it. Dev-only, and
+# the feature is off in every shipped build.
+verifier-core = { workspace = true, features = ["test-fixtures"] }

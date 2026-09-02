@@ -1,4 +1,9 @@
-//! Payload fixtures. Compiled only under `cfg(test)`.
+//! Payload fixtures. Compiled under `cfg(test)`, or under the `test-fixtures`
+//! feature for another crate's tests.
+//!
+//! Not a shipped surface: the feature turns on `extern crate std` in a `no_std`
+//! library and pulls in a signing key. Nothing a guest links may enable it, and
+//! the `no_std` job builds this crate with default features so it would notice.
 //!
 //! `decode`'s tests need framing they control byte for byte; `feed`'s tests need
 //! signatures that recover to a known address. One builder serves both:

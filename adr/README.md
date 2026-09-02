@@ -50,6 +50,7 @@ they describe the design being proposed for acceptance.
 | [32](0032-one-price-account-per-feed-and-anyone-may-fill-it.md) | One price account per feed, at a derived address, and anyone may fill it | accepted |
 | [33](0033-a-feed-lives-at-the-address-its-id-derives.md) | A feed lives at the address its id derives, so a client can find one | accepted |
 | [M2-06:01](unnumbered-M2-06-where-the-admin-authority-comes-from.md) | Where the admin authority comes from, and how it is established | accepted, unnumbered |
+| [M2-16:01](unnumbered-M2-16-where-a-payload-nobody-captured-comes-from.md) | Where a payload nobody captured comes from | accepted, unnumbered |
 
 ## How they fit together
 
