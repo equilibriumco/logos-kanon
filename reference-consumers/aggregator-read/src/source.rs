@@ -206,7 +206,10 @@ fn check(feed_id: &[u8; 32], aggregator: &ProgramId, max_age_ms: u64) -> Result<
 ///
 /// [`SourceError`] when the gate refuses, the account is not the one the feed
 /// derives, a source is already registered, or a parameter is unusable.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a registration is the whole trust decision for a feed, and every parameter is part of it: an `allow` here would not say when that stops being true"
+)]
 pub fn register(
     source: AccountWithMetadata,
     authority: AccountWithMetadata,
@@ -680,6 +683,64 @@ mod tests {
             )
             .unwrap_err(),
             SourceError::FeedMismatch
+        );
+    }
+
+    /// The same refusal on the retirement half. `an_update_names_the_feed_it_moves`
+    /// covers the identical check in `update_aggregator` and cites ADR 33's
+    /// operator following one rebuild across five feeds; retiring the wrong one
+    /// is the same mistake with a worse outcome, and deleting this branch was
+    /// silent before this test.
+    #[test]
+    fn a_retirement_names_the_feed_it_ends() {
+        let stored = PriceSource {
+            feed_id: feed_id(),
+            aggregator: AGGREGATOR,
+            base_asset: BASE,
+            quote_asset: QUOTE,
+            max_age_ms: MAX_AGE_MS,
+        };
+        let mut other = feed_id();
+        other[0] = b'E';
+
+        assert_eq!(
+            deregister(
+                registered_source(&stored),
+                key(AUTHORITY, true),
+                config(),
+                other,
+                OURS,
+            )
+            .unwrap_err(),
+            SourceError::FeedMismatch
+        );
+    }
+
+    /// `every_unusable_parameter_has_its_own_cause` drives `register` only, and
+    /// an update takes the same parameter by the same rule. A zero id is not a
+    /// program, so pointing a feed at one would leave every read refusing with
+    /// no way back but another update.
+    #[test]
+    fn an_update_cannot_point_a_feed_at_the_zero_program() {
+        let stored = PriceSource {
+            feed_id: feed_id(),
+            aggregator: AGGREGATOR,
+            base_asset: BASE,
+            quote_asset: QUOTE,
+            max_age_ms: MAX_AGE_MS,
+        };
+
+        assert_eq!(
+            update_aggregator(
+                registered_source(&stored),
+                key(AUTHORITY, true),
+                config(),
+                feed_id(),
+                DEFAULT,
+                OURS,
+            )
+            .unwrap_err(),
+            SourceError::AggregatorIsZero
         );
     }
 
