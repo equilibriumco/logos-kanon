@@ -10,6 +10,12 @@
 //! reaching this file is not a dependency on the aggregator — F9's closure walk
 //! is over `--edges normal,build`, and dev-dependencies are outside it in any
 //! case. What crosses here is a JSON scanner, not an instruction set.
+//!
+//! It does mean `reference-consumers/pull/` no longer carries a test suite that
+//! compiles once lifted out of this repository. That is the same trade
+//! `verifier-core/tests/support/vectors.rs` already makes for six crates, and it
+//! costs nothing a reader needs: `[M3-06:01]` records that the artefact somebody
+//! copies is the guest program, which depends on none of this.
 
 use serde::Serialize;
 use serde_json::Value;

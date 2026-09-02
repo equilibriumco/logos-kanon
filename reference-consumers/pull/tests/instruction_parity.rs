@@ -110,14 +110,19 @@ fn each_variants_fields_are_the_arguments_the_idl_lists_in_that_order() {
     for variant in every_variant() {
         let (name, fields) = name_and_fields(&variant);
         let index = wire_discriminant(&variant) as usize;
-        let published: Vec<String> = instructions[index]["args"]
+        let at_index = instructions
+            .get(index)
+            .unwrap_or_else(|| panic!("the IDL has no instruction at index {index} for {name}"));
+        // `args` required rather than defaulted: the generator emits the key
+        // even for an instruction that takes none, so a missing one means the
+        // artefact is not what this test thinks it is reading. Defaulting would
+        // compare equal for the unit variants and hide that.
+        let published: Vec<String> = at_index["args"]
             .as_array()
-            .map(|args| {
-                args.iter()
-                    .map(|arg| arg["name"].as_str().unwrap_or_default().to_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
+            .unwrap_or_else(|| panic!("the IDL lists no `args` for {name}"))
+            .iter()
+            .map(|arg| arg["name"].as_str().unwrap_or_default().to_owned())
+            .collect();
 
         assert_eq!(
             fields, published,
