@@ -28,6 +28,7 @@ use lee_core::program::{validate_execution, AccountPostState, Claim, ProgramId};
 use spel_framework::pda::{compute_pda, seed_from_str};
 use verifier_core::decode::{EMPTY_ENVELOPE_BYTES, REDSTONE_MARKER};
 use verifier_core::feed::MAX_AHEAD_MS;
+use verifier_core::test_support;
 use verifier_core::value::median;
 use verifier_core::{DecodeError, VerifyError};
 
@@ -907,6 +908,60 @@ fn every_upstream_failure_refuses_with_its_own_cause_and_writes_nothing() {
             ),
             Err(expected),
             "{name}: refused with a different cause than the one this case is for"
+        );
+    }
+}
+
+#[test]
+fn a_package_carrying_an_unusable_value_is_refused_by_the_submission_path() {
+    // S3's "invalid value", and the one dimension no captured payload can reach:
+    // `ValueOutOfRange` is raised for a zero, negative or over-wide value
+    // (`feed.rs:411`), and the captures committed here contain none -- so this
+    // signs its own. The payload here is signed by keys this test holds, over values it
+    // chose, and the feed is registered against those keys' addresses -- so every
+    // check before the value passes and the value is what refuses.
+    //
+    // Distinct from `no_registrable_scale_lets_a_captured_price_overflow_its_conversion`
+    // above, which is `ScalingOutOfRange` -- the conversion failing rather than
+    // the value being unusable. Two causes, two tests, and the earlier revision of
+    // this suite conflated them.
+    let keys: Vec<_> = (1..=3u8).map(test_support::signing_key).collect();
+    let signers: Vec<[u8; 20]> = keys.iter().map(|k| test_support::address_of(k).0).collect();
+    let feed_id = b"BTC";
+    let now = 1_700_000_000_000u64;
+
+    // `feed_state` already stores the padded BTC id and `MAX_AGE_MS`, so only the
+    // roster and threshold move -- this test's keys rather than the capture's.
+    let state = FeedAccount {
+        signers,
+        threshold: 3,
+        ..feed_state(&vector("BTC"))
+    };
+
+    // Zero, and negative. Negative means the top bit of the *32-byte* value
+    // (`Value::is_negative` reads `self.0[0] & 0x80`), and `from_be_slice`
+    // right-aligns what it is given -- so four bytes of `0xFF` is a large
+    // positive number, not a negative one. It has to be full width to be
+    // negative, which is the kind of thing only writing the test establishes:
+    // the four-byte version verified and published.
+    let mut negative = vec![0u8; 32];
+    negative[0] = 0x80;
+    for (label, value) in [("zero", vec![0u8; 4]), ("negative", negative)] {
+        let mut builder = test_support::PayloadBuilder::default();
+        for key in &keys {
+            builder = builder.signed_package(key, &[(feed_id, &value)], now);
+        }
+        let payload = builder.build();
+
+        assert_eq!(
+            submit(
+                feed_account(&state),
+                no_price_account(),
+                clock_at(now),
+                &payload,
+            ),
+            Err(SubmitError::Verify(VerifyError::ValueOutOfRange)),
+            "{label}: an unusable value has to refuse before it is published"
         );
     }
 }

@@ -14,6 +14,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Exposes `test_support`, the signed-payload builder `decode` and `feed` use in
+# their own unit tests, to other crates' tests. Off by default and never enabled
+# by a shipped crate: it turns on `extern crate std` in a `no_std` library and
+# pulls in a signing key, neither of which belongs in a guest.
+#
+# It exists because two tasks need a payload nobody captured. M2-16 needs a
+# package carrying a zero or negative value, which cannot be signed by RedStone
+# and so cannot be captured. M2-19 needs one timestamped *now*: the committed
+# captures are weeks old and `MAX_MAX_AGE_MS` is fifteen minutes, so no captured
+# payload can pass freshness against a live chain clock. Both need to sign their
+# own, and this is the builder that already does it correctly.
+#
+# The alternative was a second builder in each consumer, which is how two
+# implementations of one wire format start.
+test-fixtures = []
+
 [dependencies]
 # The two primitives, and the same versions the cost baseline measured -- exact
 # recovery cost is scalar-dependent and a patch release moves the figures. In a
