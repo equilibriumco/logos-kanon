@@ -1841,7 +1841,10 @@ dependencies = [
 name = "kanon-methods"
 version = "0.1.0"
 dependencies = [
+ "aggregator-program",
+ "borsh",
  "hex",
+ "kanon-clock",
  "risc0-build",
  "risc0-zkvm",
  "serde_json",

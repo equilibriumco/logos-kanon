@@ -40,6 +40,52 @@ At three signers, which is RFP-020's default threshold:
 
 One more signer costs about 605,000 cycles, whatever the signer count already is.
 
+## What the write costs
+
+The table above is verification. A submission also has to read its accounts and
+write the price, and that is the other half of what a push transaction spends
+(M2-18). Same payload, five signers:
+
+| | first write | update |
+| --- | ---: | ---: |
+| verification | 3,039,850 | 3,039,850 |
+| **the write** | **7,056** | **8,487** |
+| whole instruction body | 3,046,906 | 3,048,337 |
+| _the write, as a share of the body_ | _0.232%_ | _0.278%_ |
+| _harness floor, subtracted out_ | 138,487 | 153,897 |
+
+**The write is a rounding error against verifying.** A quarter of one percent,
+either way, and 8,487 cycles is 0.027% of LEZ's 32M per-transaction budget. The
+cost of a push submission is the cost of recovering signatures; nothing about the
+write or the accounts changes that conclusion, and no optimisation here is worth
+looking for.
+
+Two figures rather than one because `submit_price` has two paths, decided by
+whether the price account already exists:
+
+- a **first write** builds the account from nothing. Once per feed, ever.
+- an **update** decodes the published `OraclePriceAccount` first — 136 bytes —
+  and checks the pair it already carries. Every heartbeat and every deviation
+  trigger after that.
+
+So the recurring cost is the higher one, and the 1,431-cycle difference between
+them is precisely that account read. `an_update_costs_more_than_a_first_write_because_it_reads_one`
+asserts both the direction and the gap.
+
+What "the write" contains, named in full because a residual should not be called
+a component: the ownership check on the feed account, decoding the clock from the
+account LEZ pins, decoding the stored `FeedAccount`, the paused check, rebuilding
+the signer set and `FeedConfig` from what was stored, triaging the price account
+between the two cases, decoding the published account in the update case,
+choosing the asset pair to check against, computing the new account, and
+producing the post-states LEZ applies. Splitting it further would need
+`kanon-clock` and `borsh` as direct guest dependencies, which is a real cost for
+a breakdown of 0.2%.
+
+Not in these figures: what LEZ spends reading the instruction data before the
+program is entered, about 113 cycles a byte, which *is* material and is
+`MAX_PAYLOAD_BYTES`'s subject (ADR 26).
+
 ## How it is measured
 
 `methods/guest/src/bin/verify_cost.rs` runs a **prefix** of the pipeline, chosen
@@ -70,6 +116,36 @@ how the remainder's largest single item gets a figure of its own.
 Every stage reports how many packages it got through, and the harness asserts it
 against the signer count. A run that took an early exit is cheap, and would
 otherwise read as a fast component rather than as a failure.
+
+The write is measured the same way by a second guest,
+`methods/guest/src/bin/submit_cost.rs`, which brackets the instruction instead of
+the pipeline:
+
+| stage | adds |
+| --- | --- |
+| 0 | nothing: input, setup, the three accounts built, journal |
+| 1 | `Payload::decode` and `verify_feed`, called as `submit_price` calls them |
+| 2 | the real `submit_price`, whole |
+
+So `1 - 0` is verification, `2 - 0` is the instruction body, and `2 - 1` is the
+write. Each of the two cases is measured with its own stage 0, because the price
+account is built during setup: subtracting an update's stage 2 from a *first
+write*'s stage 1 credits the update with 15,410 cycles of setup it never paid,
+which is how the first version of this measurement was wrong.
+
+Stage 2 reports how many post-states came out and the harness requires three. A
+submission that refused returns an error and no post-states, so without that
+check a broken submission would publish as an implausibly cheap write — which is
+not hypothetical: pointing the guest at a clock account the program may not read
+makes every one of these figures collapse, and the check is what turns that into
+a failure.
+
+Two guests reaching `verify_feed` by different routes also corroborate each
+other: they agree on verification to 60 cycles in 3,039,790, which is 0.002%.
+That comparison is the one figure here bounded rather than pinned exactly, and
+the reason is that a cycle count is a property of a guest ELF rather than of the
+work — two independently compiled binaries running identical source are not
+obliged to agree to the cycle.
 
 ### What the harness floor is
 
@@ -188,3 +264,12 @@ Cycle counts are a deterministic function of the guest ELF and its input, so the
 figures are pinned by exact equality rather than by a ceiling. A failure means a
 figure moved; it is a prompt to re-measure and re-publish this file, not
 necessarily a defect.
+
+```sh
+cargo test --release -p kanon-methods                                      # the assertions
+cargo test --release -p kanon-methods -- --nocapture the_cost_table        # the first table
+cargo test --release -p kanon-methods -- --nocapture the_push_write_cost   # the second
+```
+
+Both tables are printed by the code that asserts them, so a published figure and
+an asserted figure cannot drift apart.

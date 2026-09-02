@@ -581,3 +581,345 @@ fn the_largest_payload_the_decoder_accepts_is_read_and_verified_inside_the_budge
         "only {headroom} cycles left for the rest of the program"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The push write (M2-18).
+//
+// Everything above measures verification. What P1 was missing is the other half
+// of a submission: what the instruction spends *besides* verifying, which is the
+// part that reads the accounts and writes the price.
+// ---------------------------------------------------------------------------
+
+/// Stages of `submit_cost.rs`, which brackets the push instruction rather than
+/// the verification pipeline.
+mod push_stage {
+    /// Input, setup and journal: the three accounts built, nothing run.
+    pub const FLOOR: u8 = 0;
+    /// `Payload::decode` and `verify_feed`, called as `submit_price` calls them.
+    pub const VERIFY: u8 = 1;
+    /// The real `submit_price`, whole.
+    pub const SUBMIT: u8 = 2;
+}
+
+/// Which of the instruction's two paths is under measurement.
+///
+/// The same instruction, branching on whether the price account already exists
+/// (`submit.rs`: `let create = price_account.account == Account::default()`).
+/// They are separate figures because only one of them reads an account:
+///
+/// - [`Case::Create`] is the first submission a feed ever takes, once per feed;
+/// - [`Case::Update`] is every one after it, so it is the cost an operator pays
+///   on every heartbeat and every deviation trigger for the life of the feed.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Case {
+    Create,
+    Update,
+}
+
+impl Case {
+    /// The price account's data, which is what distinguishes the two paths.
+    ///
+    /// Empty means a fully default account, which is how `submit_price` decides
+    /// it is creating rather than updating.
+    fn price_data(self, vector: &Vector) -> Vec<u8> {
+        match self {
+            Self::Create => Vec::new(),
+            Self::Update => {
+                use aggregator_program::kanon_idl::{AccountId, OraclePriceAccount};
+                // One round older than the payload, so the submission is an
+                // update rather than a `NotNewer` refusal, and carrying the same
+                // pair, because a mismatch would refuse before the write.
+                let account = OraclePriceAccount {
+                    base_asset: AccountId::new(PUSH_BASE),
+                    quote_asset: AccountId::new(PUSH_QUOTE),
+                    price: 1,
+                    timestamp: vector.timestamp_ms - 1_000,
+                    source_id: aggregator_program::publish::REDSTONE_SOURCE_ID,
+                    confidence_interval: 0,
+                };
+                borsh::to_vec(&account).expect("the canonical account encodes")
+            }
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Create => "first write",
+            Self::Update => "update",
+        }
+    }
+}
+
+/// Arbitrary but fixed. The pair is a registration claim (ADR 16) and comparing
+/// it costs 64 bytes whatever it holds; it has to match what the published
+/// account carries, or the update refuses before reaching the write.
+const PUSH_BASE: [u8; 32] = [0xB7; 32];
+const PUSH_QUOTE: [u8; 32] = [0x05; 32];
+
+/// The program that owns the accounts. Fixed and arbitrary: `submit_price`
+/// compares program ids, and comparing two `[u32; 8]` costs the same whatever
+/// they hold.
+const PUSH_OURS: [u32; 8] = [7; 8];
+
+/// The feed as it is stored on chain, which is what the instruction decodes.
+fn push_feed_state(vector: &Vector) -> aggregator_program::FeedAccount {
+    let mut feed_id = [0u8; 32];
+    feed_id[..vector.feed_id.len()].copy_from_slice(vector.feed_id.as_bytes());
+    aggregator_program::FeedAccount {
+        feed_id,
+        base_asset: PUSH_BASE,
+        quote_asset: PUSH_QUOTE,
+        decimals: DECIMALS,
+        max_age_ms: MAX_MAX_AGE_MS,
+        signers: vector.signers.iter().map(|s| s.0).collect(),
+        threshold: vector.signers.len() as u8,
+        paused: false,
+    }
+}
+
+/// The clock account's sixteen bytes: block id, then the timestamp.
+fn push_clock_data(now_ms: u64) -> Vec<u8> {
+    let mut out = 1u64.to_le_bytes().to_vec();
+    out.extend_from_slice(&now_ms.to_le_bytes());
+    out
+}
+
+/// Cycles for one stage of one case, and what the guest reported.
+///
+/// Memoised for the reason [`run`] is: a zkVM execution is a deterministic
+/// function of the ELF and its input, so a repeat is not a check.
+fn push_run(vector: &Vector, stage: u8, case: Case) -> (u64, (u32, u64, u32)) {
+    type Key = (String, u8, Case);
+    type Slot = Arc<OnceLock<(u64, (u32, u64, u32))>>;
+    static MEASURED: OnceLock<Mutex<HashMap<Key, Slot>>> = OnceLock::new();
+
+    let slot = MEASURED
+        .get_or_init(Mutex::default)
+        .lock()
+        .expect("not poisoned")
+        .entry((vector.feed_id.clone(), stage, case))
+        .or_default()
+        .clone();
+    *slot.get_or_init(|| push_execute(vector, stage, case))
+}
+
+fn push_execute(vector: &Vector, stage: u8, case: Case) -> (u64, (u32, u64, u32)) {
+    let signer_bytes: Vec<u8> = vector.signers.iter().flat_map(|s| *s.as_bytes()).collect();
+
+    #[allow(clippy::type_complexity)]
+    let input = (
+        stage,
+        vector.payload.clone(),
+        borsh::to_vec(&push_feed_state(vector)).expect("the feed account encodes"),
+        case.price_data(vector),
+        push_clock_data(vector.timestamp_ms),
+        kanon_clock::CLOCK_ACCOUNT_ID.to_vec(),
+        vector.feed_id.as_bytes().to_vec(),
+        PUSH_BASE.to_vec(),
+        PUSH_QUOTE.to_vec(),
+        signer_bytes,
+        vector.signers.len() as u8,
+        DECIMALS,
+        vector.timestamp_ms,
+        MAX_MAX_AGE_MS,
+        PUSH_OURS,
+    );
+
+    let env = ExecutorEnv::builder()
+        .write(&input)
+        .expect("input")
+        .build()
+        .expect("env");
+    let session = default_executor()
+        .execute(env, kanon_methods::SUBMIT_COST_ELF)
+        .expect("execution");
+    let report: (u32, u64, u32) = session.journal.decode().expect("journal");
+    (session.cycles(), report)
+}
+
+/// Cycles for a stage, having first checked the run did the work it claims.
+///
+/// The journal is the guard against the failure mode that matters here: a
+/// submission that refused returns an error and no post-states, and would report
+/// as a very cheap write rather than as a failure.
+fn push_cycles(vector: &Vector, stage: u8, case: Case) -> u64 {
+    let (cycles, (signers, _price, post_states)) = push_run(vector, stage, case);
+
+    if stage == push_stage::VERIFY {
+        assert_eq!(
+            signers as usize,
+            vector.signers.len(),
+            "{}: verification counted {signers} signers, not {}; a run that took \
+             an early exit is not a measurement of the work",
+            case.label(),
+            vector.signers.len()
+        );
+    }
+    if stage == push_stage::SUBMIT {
+        assert_eq!(
+            post_states,
+            3,
+            "{}: the submission produced {post_states} post-states, not three. It \
+             refused, so this is not a measurement of a write",
+            case.label()
+        );
+    }
+    cycles
+}
+
+/// What the whole instruction body costs, and what the write costs inside it.
+///
+/// Per case, because the price account is built during setup: the 136 bytes an
+/// update carries only cancel out of the subtraction if every stage of that case
+/// pays for them. Measuring the update's write against the *create*'s
+/// verification inflates it by 15,410 cycles of setup, which is how the first
+/// version of this measurement was wrong.
+fn push_components(vector: &Vector, case: Case) -> (u64, u64, u64) {
+    let floor = push_cycles(vector, push_stage::FLOOR, case);
+    let verify = push_cycles(vector, push_stage::VERIFY, case);
+    let submit = push_cycles(vector, push_stage::SUBMIT, case);
+
+    (verify - floor, submit - verify, submit - floor)
+}
+
+/// The push write costs what `COSTS.md` publishes.
+///
+/// Exact equality, for the reason every figure here is pinned exactly: a ceiling
+/// passes quietly when a number moves for a reason nobody has understood yet.
+/// A failure is a prompt to re-measure and re-publish, not necessarily a defect.
+#[test]
+fn the_push_write_costs_what_is_published() {
+    let vector = vector();
+
+    let (verify_create, write_create, body_create) = push_components(&vector, Case::Create);
+    let (verify_update, write_update, body_update) = push_components(&vector, Case::Update);
+
+    assert_eq!(
+        [verify_create, write_create, body_create],
+        [3_039_850, 7_056, 3_046_906],
+        "the first-write figures moved"
+    );
+    assert_eq!(
+        [verify_update, write_update, body_update],
+        [3_039_850, 8_487, 3_048_337],
+        "the update figures moved"
+    );
+}
+
+/// Verification costs the same whichever path the write takes.
+///
+/// Structural rather than a measurement: `verify_feed` is handed the payload, the
+/// registration and the clock, and none of those is the price account. If these
+/// two ever differ, the staging is measuring something it should not be --
+/// setup that failed to cancel, most likely -- and the write figures either side
+/// of it are wrong by that difference.
+#[test]
+fn verification_does_not_depend_on_the_price_account() {
+    let vector = vector();
+
+    assert_eq!(
+        push_components(&vector, Case::Create).0,
+        push_components(&vector, Case::Update).0,
+        "verification differs between a first write and an update, so the two \
+         cases are not subtracting identical setup"
+    );
+}
+
+/// An update costs more than a first write, and the difference is one account read.
+///
+/// Worth asserting the direction rather than just the numbers, because it is the
+/// operationally relevant one: an update is what every heartbeat and every
+/// deviation trigger runs, so the recurring cost is the higher of the two. The
+/// gap is `OraclePriceAccount::try_from` over 136 bytes plus the comparison of
+/// the pair it carries -- the only work a first write skips.
+#[test]
+fn an_update_costs_more_than_a_first_write_because_it_reads_one() {
+    let vector = vector();
+
+    let create = push_components(&vector, Case::Create).1;
+    let update = push_components(&vector, Case::Update).1;
+
+    assert!(
+        update > create,
+        "an update ({update}) is no dearer than a first write ({create}), so \
+         either the published account is no longer being decoded or the two \
+         cases are the same path"
+    );
+    assert_eq!(
+        update - create,
+        1_431,
+        "the cost of reading the published account moved"
+    );
+}
+
+/// Both harnesses measure the same verification, to within the ELF.
+///
+/// `verify_cost.rs` and `submit_cost.rs` are separate guests reaching
+/// `verify_feed` by different routes, so this is the check that neither harness
+/// is measuring something other than the shipped path -- the strongest evidence
+/// available that the staging in either is faithful.
+///
+/// A tolerance rather than exact equality, and the reason is not slack: a cycle
+/// count is a property of a *guest ELF*, not of the logical work, so two
+/// independently compiled binaries running identical source are not obliged to
+/// agree to the cycle. They agree to 60 out of 3,039,790, which is 0.002%. The
+/// bound is set at a tenth of a percent -- fifty times the observed gap, still
+/// far tighter than any real regression. Each guest's own figures stay pinned
+/// exactly; this is the only comparison here that cannot be.
+#[test]
+fn both_harnesses_agree_about_what_verification_costs() {
+    let vector = vector();
+    let n = vector.signers.len();
+
+    let through_verify_cost = cycles(&vector, stage::VERIFY, n) - cycles(&vector, stage::FLOOR, n);
+    let through_submit_cost = push_components(&vector, Case::Create).0;
+
+    let gap = through_verify_cost.abs_diff(through_submit_cost);
+    let drift = 100.0 * gap as f64 / through_verify_cost as f64;
+    assert!(
+        drift < 0.1,
+        "the two harnesses disagree about verification by {gap} cycles ({drift:.4}%): \
+         {through_verify_cost} through verify_cost, {through_submit_cost} through \
+         submit_cost. Beyond code layout, so one of them is no longer measuring \
+         the shipped path"
+    );
+}
+
+/// The published push-write table, printed by the code that asserts it.
+#[test]
+fn the_push_write_cost_table_is_reproducible() {
+    let vector = vector();
+
+    println!("\n| | first write | update |");
+    println!("| --- | ---: | ---: |");
+
+    let create = push_components(&vector, Case::Create);
+    let update = push_components(&vector, Case::Update);
+
+    println!(
+        "| verification | {:>9} | {:>9} |",
+        thousands(create.0),
+        thousands(update.0)
+    );
+    // No padding inside the emphasis markers: `**    7,056**` renders the spaces.
+    println!(
+        "| **the write** | **{}** | **{}** |",
+        thousands(create.1),
+        thousands(update.1)
+    );
+    println!(
+        "| whole instruction body | {:>9} | {:>9} |",
+        thousands(create.2),
+        thousands(update.2)
+    );
+    println!(
+        "| _the write, as a share of the body_ | _{:.3}%_ | _{:.3}%_ |",
+        100.0 * create.1 as f64 / create.2 as f64,
+        100.0 * update.1 as f64 / update.2 as f64
+    );
+    println!(
+        "| _harness floor, subtracted out_ | {:>9} | {:>9} |\n",
+        thousands(push_cycles(&vector, push_stage::FLOOR, Case::Create)),
+        thousands(push_cycles(&vector, push_stage::FLOOR, Case::Update))
+    );
+}
