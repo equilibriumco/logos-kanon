@@ -343,6 +343,7 @@ mod tests {
     use reference_consumer_aggregator_read::authority::CONFIG_ACCOUNT_SEED;
     use reference_consumer_aggregator_read::order::ORDER_ACCOUNT_SEED;
     use reference_consumer_aggregator_read::source::SOURCE_ACCOUNT_SEED;
+    use spel_framework::error::SpelError;
     use spel_framework::pda::{compute_pda, seed_from_str};
 
     const OURS: ProgramId = [7u32; 8];
@@ -488,9 +489,16 @@ mod tests {
         .expect_err("the config address is the constraint's, not the caller's");
     }
 
-    /// What this covers that the host suite cannot: that the handler reads
+    /// What this covers that the host suite cannot: that the *handler* reads
     /// `GENESIS_AUTHORITY` rather than a genesis of its own, and that a build
     /// nobody configured refuses rather than admitting whoever arrives first.
+    ///
+    /// So it calls the generated handler and not the library behind it. An
+    /// earlier version called `authority::establish` with the constant passed in
+    /// explicitly, which cannot see what the handler passes: replacing
+    /// `&GENESIS_AUTHORITY` at the call site with `&[0x11u8; 32]` -- a build
+    /// handing the authority to whoever holds that key -- left all six guest
+    /// tests green. Measured again with this version, and it fails.
     #[test]
     fn an_unconfigured_build_refuses_to_establish_an_authority() {
         assert_eq!(
@@ -499,27 +507,77 @@ mod tests {
             "this test only means anything in a build with no key set"
         );
 
-        let err = reference_consumer_aggregator_read::authority::establish(
-            AccountWithMetadata {
-                account: Account {
-                    program_owner: [0u32; 8],
-                    balance: 0,
-                    data: Data::default(),
-                    nonce: Nonce(0),
-                },
-                is_authorized: false,
-                account_id: config_id(),
-            },
-            account(id([0xA1; 32]), true),
-            &super::GENESIS_AUTHORITY,
-            OURS,
-        )
-        .unwrap_err();
+        let config = AccountWithMetadata {
+            account: Account::default(),
+            is_authorized: false,
+            account_id: config_id(),
+        };
+        let mut authority = account(id([0xA1; 32]), true);
+        authority.account.program_owner = [42u32; 8];
 
+        let ctx = super::ProgramContext::new(OURS, [0u32; 8]);
+        let refused =
+            super::kanon_aggregator_read_consumer::establish_authority(ctx, config, authority)
+                .expect_err("a build with no genesis authority must refuse");
+
+        // By code rather than by variant: `SpelError` carries no `PartialEq`,
+        // and the code is the part a caller acts on.
         assert_eq!(
-            err,
-            reference_consumer_aggregator_read::authority::AuthorityError::NoGenesisAuthority
+            refused.error_code(),
+            SpelError::from(
+                reference_consumer_aggregator_read::authority::AuthorityError::NoGenesisAuthority
+            )
+            .error_code()
         );
+    }
+
+    /// The handler hands each of its four `[u8; 32]` arguments to the parameter
+    /// it names.
+    ///
+    /// `open_order` takes `order_id`, `feed_id`, `base_asset` and `quote_asset`
+    /// adjacently and passes them to the library in a different order, so any
+    /// two of them can be transposed and still compile. The IDL test cannot see
+    /// it either, because the IDL is generated from the signature rather than
+    /// from the call.
+    ///
+    /// The four ids here are pairwise distinct and the registration agrees with
+    /// exactly one assignment of them, so every transposition refuses: swapping
+    /// `feed_id` with anything reaches `FeedMismatch`, swapping the pair reaches
+    /// `PairMismatch`. Asserting the success is therefore the whole check.
+    #[test]
+    fn the_open_order_handler_passes_each_id_to_the_argument_it_names() {
+        use reference_consumer_aggregator_read::source::{source_address, PriceSource};
+
+        const BASE: [u8; 32] = [0xBA; 32];
+        const QUOTE: [u8; 32] = [0x9C; 32];
+
+        let stored = PriceSource {
+            feed_id: FEED_ID,
+            aggregator: [11u32; 8],
+            base_asset: BASE,
+            quote_asset: QUOTE,
+            max_age_ms: 60_000,
+        };
+        let mut source = account(id(*source_address(&OURS, &FEED_ID).value()), false);
+        source.account.data =
+            Data::try_from(borsh::to_vec(&stored).expect("serialises")).expect("a source fits");
+
+        let mut order = account(order_id(), false);
+        order.account.program_owner = [0u32; 8];
+
+        let ctx = super::ProgramContext::new(OURS, [0u32; 8]);
+        super::kanon_aggregator_read_consumer::open_order(
+            ctx,
+            order,
+            account(id([0xA0; 32]), true),
+            source,
+            ORDER_ID,
+            FEED_ID,
+            BASE,
+            QUOTE,
+            1,
+        )
+        .expect("the handler passes the ids the way its own signature names them");
     }
 
     /// The hex decoder runs at compile time, so a build with a key set proves

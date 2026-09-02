@@ -48,6 +48,12 @@ nssa_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.gi
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.6-risczero.0" }
 
+[dev-dependencies]
+# Test-only, and it reaches no shipped build: the handler tests build a source
+# account's bytes directly, because `source::register` cannot run here (this
+# build's `GENESIS_AUTHORITY` is all zeroes, so no config can be established).
+borsh = { version = "1", default-features = false, features = ["derive"] }
+
 [profile.release]
 lto = true
 codegen-units = 1

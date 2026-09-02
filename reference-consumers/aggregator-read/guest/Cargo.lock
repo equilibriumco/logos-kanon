@@ -2153,6 +2153,7 @@ dependencies = [
 name = "reference-consumer-aggregator-read-guest"
 version = "0.1.0"
 dependencies = [
+ "borsh",
  "lee_core",
  "reference-consumer-aggregator-read",
  "risc0-zkvm",
