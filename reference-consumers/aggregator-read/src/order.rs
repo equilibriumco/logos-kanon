@@ -15,7 +15,7 @@
 //!
 //! # What binds an order, and what does not
 //!
-//! [`terms_still_hold`] destructures a whole [`PriceSource`] with no `..`, so a
+//! `terms_still_hold` destructures a whole [`PriceSource`] with no `..`, so a
 //! field added to it stops this file compiling until somebody decides whether it
 //! binds an open order. Two of the five do. The aggregator's id does not, and
 //! that is the decision worth stating: following an aggregator rebuild moves
