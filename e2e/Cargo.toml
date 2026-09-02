@@ -1,0 +1,73 @@
+[package]
+name = "kanon-e2e"
+description = "End-to-end tests for the push path across a standalone LEZ sequencer"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Own workspace, and the separation is the same argument the root manifest makes
+# for `m0/`: two lockfiles so the two graphs cannot constrain each other.
+#
+# Here the reason is the client half of LEZ. Reaching a sequencer over its typed
+# RPC pulls the whole Bedrock node -- `sequencer_service_rpc` -> `common` ->
+# `logos-blockchain-common-http-client` -> 38 `logos-blockchain-*` crates ->
+# `jf-poseidon2` -> `jf-crhf` -- which took the product lockfile from 384
+# packages to 798 and introduced seven git sources `deny.toml` does not allow.
+# None of that is in anything Kanon ships: it is the harness that talks to a node
+# somebody else wrote. Resolving it here keeps the delivered lockfile at 384, the
+# product's source allowlist strict, and the `build and test` job off an
+# eleven-minute compile of a node it never runs.
+#
+# The LEZ pin still cannot drift: `scripts/lez-sequencer.sh` reads the resolved
+# LEZ revision out of every product `Cargo.lock` and refuses to run when they
+# disagree, and this file is one of them.
+[workspace]
+
+# No library and no binary: the crate exists for `tests/`. An empty `src/lib.rs`
+# is what gives cargo a target to hang them off.
+
+[dependencies]
+
+[dev-dependencies]
+# What is under test: the instruction set the transaction carries, and the guest
+# ELF that gets deployed. `kanon-methods` builds the guest through `risc0-build`,
+# so the ELF here is the artefact CI publishes rather than a rebuild for the
+# test's convenience.
+aggregator-program = { path = "../aggregator-program", version = "0.1.0" }
+kanon-methods = { path = "../methods", version = "0.1.0" }
+
+# The clock account the program is required to read, so the payload is
+# timestamped against the chain's own time rather than the host's. The price
+# account type comes through `aggregator-program`'s re-export instead, which is
+# the "one dependency rather than two" `kanon-idl` documents.
+kanon-clock = { path = "../kanon-clock", version = "0.1.0" }
+
+# The payload builder, for the one thing a committed capture cannot supply: a
+# signature over a timestamp inside the chain's live `maxAge` window. `[M2-16:01]`
+# records the feature and what exposing it costs.
+verifier-core = { path = "../verifier-core", version = "0.1.0", features = ["test-fixtures"] }
+
+# The address derivation the generated validator checks against, so the test
+# derives the accounts a caller would rather than being told them.
+spel-framework = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" }
+
+# LEZ's account types, under the name the product spells them. Same tag,
+# character for character, for the reason the root manifest gives: cargo does not
+# unify a `tag` source with a `rev` source even when both name one commit.
+lee_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+
+# The client half of LEZ. `lee` carries the transaction and message types,
+# `common` the envelope `sendTransaction` takes, and `sequencer_service_rpc` the
+# typed client. Hand-rolling the JSON-RPC would mean hand-rolling a transaction
+# envelope, which is exactly the thing this test exists to stop guessing about.
+lee = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+common = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+sequencer_service_rpc = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["client"] }
+
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+# What LEZ stores account data in, so the feed and price accounts read back as
+# the types that wrote them. Pinned to what the LEZ graph already resolves, the
+# way the product manifest pins it.
+borsh = "1.8.0"

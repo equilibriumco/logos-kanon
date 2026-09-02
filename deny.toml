@@ -198,4 +198,26 @@ allow-git = [
   "https://github.com/risc0/RustCrypto-elliptic-curves",
   "https://github.com/risc0/RustCrypto-crypto-bigint",
   "https://github.com/risc0/RustCrypto-hashes",
+
+  # Reached only from `e2e/`, and only as dev-dependencies: the sequencer's own
+  # RPC client resolves the Bedrock node it belongs to, and these are that
+  # node's sources rather than anything Kanon writes, ships or links.
+  #
+  # One config file rather than a second one for `e2e/`, because two would drift
+  # on the licence rules -- which are the part that must stay identical. The cost
+  # is that these are permitted anywhere, so the narrower guarantee is
+  # structural: the product workspace resolves none of them, and `e2e` is in the
+  # root manifest's `exclude` list precisely so it cannot start to.
+  #
+  # Logos's own chain, under the node the sequencer runs on.
+  "https://github.com/logos-blockchain/logos-blockchain.git",
+  "https://github.com/logos-blockchain/logos-blockchain-circuits.git",
+  "https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark.git",
+  # Logos's service framework, which the node is built on.
+  "https://github.com/logos-co/Overwatch",
+  # The node's proving stack: Espresso's jellyfish (both spellings, for the
+  # reason LEZ has two) and the sponge library beneath it.
+  "https://github.com/EspressoSystems/jellyfish",
+  "https://github.com/EspressoSystems/jellyfish.git",
+  "https://github.com/arkworks-rs/spongefish.git",
 ]

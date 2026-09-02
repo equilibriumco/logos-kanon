@@ -51,6 +51,7 @@ they describe the design being proposed for acceptance.
 | [33](0033-a-feed-lives-at-the-address-its-id-derives.md) | A feed lives at the address its id derives, so a client can find one | accepted |
 | [M2-06:01](unnumbered-M2-06-where-the-admin-authority-comes-from.md) | Where the admin authority comes from, and how it is established | accepted, unnumbered |
 | [M2-16:01](unnumbered-M2-16-where-a-payload-nobody-captured-comes-from.md) | Where a payload nobody captured comes from | accepted, unnumbered, supersedes part of 21 and 23 |
+| [M2-19:01](unnumbered-M2-19-the-end-to-end-tests-resolve-in-their-own-workspace.md) | The end-to-end tests resolve in their own workspace | accepted, unnumbered, extends 7 |
 
 ## How they fit together
 
