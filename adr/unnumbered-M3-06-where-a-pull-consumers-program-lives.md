@@ -61,8 +61,8 @@ guest workspace, and `m0/` needs it because those three build the *same* guest s
 under three different `[patch.crates-io]` blocks and each has to hand out its own ELF.
 Nothing here does that: a patch block belongs to a guest workspace rather than to the
 methods crate above it, so guests wanting different patches is not a reason to split
-one. `[M3-05:01]`'s guest is the demonstration -- it pins no accelerators at all, and
-still needs no methods crate of its own.
+one. `[M3-05:01]`'s guest is the demonstration -- it pins `sha2` alone, where the two
+verifying guests pin three, and still needs no methods crate of its own.
 
 *Rejected: shipping the logic in M3-06 and the program in M3-07.* M3-07 is the sequencer
 run, and a task that has to build the program before it can run it is a task doing two
