@@ -1,6 +1,6 @@
 [package]
 name = "kanon-e2e"
-description = "End-to-end tests for the push path across a standalone LEZ sequencer"
+description = "End-to-end tests for both modes across a standalone LEZ sequencer"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -28,28 +28,35 @@ publish = false
 # is what gives cargo a target to hang them off.
 
 [dependencies]
+# Empty on purpose. The tests are all this crate is for, so everything they need
+# is a dev-dependency -- which is also what keeps the sequencer's RPC client and
+# the Bedrock node behind it off a normal edge. `tests/support/chain.rs` is the
+# plumbing the two suites share, included by path the way
+# `verifier-core/tests/support/vectors.rs` is.
 
 [dev-dependencies]
-# What is under test: the instruction set the transaction carries, and the guest
-# ELF that gets deployed. `kanon-methods` builds the guest through `risc0-build`,
-# so the ELF here is the artefact CI publishes rather than a rebuild for the
-# test's convenience.
+# What is under test: the instruction sets the transactions carry, and the guest
+# ELFs that get deployed. `kanon-methods` builds all three guests through
+# `risc0-build`, so the ELFs here are the artefacts CI publishes rather than
+# rebuilds for the tests' convenience.
 aggregator-program = { path = "../aggregator-program", version = "0.1.0" }
+reference-consumer-pull = { path = "../reference-consumers/pull", version = "0.1.0" }
 kanon-methods = { path = "../methods", version = "0.1.0" }
 
-# The clock account the program is required to read, so the payload is
+# The clock account both programs are required to read, so a payload is
 # timestamped against the chain's own time rather than the host's. The price
 # account type comes through `aggregator-program`'s re-export instead, which is
 # the "one dependency rather than two" `kanon-idl` documents.
 kanon-clock = { path = "../kanon-clock", version = "0.1.0" }
 
 # The payload builder, for the one thing a committed capture cannot supply: a
-# signature over a timestamp inside the chain's live `maxAge` window. `[M2-16:01]`
-# records the feature and what exposing it costs.
+# signature over a timestamp inside the chain's live `maxAge` window. The push
+# suite needs it for one S3 dimension, the pull suite for every settlement.
+# `[M2-16:01]` records the feature and what exposing it costs.
 verifier-core = { path = "../verifier-core", version = "0.1.0", features = ["test-fixtures"] }
 
-# The address derivation the generated validator checks against, so the test
-# derives the accounts a caller would rather than being told them.
+# The address derivations the generated validators check against, so the tests
+# derive the accounts a caller would rather than being told them.
 spel-framework = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" }
 
 # LEZ's account types, under the name the product spells them. Same tag,
@@ -60,18 +67,23 @@ lee_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git
 # The client half of LEZ. `lee` carries the transaction and message types,
 # `common` the envelope `sendTransaction` takes, and `sequencer_service_rpc` the
 # typed client. Hand-rolling the JSON-RPC would mean hand-rolling a transaction
-# envelope, which is exactly the thing this test exists to stop guessing about.
+# envelope, which is exactly the thing these tests exist to stop guessing about.
 lee = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 common = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
 sequencer_service_rpc = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["client"] }
 
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 
-# What LEZ stores account data in, so the feed and price accounts read back as
-# the types that wrote them. Pinned to what the LEZ graph already resolves, the
-# way the product manifest pins it.
+# What LEZ stores account data in, so the accounts read back as the types that
+# wrote them. Pinned to what the LEZ graph already resolves, the way the product
+# manifest pins it.
 borsh = "1.8.0"
 
-# For one assertion: that `EXPECTED_GENESIS` really is the account id of the
-# test's admin key, rather than a hex string that merely matches the CI job's.
+# `send_to_program` is generic over the instruction type, which is the whole
+# reason both programs declare theirs in a library.
+serde = { version = "1", features = ["derive"] }
+
+# For one assertion per suite: that the compiled-in genesis constant really is
+# the account id of that suite's key, rather than a hex string that merely
+# matches the CI job's.
 hex = "0.4"
