@@ -62,11 +62,25 @@ to prose.
 
 So each of the seven carries a `# harness-only` comment, and
 `traceability/tests/source_boundary.rs` reads the marker and asserts both
-directions: **no marked source appears in the product `Cargo.lock`**, and **every
-marked source appears in `e2e/Cargo.lock`**. The second is what keeps the marker
-honest — a marker on something the harness does not use would be a live exemption
-nobody is using. Both were checked by making them fail: marking `spel.git`, which
-the product does resolve, fails the first; marking an unused URL fails the second.
+directions: **no marked source appears in any lockfile for something delivered**,
+and **every marked source appears in `e2e/Cargo.lock`**. The second is what keeps
+the marker honest — a marker on something the harness does not use would be a live
+exemption nobody is using.
+
+"Delivered" is every committed lockfile but `e2e/`'s, and the width is the point.
+The first version of this check read the root `Cargo.lock` alone;
+`methods/guest/Cargo.lock` resolves separately and is what the guest ELF is built
+from, so a source reaching only the guest would have shipped while a root-only
+check called it absent. @frenzox found that on #58. `m0/`'s lockfiles are in scope
+too, which is stricter than the `m0` exclusion `lez-sequencer.sh` uses — that
+exclusion is about `m0` pinning a different LEZ *revision*, a reason that does not
+transfer to sources, and one rule with no exception list is less to keep true.
+
+All three properties were checked by making them fail: marking `spel.git`, which
+the product does resolve, fails the first; adding a marked source to
+`methods/guest/Cargo.lock` fails it naming that file; marking an unused URL fails
+the second. A scan that finds nothing would pass both vacuously, so it asserts it
+found the root and the guest before comparing anything.
 
 The marker is a comment rather than a second TOML list on purpose. It sits on the
 line it describes, so someone editing `allow-git` sees it, and there is no second

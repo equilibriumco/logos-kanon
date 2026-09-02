@@ -210,9 +210,10 @@ allow-git = [
   # policy, so on its own this list would permit these seven anywhere, including
   # in something that ships. `traceability/tests/source_boundary.rs` reads the
   # marker and asserts, both ways, that every source carrying it is absent from
-  # the product lockfile and present in the harness's -- so the narrow policy is
-  # enforced rather than argued. Move a source out of the harness and the check
-  # fails until the marker goes with it. Raised by @frenzox on #58.
+  # every lockfile for something delivered -- the guest's included, which resolves
+  # separately from the root's -- and present in the harness's. So the narrow
+  # policy is enforced rather than argued. Move a source out of the harness and
+  # the check fails until the marker goes with it. Raised by @frenzox on #58.
   #
   # Logos's own chain, under the node the sequencer runs on.
   "https://github.com/logos-blockchain/logos-blockchain.git", # harness-only

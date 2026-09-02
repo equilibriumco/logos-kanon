@@ -17,11 +17,31 @@
 //! actually resolve would be an exemption nobody is using, and the next
 //! dependency to reach that repo -- from anywhere -- would inherit it.
 //!
+//! # What counts as shipped
+//!
+//! Every committed `Cargo.lock` except the harness's own. Deliberately wider
+//! than the root: `methods/guest/Cargo.lock` resolves separately and is what the
+//! guest ELF is built from, so a source reaching only the guest would ship while
+//! a root-only check called it absent. @frenzox caught that too, on the first
+//! version of this file.
+//!
+//! `m0/`'s root and its five guest lockfiles are in scope as well, which is
+//! stricter than the exclusion `scripts/lez-sequencer.sh` uses. That script
+//! skips `m0/` because `m0/` legitimately pins a *different LEZ revision*, which
+//! is a reason about revisions and does not transfer: nothing in the measurement
+//! workspace has any business resolving the sequencer's node either, and one
+//! rule with no exception list is less to keep true. All seven of those
+//! lockfiles are clean today, so the stricter rule costs nothing to adopt.
+//!
 //! Here rather than in `e2e/`, because `e2e`'s own tests need a running
 //! sequencer and so run in one job only. This is the crate whose tests are
 //! repository-wide gates; `tests/matrix.rs` is its sibling.
 
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use traceability::repo_root;
 
@@ -66,6 +86,51 @@ fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|error| panic!("reading {}: {error}", path.display()))
 }
 
+/// Every committed lockfile that describes something delivered.
+///
+/// All of them but `e2e/Cargo.lock`, which is the harness's own and the one
+/// place these sources belong. `target/` is skipped: it holds lockfiles of
+/// dependencies cargo happened to check out, which are not this repository's to
+/// police.
+fn product_lockfiles() -> Vec<PathBuf> {
+    fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if name == "target" || name == ".git" || name == "e2e" {
+                continue;
+            }
+            if path.is_dir() {
+                walk(&path, found);
+            } else if name == "Cargo.lock" {
+                found.push(path);
+            }
+        }
+    }
+
+    let root = repo_root();
+    let mut found = Vec::new();
+    walk(&root, &mut found);
+    found.sort();
+
+    // A walk that silently found nothing would pass every assertion below. These
+    // two are the ones whose absence means the scan broke rather than that the
+    // repository changed: the root workspace, and the guest -- whose omission was
+    // the gap this file was widened to close, so it is the one to notice going
+    // missing again.
+    for expected in ["Cargo.lock", "methods/guest/Cargo.lock"] {
+        assert!(
+            found.contains(&root.join(expected)),
+            "the lockfile scan did not find {expected}, so it is not scanning what \
+             it claims to. Found: {found:?}"
+        );
+    }
+    found
+}
+
 fn marked() -> BTreeSet<String> {
     let sources = harness_only_sources(&read(&repo_root().join("deny.toml")));
     assert!(
@@ -79,30 +144,39 @@ fn marked() -> BTreeSet<String> {
 }
 
 #[test]
-fn no_harness_only_source_is_in_the_product_lockfile() {
-    let product = git_sources(&read(&repo_root().join("Cargo.lock")));
+fn no_harness_only_source_is_in_any_product_lockfile() {
     let marked = marked();
+    let root = repo_root();
 
-    let leaked: Vec<&String> = marked.iter().filter(|s| product.contains(*s)).collect();
+    let leaked: Vec<String> = product_lockfiles()
+        .iter()
+        .flat_map(|lock| {
+            let resolved = git_sources(&read(lock));
+            let relative = lock
+                .strip_prefix(&root)
+                .unwrap_or(lock)
+                .display()
+                .to_string();
+            marked
+                .iter()
+                .filter(|source| resolved.contains(*source))
+                .map(move |source| format!("{relative}: {source}"))
+                .collect::<Vec<_>>()
+        })
+        .collect();
 
     assert!(
         leaked.is_empty(),
-        "the product lockfile now resolves {} marked `{MARKER}`:\n  {}\n\n\
-         `deny.toml` allows these for the end-to-end harness in `e2e/`, which is \
-         excluded from the product workspace, and they are not vetted for \
-         anything that ships. If a product crate genuinely needs one, take the \
-         `{MARKER}` marker off that line and say in `deny.toml` why the source is \
-         acceptable in a deliverable -- do not silence this test.",
-        if leaked.len() == 1 {
-            "a source"
-        } else {
-            "sources"
-        },
-        leaked
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join("\n  ")
+        "a lockfile for something delivered now resolves a source marked \
+         `{MARKER}`:\n  {}\n\n\
+         `deny.toml` allows these for the end-to-end harness in `e2e/`, and they \
+         are not vetted for anything that ships. Note which lockfile: the guest's \
+         is resolved separately from the root's and is what the ELF is built from, \
+         so a source reaching only the guest still ships. If a product crate \
+         genuinely needs one, take the `{MARKER}` marker off that line and say in \
+         `deny.toml` why the source is acceptable in a deliverable -- do not \
+         silence this test.",
+        leaked.join("\n  ")
     );
 }
 
