@@ -46,6 +46,13 @@ exclude = [
   # `risc0-build` from `methods`' build script, under its own resolution and its
   # own lockfile.
   "methods/guest",
+
+  # The end-to-end tests against a standalone sequencer. Excluded for the reason
+  # `m0` is -- its own lockfile -- and the reason is the client half of LEZ:
+  # reaching a sequencer over its typed RPC resolves the whole Bedrock node,
+  # which doubles the lockfile of everything that ships and needs git sources
+  # `deny.toml` does not allow the product. `e2e/Cargo.toml` has the numbers.
+  "e2e",
 ]
 
 [workspace.package]

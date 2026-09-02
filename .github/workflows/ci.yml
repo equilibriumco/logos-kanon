@@ -14,7 +14,8 @@
 #   guest         product code cross-compiles to riscv32
 #   licenses      cargo deny, every workspace: product, m0, guests
 #   traceability  the requirement matrix resolves to real evidence
-#   sequencer     a standalone LEZ sequencer comes up and serves
+#   sequencer     a standalone LEZ sequencer comes up, and the push path
+#                 verifies and publishes across it (`e2e/`, its own workspace)
 name: CI
 
 on:
@@ -73,6 +74,7 @@ jobs:
           cargo fmt --all -- --check
           cargo fmt --all --manifest-path m0/Cargo.toml -- --check
           cargo fmt --all --manifest-path methods/guest/Cargo.toml -- --check
+          cargo fmt --all --manifest-path e2e/Cargo.toml -- --check
 
       # RISC0_SKIP_BUILD is required, not a shortcut. `cargo clippy` exports a
       # rustc wrapper that the guest build inherits, and clippy-driver has no
@@ -86,6 +88,8 @@ jobs:
           cargo clippy --release --workspace --all-targets --locked -- -D warnings
           cargo clippy --release --workspace --all-targets --locked \
             --manifest-path m0/Cargo.toml -- -D warnings
+          cargo clippy --release --workspace --all-targets --locked \
+            --manifest-path e2e/Cargo.toml -- -D warnings
 
   build-test:
     name: build and test
@@ -220,7 +224,8 @@ jobs:
             m0/cost-baseline/methods-accelerated/guest \
             m0/cost-baseline/methods-mixed/guest \
             m0/lez-probe/methods-accelerated/guest \
-            m0/lez-probe/methods-mixed/guest
+            m0/lez-probe/methods-mixed/guest \
+            e2e
           do
             echo "::group::cargo deny $ws"
             cargo deny --manifest-path "$ws/Cargo.toml" \
@@ -258,17 +263,63 @@ jobs:
   sequencer:
     name: standalone LEZ sequencer
     runs-on: ubuntu-24.04
-    # Minutes, not hours, because nothing is compiled here. Building LEZ from
-    # source does not fit a standard runner -- a cold build ran past 90 minutes
-    # and was killed, and because a timeout cancels the job before the cache is
-    # written it could never warm up. `lez-sequencer-image.yml` absorbs that
-    # build once per revision and this pulls the result.
-    timeout-minutes: 25
+    # LEZ itself is still never built here: a cold source build ran past 90
+    # minutes and was killed, and because a timeout cancels the job before the
+    # cache is written it could never warm up, so `lez-sequencer-image.yml`
+    # absorbs that build once per revision and this pulls the result.
+    #
+    # What is compiled here is Kanon's own end-to-end test and the guest it
+    # deploys, which M2-19 added. That is the reason for the toolchain steps
+    # below and for the budget: the test's own workspace resolves the sequencer's
+    # RPC client, which is a large graph, so the first run on a cold cache is
+    # the expensive one.
+    timeout-minutes: 45
+    env:
+      # The guest carries the account id of the test's fixed admin key as its
+      # genesis authority. Without it the aggregator cannot be initialised by
+      # anyone, which is `[M2-06:01]` working as designed and is why the test
+      # refuses to run against an unconfigured build. The key is `[0x11; 32]`,
+      # it signs for one account on a throwaway chain, and it controls nothing.
+      KANON_GENESIS_ADMIN: 5b0e4f6dddea8b9ef3118d6002a25c09ab379653ffb60586f4604f1fa6a0b392
+      RISC0_BUILD_LOCKED: 1
     permissions:
       contents: read
       packages: read
     steps:
       - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      # `e2e` only, and deliberately not the product workspace. Everything this
+      # job builds goes to `e2e/target`, and caching `./target` actively breaks
+      # it: `lez-sequencer.sh` keeps its run state in `target/lez-sequencer`,
+      # rust-cache saved that directory at the end of a green run but pruned the
+      # `.kanon-sequencer-state` marker inside it, and the next run's `start`
+      # then found a state directory it could not prove it owned and refused to
+      # delete it -- correctly. Cold cache passed, the run after it failed.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: e2e
+
+      # The same toolchain the `guest` job installs, and for the same reason:
+      # the test deploys a real guest ELF, so the guest has to be cross-compiled
+      # here rather than stubbed with RISC0_SKIP_BUILD.
+      - name: Install RISC Zero toolchain
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.risc0/bin:$PATH"
+          rzup install cargo-risczero 3.0.5
+          rzup install r0vm 3.0.5
+          rzup install rust 1.97.0
+
+      # Before the sequencer starts, so a compile error is not reported as a
+      # chain that would not come up.
+      - name: Build the end-to-end test
+        run: cargo test --manifest-path e2e/Cargo.toml --locked --no-run
 
       - name: Log in to ghcr
         uses: docker/login-action@v3
@@ -292,9 +343,13 @@ jobs:
       - name: Smoke the sequencer
         run: scripts/lez-sequencer.sh smoke
 
-      # Adaptor traffic across this sequencer comes later. Until then
-      # the job asserts the harness itself, which is what makes those tasks a
-      # matter of writing tests rather than of standing up infrastructure.
+      # M2's done gate: the push path verifying and publishing across this
+      # sequencer. `start` above gives a clean chain, so the test deploys,
+      # claims, initialises, registers and submits from nothing every run --
+      # which is what makes its assertions about state rather than about
+      # whatever a previous run left behind.
+      - name: Push verify and publish, end to end
+        run: cargo test --manifest-path e2e/Cargo.toml --locked
 
       - name: Sequencer log
         if: always()

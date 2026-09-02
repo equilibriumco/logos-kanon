@@ -198,4 +198,32 @@ allow-git = [
   "https://github.com/risc0/RustCrypto-elliptic-curves",
   "https://github.com/risc0/RustCrypto-crypto-bigint",
   "https://github.com/risc0/RustCrypto-hashes",
+
+  # Reached only from `e2e/`, and only as dev-dependencies: the sequencer's own
+  # RPC client resolves the Bedrock node it belongs to, and these are that
+  # node's sources rather than anything Kanon writes, ships or links.
+  #
+  # One config file rather than a second one for `e2e/`, because two would drift
+  # on the licence rules -- which are the part that must stay identical.
+  #
+  # `# harness-only` is not decoration. cargo-deny has no per-workspace source
+  # policy, so on its own this list would permit these seven anywhere, including
+  # in something that ships. `traceability/tests/source_boundary.rs` reads the
+  # marker and asserts, both ways, that every source carrying it is absent from
+  # every lockfile for something delivered -- the guest's included, which resolves
+  # separately from the root's -- and present in the harness's. So the narrow
+  # policy is enforced rather than argued. Move a source out of the harness and
+  # the check fails until the marker goes with it. Raised by @frenzox on #58.
+  #
+  # Logos's own chain, under the node the sequencer runs on.
+  "https://github.com/logos-blockchain/logos-blockchain.git", # harness-only
+  "https://github.com/logos-blockchain/logos-blockchain-circuits.git", # harness-only
+  "https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark.git", # harness-only
+  # Logos's service framework, which the node is built on.
+  "https://github.com/logos-co/Overwatch", # harness-only
+  # The node's proving stack: Espresso's jellyfish (both spellings, for the
+  # reason LEZ has two) and the sponge library beneath it.
+  "https://github.com/EspressoSystems/jellyfish", # harness-only
+  "https://github.com/EspressoSystems/jellyfish.git", # harness-only
+  "https://github.com/arkworks-rs/spongefish.git", # harness-only
 ]
