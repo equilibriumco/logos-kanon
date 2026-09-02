@@ -35,8 +35,10 @@ spel-framework = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" 
 # enum derives serde, so this manifest had to carry the crate. It now points at
 # `reference_consumer_pull::Instruction` instead -- which M3-07 needs, because a
 # host-side caller cannot reach a type the macro creates inside a guest binary --
-# so the derive happens in a crate that already had serde and this workspace
-# resolves one dependency fewer. `methods/guest` has been this shape all along.
+# so the derive happens in a crate that already had serde and this manifest has
+# one fewer direct dependency. Not one fewer package: serde still arrives through
+# `reference-consumer-pull`, SPEL, LEZ and risc0. `methods/guest` has been this
+# shape all along.
 nssa_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", package = "lee_core" }
 
 [dev-dependencies]

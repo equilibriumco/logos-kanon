@@ -1,76 +1,74 @@
-//! The IDL's instruction order and the wire enum's must agree.
+//! The IDL's instruction order and the wire enum's must agree, argument by
+//! argument.
 //!
 //! Two independent declarations describe one instruction set. The IDL is
-//! generated from the guest function order; the transaction is decoded by
+//! generated from the guest's function order; the transaction is decoded by
 //! `read_lee_inputs::<Instruction>()`, which uses this crate's enum. A caller
 //! encodes the discriminant from the IDL -- `spel-cli` takes
-//! `idl.instructions.iter().position(|i| i.name == ix.name)` -- and the guest
-//! reads it as the enum's declaration index.
+//! `idl.instructions.iter().position(|i| i.name == ix.name)` -- and fills each
+//! argument positionally.
 //!
-//! Nothing in the build ties those together. Reordering two variants with the
-//! same argument and account shapes still compiles, still generates a valid IDL,
-//! and sends a caller's `deregister_feed` to `pause_feed`. Same for reordering
-//! two same-typed fields inside one variant, which shifts values between
-//! arguments with no type error anywhere.
+//! Nothing in the build ties those together, and until the instruction enum
+//! moved into this crate nothing had to: `#[lez_program]` generated it from the
+//! handlers, so a handler and its variant could not disagree. Now both orders
+//! are a human's to keep, at two levels. Reordering two variants sends a
+//! caller's `rotate_signers` to `deregister_feed_trust`. Reordering two
+//! same-typed fields inside one variant -- `order_id` and `feed_id` in
+//! `OpenOrder`, both `[u8; 32]` -- shifts values between arguments with no type
+//! error anywhere and no other test failing.
 //!
-//! So the agreement is asserted here, against the encoding the wire uses rather
-//! than against a restatement of it.
+//! So the agreement is asserted against the encoding the wire uses rather than
+//! against a restatement of it. The helpers are `aggregator-program`'s, included
+//! by path: they are generic over anything serde serialises and know nothing
+//! about either program, and a path include adds no package edge, so F9 is
+//! untouched.
 
-use aggregator_program::Instruction;
+use reference_consumer_pull::Instruction;
 
-#[path = "support/idl_parity.rs"]
+#[path = "../../../aggregator-program/tests/support/idl_parity.rs"]
 mod idl_parity;
 use idl_parity::{idl_at, name_and_fields, snake_case, wire_discriminant};
 
 /// One value per variant. Order is deliberately not meaningful: each variant's
 /// discriminant is read out of its own encoding, so this list only has to be
 /// complete, and the count assertion is what checks that it is.
-/// A feed id as the wire pads it, which is what the instruction now takes.
-fn padded(name: &[u8]) -> [u8; 32] {
-    let mut id = [0u8; 32];
-    id[..name.len()].copy_from_slice(name);
-    id
-}
-
 fn every_variant() -> Vec<Instruction> {
     vec![
-        Instruction::SubmitPrice {
-            payload: vec![1, 2, 3],
-        },
-        Instruction::RegisterFeed {
-            feed_id: padded(b"BTC"),
-            base_asset: [1u8; 32],
-            quote_asset: [2u8; 32],
+        Instruction::EstablishAuthority,
+        Instruction::NominateAuthority { nominee: [1u8; 32] },
+        Instruction::AcceptAuthority,
+        Instruction::RegisterFeedTrust {
+            data_service_id: "redstone-primary-prod".to_owned(),
+            feed_id: [2u8; 32],
+            base_asset: [3u8; 32],
+            quote_asset: [4u8; 32],
             decimals: 8,
             max_age_ms: 60_000,
-            signers: vec![[3u8; 20]],
+            signers: vec![[5u8; 20]],
             threshold: 1,
         },
-        Instruction::UpdateSignerSet {
-            feed_id: padded(b"BTC"),
-            signers: vec![[4u8; 20]],
+        Instruction::RotateSigners {
+            feed_id: [6u8; 32],
+            signers: vec![[7u8; 20]],
             threshold: 2,
         },
-        Instruction::DeregisterFeed {
-            feed_id: padded(b"BTC"),
+        Instruction::DeregisterFeedTrust { feed_id: [8u8; 32] },
+        Instruction::OpenOrder {
+            order_id: [9u8; 32],
+            feed_id: [10u8; 32],
+            base_asset: [11u8; 32],
+            quote_asset: [12u8; 32],
+            limit_price_q64: 13,
         },
-        Instruction::PauseFeed {
-            feed_id: padded(b"BTC"),
+        Instruction::Settle {
+            feed_id: [14u8; 32],
+            payload: vec![15, 16, 17],
         },
-        Instruction::UnpauseFeed {
-            feed_id: padded(b"BTC"),
-        },
-        Instruction::InitialiseAdmin,
-        Instruction::NominateAdmin {
-            new_admin: [5u8; 32],
-        },
-        Instruction::AcceptAdmin,
-        Instruction::RevokeAdmin,
     ]
 }
 
 fn idl() -> serde_json::Value {
-    idl_at("../kanon-idl/aggregator-idl.json")
+    idl_at("pull-consumer-idl.json")
 }
 
 #[test]
@@ -95,8 +93,8 @@ fn each_variant_decodes_to_the_instruction_the_idl_names_at_its_index() {
             "`Instruction::{name}` encodes discriminant {index}, where the IDL names \
              `{}`. A caller building `{expected}` from the IDL would reach the wrong \
              handler. Reorder the guest functions in \
-             `methods/guest/src/bin/aggregator.rs` or the variants in \
-             `src/instruction.rs` so the two agree, then regenerate the IDL.",
+             `guest/src/bin/pull_consumer.rs` or the variants in `src/instruction.rs` \
+             so the two agree, then regenerate the IDL.",
             at_index["name"].as_str().unwrap_or("<unnamed>"),
         );
     }
