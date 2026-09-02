@@ -100,3 +100,53 @@ fn the_skew_allowance_is_the_verifiers() {
 fn the_registrable_window_reaches_at_least_as_wide_as_the_verifiers() {
     const { assert!(MAX_MAX_AGE_MS >= verifier_core::feed::MAX_MAX_AGE_MS) };
 }
+
+/// The authority module is reference consumer B's, copied.
+///
+/// The two consumers are deliberately parallel so a reader can diff them, and
+/// the governance half is where that is literal: strip the comments and the
+/// test module and the two files are the same 199 lines, differing only in the
+/// seed each derives its config address from. Nothing failed if they drifted.
+///
+/// The same arrangement as the constants above, for the same reason: a copy is
+/// only safe when something fails on divergence. Extracting a shared crate
+/// would work too and is the alternative, at the cost of the property that
+/// makes these two consumers readable side by side.
+#[test]
+fn the_authority_module_is_still_reference_consumer_bs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the repository root");
+
+    // Everything above `#[cfg(test)]`, without comments or blank lines: the two
+    // crates' test modules build their fixtures differently and are not the
+    // claim being made here.
+    let logic = |relative: &str, seed: &str| -> String {
+        let text = std::fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|_| panic!("{relative} is on disk"));
+        text.split("#[cfg(test)]")
+            .next()
+            .expect("a logic half")
+            .replace(seed, "KANON_CONFIG_SEED")
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.trim_start().starts_with("//") && !line.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    assert_eq!(
+        logic(
+            "reference-consumers/aggregator-read/src/authority.rs",
+            "KANON_READ_CONFIG"
+        ),
+        logic(
+            "reference-consumers/pull/src/authority.rs",
+            "KANON_PULL_CONFIG"
+        ),
+        "the two consumers' authority modules have diverged. If that is intended, \
+         this test is where to record what differs and why; if it is not, one of \
+         them has drifted from a review the other already had"
+    );
+}
