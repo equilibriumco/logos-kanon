@@ -25,13 +25,16 @@
 
 use reference_consumer_pull::Instruction;
 
+use std::collections::BTreeSet;
+
 #[path = "../../../aggregator-program/tests/support/idl_parity.rs"]
 mod idl_parity;
 use idl_parity::{idl_at, name_and_fields, snake_case, wire_discriminant};
 
 /// One value per variant. Order is deliberately not meaningful: each variant's
 /// discriminant is read out of its own encoding, so this list only has to be
-/// complete, and the count assertion is what checks that it is.
+/// complete, and `the_enum_and_the_idl_describe_the_same_number_of_instructions`
+/// is what checks that it is.
 fn every_variant() -> Vec<Instruction> {
     vec![
         Instruction::EstablishAuthority,
@@ -142,15 +145,22 @@ fn the_enum_and_the_idl_describe_the_same_number_of_instructions() {
         .expect("the IDL lists instructions")
         .len();
 
-    // What this catches is a variant added to one side only. Without it the two
-    // tests above pass while a whole instruction goes unchecked, because they
-    // only ever look at the variants this file remembers to list.
+    // The *set* of discriminants rather than the count, because length is not
+    // completeness: a copy-pasted entry in `every_variant` would leave the list
+    // the right length with one variant listed twice and another not at all, and
+    // the two tests above only ever look at what the list contains. The missing
+    // instruction's discriminant and field order would then be asserted by
+    // nothing.
+    let covered: BTreeSet<u32> = every_variant().iter().map(wire_discriminant).collect();
+    let expected: BTreeSet<u32> = (0..u32::try_from(published).expect("a small enum")).collect();
+
     assert_eq!(
-        every_variant().len(),
-        published,
-        "the IDL publishes {published} instructions and this test covers {}. \
-         A new instruction needs a guest function, an `Instruction` variant, and a \
-         value in `every_variant`.",
-        every_variant().len(),
+        covered,
+        expected,
+        "every discriminant the IDL publishes needs exactly one value in \
+         `every_variant`. Missing: {:?}. Not published: {:?}. A new instruction \
+         needs a guest function, an `Instruction` variant, and a value here.",
+        expected.difference(&covered).collect::<Vec<_>>(),
+        covered.difference(&expected).collect::<Vec<_>>(),
     );
 }
