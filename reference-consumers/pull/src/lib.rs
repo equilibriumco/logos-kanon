@@ -122,10 +122,12 @@
 #![forbid(unsafe_code)]
 
 pub mod authority;
+pub mod instruction;
 pub mod order;
 pub mod trust;
 
 pub use authority::{AuthorityError, ConfigAccount, CONFIG_ACCOUNT_SEED};
+pub use instruction::Instruction;
 pub use order::{open_order, settle, OpenError, OrderAccount, SettleError, ORDER_ACCOUNT_SEED};
 pub use trust::{FeedTrust, TrustError, TRUST_ACCOUNT_SEED};
 

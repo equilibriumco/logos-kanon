@@ -84,12 +84,26 @@ question the whole M3-02 gate exists to keep closed.
   they compile. `cargo test --manifest-path reference-consumers/pull/guest/Cargo.toml
   --bin pull_consumer` is what runs them, and the `guest` job runs the equivalent
   for every guest.
-- **`#[lez_program]` generates this program's instruction enum.** The aggregator points
-  the macro at `aggregator_program::Instruction` because its SDK, relayer and CLI build
-  transactions against the same definition. A reference consumer has no host-side caller
-  in this repository, so a hand-written copy would be a second definition to keep in
-  step; the generated one costs a `serde` dependency in the guest manifest and nothing
-  else.
+- **The instruction enum lives in the library, as the aggregator's does.** The macro
+  points at `reference_consumer_pull::Instruction`. It first generated the enum in the
+  guest instead, on the argument that a reference consumer had no host-side caller in
+  this repository to share a definition with -- true when this was written and no longer
+  true: M3-07 drives this program across a standalone sequencer, and a test in another
+  workspace cannot reach a type the macro creates inside a guest binary. Hand-encoding
+  the instructions there would have been the second definition that argument was
+  avoiding, arrived at from the other side.
+
+  It costs an ordering invariant. While the macro generated the enum, a handler and its
+  variant could not disagree; now the declaration order is a human's to keep, and it is
+  the whole encoding, because `risc0_zkvm::serde` writes a variant's position. Swapping
+  two declarations compiles on both sides and sends every caller's `RotateSigners` to
+  `RegisterFeedTrust`. `tests/idl.rs`'s `the_instruction_variants_are_the_guests_handlers_in_order`
+  is what fails instead, read off the source text because declaration order is what is
+  being asserted and a value carries no trace of it.
+
+  It also drops the guest workspace's `serde` dependency, which existed only because the
+  generated enum derived it, and it adds `instruction_type` to the committed IDL -- so a
+  client is now told the type it encodes against rather than inferring it.
 - **The consumer's IDL sits beside the consumer.** `kanon-idl` is where the aggregator's
   goes, and it is the one crate a pull consumer must not depend on, so
   `reference-consumers/pull/pull-consumer-idl.json` is next to the program it describes.

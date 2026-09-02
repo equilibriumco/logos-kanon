@@ -194,3 +194,82 @@ fn the_owner_constraint_is_deliberately_absent_from_the_idl() {
         }
     }
 }
+
+/// The enum's variants are the guest's handlers, in the same order.
+///
+/// This is the invariant `#[lez_program]` used to hold for free. While it
+/// generated the enum, a handler and its variant could not disagree; pointing it
+/// at `reference_consumer_pull::Instruction` moved the enum somewhere a
+/// host-side caller can reach, and moved the ordering into a human's hands with
+/// it.
+///
+/// The order is the whole encoding. The dispatcher deserialises with
+/// `risc0_zkvm::serde`, which writes a variant's *position*, so swapping two
+/// declarations here sends every caller's `RotateSigners` to `RegisterFeedTrust`
+/// and compiles cleanly on both sides. Nothing else in this repository would
+/// notice: the guest tests call handlers by name, and the IDL is read off the
+/// handlers rather than off the enum.
+///
+/// Read from the source text rather than from the type, because declaration
+/// order is what is being asserted and a value carries no trace of it. The same
+/// technique `generate_idl!` uses on the guest.
+#[test]
+fn the_instruction_variants_are_the_guests_handlers_in_order() {
+    let source =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/instruction.rs"))
+            .expect("the instruction module is on disk");
+
+    // A variant is a line indented four spaces starting with a capital, inside
+    // the one enum this file declares.
+    let variants: Vec<String> = source
+        .lines()
+        .skip_while(|line| !line.starts_with("pub enum Instruction {"))
+        .filter_map(|line| {
+            let name = line.strip_prefix("    ")?;
+            let name = name.strip_suffix(" {").or_else(|| name.strip_suffix(','))?;
+            name.chars()
+                .next()
+                .is_some_and(char::is_uppercase)
+                .then(|| name.to_owned())
+        })
+        .collect();
+
+    let handlers: Vec<String> = idl()["instructions"]
+        .as_array()
+        .expect("an instructions array")
+        .iter()
+        .map(|entry| entry["name"].as_str().expect("a name").to_owned())
+        .collect();
+
+    assert_eq!(
+        variants.len(),
+        handlers.len(),
+        "the enum declares {} variants and the guest {} handlers: {variants:?} against {handlers:?}",
+        variants.len(),
+        handlers.len()
+    );
+
+    for (position, (variant, handler)) in variants.iter().zip(&handlers).enumerate() {
+        assert_eq!(
+            &pascal_case(handler),
+            variant,
+            "position {position} is `{handler}` in the guest and `{variant}` in the enum. \
+             A caller encodes the position, so a transaction built for one would execute \
+             the other"
+        );
+    }
+}
+
+/// `register_feed_trust` to `RegisterFeedTrust`.
+fn pascal_case(snake: &str) -> String {
+    snake
+        .split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
