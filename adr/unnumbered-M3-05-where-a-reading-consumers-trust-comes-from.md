@@ -99,11 +99,13 @@ a before-and-after: the new build's account is refused under the old registratio
   destructures a whole `PriceSource` with no `..`, binds the pair and the window, and
   deliberately does not bind the aggregator — following a rebuild moves where a price is
   read from, not what it means.
-- **This consumer's guest pins no accelerators.** It recovers no signatures, so risc0's
-  `k256`, `crypto-bigint` and `sha2` forks buy it nothing. `tests/no_accelerators.rs`
-  asserts both halves — that this manifest has none and that the two verifying guests do
-  — because a copied manifest would carry pins nobody reads twice, and the difference
-  between the modes is what M3-09's per-mode precompile delta is about.
+- **This consumer's guest pins the hash and not the signature crates.** It recovers no
+  signatures, so risc0's `k256` and `crypto-bigint` forks buy it nothing; it derives
+  three multi-seed PDAs per settlement, and `compute_pda` combines those with SHA-256,
+  so the `sha2` fork does. `tests/accelerator_pins.rs` asserts both halves, because a
+  copied manifest would carry pins nobody reads twice and a missing one would spend
+  cycles nobody notices, and either would put a manifest difference inside M3-09's
+  per-mode precompile delta.
 - **Eight instructions, of which two are the domain.** The same ratio reference consumer
   B has, and the honest one: reading a price is a few lines, and everything around it is
   what makes the account read the authority's choice rather than the caller's.
