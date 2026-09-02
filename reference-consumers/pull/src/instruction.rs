@@ -8,8 +8,10 @@
 //! Serde and not Borsh, because serde is what the wire uses: the dispatcher
 //! deserialises this with `risc0_zkvm::serde`, and **a variant's position in
 //! this declaration is the discriminant a caller encodes**. That ordering is the
-//! one thing the macro used to guarantee for free, so `tests/idl.rs` asserts it
-//! against the guest's own handler order.
+//! one thing the macro used to guarantee for free -- as is the order of the
+//! fields inside a variant, which SPEL fills positionally -- so
+//! `tests/instruction_parity.rs` asserts both against the committed IDL, which
+//! `tests/idl.rs` in turn holds against the guest's own handlers.
 //!
 //! Each variant names the accounts its handler expects, in order, because a
 //! caller has to supply them in that order. Why each one is required, and what

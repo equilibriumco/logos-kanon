@@ -97,9 +97,12 @@ question the whole M3-02 gate exists to keep closed.
   variant could not disagree; now the declaration order is a human's to keep, and it is
   the whole encoding, because `risc0_zkvm::serde` writes a variant's position. Swapping
   two declarations compiles on both sides and sends every caller's `RotateSigners` to
-  `RegisterFeedTrust`. `tests/idl.rs`'s `the_instruction_variants_are_the_guests_handlers_in_order`
-  is what fails instead, read off the source text because declaration order is what is
-  being asserted and a value carries no trace of it.
+  `RegisterFeedTrust`, and so does reordering two same-typed fields inside one variant,
+  which shifts values between arguments. `tests/instruction_parity.rs` is what fails
+  instead, asserting both orders against the encoding a caller produces -- risc0's
+  discriminant and its serialised field order -- rather than against a restatement of
+  them. Its helpers are `aggregator-program`'s, which had the same two declarations to
+  reconcile first.
 
   It also drops the guest workspace's `serde` dependency, which existed only because the
   generated enum derived it, and it adds `instruction_type` to the committed IDL -- so a
