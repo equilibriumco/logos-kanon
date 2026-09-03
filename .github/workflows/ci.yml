@@ -457,8 +457,9 @@ jobs:
       # is `[M2-06:01]` working as designed and is why each test refuses to run
       # against an unconfigured build. Both keys are `[0x11; 32]` and `[0x22; 32]`,
       # each signs for one account on a throwaway chain, and neither controls
-      # anything. The two suites are separate test binaries that cargo runs at
-      # the same time, so they hold different keys: nonces are per signer.
+      # anything. Cargo runs the two test binaries one after another against the
+      # same chain, so the second meets whatever the first left behind; a key
+      # each keeps a suite's accounts its own.
       #
       # Both are set here rather than one per step, because `kanon-methods`
       # builds all three guests in one invocation and each reads its own.
@@ -537,8 +538,8 @@ jobs:
       # claims, initialises, registers and submits from nothing every run --
       # which is what makes its assertions about state rather than about
       # whatever a previous run left behind.
-      # Both suites, in one invocation: cargo runs the two test binaries at the
-      # same time, they hold different keys, and each drives its own program.
+      # Both suites, in one invocation: cargo runs the two test binaries one
+      # after another, each driving its own program under its own key.
       - name: Verify and publish, and verify and settle, end to end
         run: cargo test --manifest-path e2e/Cargo.toml --locked
 

@@ -2,8 +2,8 @@
 //!
 //! The other half of what `sequencer_e2e.rs` does for the push path, and the
 //! same discipline: every assertion is on account state read back from the
-//! chain, never on what `sendTransaction` returned. `kanon_e2e` holds the
-//! plumbing both suites share and says why it is shaped that way.
+//! chain, never on what `sendTransaction` returned. `tests/support/chain.rs`
+//! holds the plumbing both suites share and says why it is shaped that way.
 //!
 //! # What is different about this half
 //!
@@ -47,9 +47,10 @@ use verifier_core::test_support::{address_of, signing_key, PayloadBuilder};
 
 /// The authority key this suite holds.
 ///
-/// Deliberately not the push suite's `[0x11; 32]`. The two suites are separate
-/// test binaries and cargo runs them at the same time; nonces are per signer, so
-/// sharing one key would have them taking each other's.
+/// Deliberately not the push suite's `[0x11; 32]`. Cargo runs the two test
+/// binaries one after another against the same chain, so the second meets
+/// whatever the first left behind; a key each keeps a suite's accounts its own
+/// and stops a failure in one being explained by the other's state.
 ///
 /// Fixed rather than random, because the guest compiles the *account id* of this
 /// key in as `KANON_PULL_GENESIS_AUTHORITY` and a fresh key each run would mean
@@ -128,10 +129,11 @@ const QUOTE_ASSET: [u8; 32] = [0x05; 32];
 /// `65_000.00000000` at eight decimals, as RedStone would scale it.
 const MARKET_VALUE: u64 = 6_500_000_000_000;
 
-/// A limit the market above clears, and one it does not.
+/// A price on the `Q64.64` scale the consumer compares limits on.
 ///
-/// Expressed on the `Q64.64` scale the consumer compares on, computed the same
-/// way `expected_price` does rather than read from the crate under test.
+/// Computed the same way `expected_price` does rather than read from the crate
+/// under test, so a change to that arithmetic fails here rather than agreeing
+/// with itself.
 fn q64(value_scaled: u64) -> u128 {
     (u128::from(value_scaled) << 64) / 10u128.pow(u32::from(DECIMALS))
 }
