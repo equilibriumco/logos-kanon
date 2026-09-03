@@ -18,7 +18,7 @@
 //! **`2 - 1` is what the write costs on top of verifying** — the figure M2-18
 //! exists to publish and the one P1 was missing.
 //!
-//! Three stages sit outside that chain, each isolating one thing the residual
+//! Five stages sit outside that chain, each isolating one operation the residual
 //! bundles, because a residual nobody has taken apart is a place for a wrong
 //! explanation to live:
 //!
@@ -27,14 +27,20 @@
 //! | 3 | the PDA derivation SPEL's generated validator performs before the body |
 //! | 4 | `OraclePriceAccount::try_from`, the read only an update does |
 //! | 5 | `AutoClaim::pda_from_seeds`, the claim only a first write does |
+//! | 6 | `publish::price_account` and encoding the result, only a first write |
+//! | 7 | `publish`'s three checks, only an update (includes stage 4's read) |
 //!
-//! Stages 4 and 5 are what make the gap between the two cases explicable rather
-//! than merely reported: the update pays 4 and the first write pays 5, so the
-//! difference between them should be `4 - 5`, and
-//! `the_gap_between_the_cases_is_the_read_less_the_claim` asserts it is.
-//! @frenzox asked for exactly that on #60, having noticed the first version
-//! called the gap "the account read" when the first-write path was doing
-//! create-only work of its own.
+//! **They do not add up to the gap between the two cases, and are not meant to.**
+//! That was the original hope: @frenzox pointed out on #60 that the first version
+//! called the gap "the account read" when a first write does create-only work of
+//! its own, so stages 4 to 7 were added to account for it. They do not. The
+//! two-term estimate `read - claim` is 138 cycles; the four-term
+//! `publish - (claim + build)` is 655; the gap is 1,196. Isolated calls do not
+//! cost what inlined ones do, so the terms are under no obligation to sum.
+//!
+//! What each figure is good for is knowing what one operation costs. What none of
+//! them is, is a component of the write. `COSTS.md` says so, and records the
+//! failed reconciliations so a third is not attempted.
 //!
 //! Setup is identical in every stage and happens before the branch, so zkVM
 //! startup, input deserialization, account construction and the journal commit
@@ -293,7 +299,7 @@ fn run(
         };
     }
 
-    // The three stages outside the prefix chain. Each calls exactly what the
+    // The five stages outside the prefix chain. Each calls exactly what the
     // shipped path calls, so the figure is about that code and not a model of it.
     if stage == 3 {
         // What the generated validator does before the body: derive the address
@@ -344,11 +350,14 @@ fn run(
             // encoded bytes nothing can be skipped.
             let built = aggregator_program::publish::price_account(config, &verified);
             let encoded = Data::from(&built);
-            let checksum = encoded
-                .as_ref()
-                .iter()
-                .fold(0u64, |acc, byte| acc.rotate_left(1) ^ u64::from(*byte));
-            return (1, checksum, 0);
+            // `black_box` rather than a checksum. The value has to be observed or
+            // the construction is dead code, but a fold over 136 bytes charges the
+            // observation to the figure: @frenzox measured a checksum-only control
+            // at about 1,414 cycles against 1,782 for the stage, so most of what
+            // was published was the loop. `black_box` tells the compiler the value
+            // escapes without generating work.
+            core::hint::black_box(&encoded);
+            return (1, u64::from(encoded.as_ref().len() as u32), 0);
         }
 
         // The update side: the three checks `publish` makes before it writes.

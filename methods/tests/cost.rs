@@ -984,7 +984,7 @@ fn the_isolated_components_are_reproducible() {
     // alongside the deeper problem that build was measuring nothing at all.
     assert_eq!(
         [validator, read, claim, build, publish],
-        [1_722, 1_442, 1_304, 1_782, 2_381],
+        [1_722, 1_442, 1_304, 422, 2_381],
         "an isolated figure moved"
     );
 }
@@ -1003,11 +1003,19 @@ fn the_isolated_components_are_reproducible() {
 /// Two attempts to decompose it into isolated pieces both failed, and the reason
 /// is worth recording rather than retrying. `read - claim` is 138 cycles against
 /// a gap of 1,196. Taking all four operations -- what only an update does, less
-/// what only a first write does -- gives 2,381 - (1,304 + 1,782) = **-705**, the
-/// wrong sign. Isolated calls do not cost what inlined ones do, so the terms are
-/// under no obligation to sum, and the second attempt got further from the answer
-/// than the first. The isolated figures are each real and each pinned; their sum
-/// is not this gap and this test does not pretend otherwise.
+/// what only a first write does -- gives `2,381 - (1,304 + 422)` = 655, about half
+/// way and still not it. Isolated calls do not cost what inlined ones do, so the
+/// terms are under no obligation to sum.
+///
+/// An earlier version of this comment said the four-term estimate came out at
+/// -705, the wrong sign. That was an artefact of the build figure carrying a
+/// 136-byte checksum loop used to keep its value alive, which @frenzox caught on
+/// #60. The narrative was resting on the inflated measurement -- worth recording,
+/// because it is the second time a story about these numbers turned out to be
+/// downstream of a measurement error rather than of the code.
+///
+/// The isolated figures are each real and each pinned; their sum is not this gap
+/// and this test does not pretend otherwise.
 #[test]
 fn an_update_costs_more_than_a_first_write() {
     let vector = vector();

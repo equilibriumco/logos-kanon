@@ -103,24 +103,37 @@ and for building the account. Each of those was measured on its own:
 | published-account read, update only | 1,442 |
 | `publish`'s checks, update only (includes the read above) | 2,381 |
 | `AutoClaim::pda_from_seeds`, first write only | 1,304 |
-| `publish::price_account` and encoding the result, first write only | 1,782 |
+| `publish::price_account` and encoding the result, first write only | 422 |
 
 **These do not sum to 1,196, and that is not a discrepancy to chase.** Isolated
 calls do not cost what inlined ones do. `read - claim` is 138 cycles. Taking all
 four — what only an update does, less what only a first write does — gives
-2,381 − (1,304 + 1,782) = **−705**, the wrong sign. Two attempts to make the terms
-add up failed, the second further from the answer than the first, and that is
-recorded here so a third is not attempted. Each figure above is real, pinned by
-exact equality, and useful for knowing what an operation costs; none is a
-component of the write.
+2,381 − (1,304 + 422) = 655: about half way, and still not it. Two attempts to
+make the terms add up failed, and that is recorded here so a third is not
+attempted. Each figure above is real, pinned by exact equality, and useful for
+knowing what an operation costs; none is a component of the write.
 
-The build figure is build *and encode*, deliberately. A construction whose fields
-are never all read is dead code: with the stage observing only the built
-account's timestamp, the compiler elided the call entirely and the figure was
-identical with the call deleted — 43 cycles of nothing, which @frenzox found on
-#60. Observing one byte per field still elided the 32-byte copies, at 51. The
-real path builds the account and then assigns `Data::from(written)`, so measuring
-the pair is both faithful and the only version that cannot be optimised away.
+### Keeping a measured value alive without charging for it
+
+The build figure is build *and encode*, because the real path does both:
+`post_states` assigns `Data::from(written)` straight after building. Encoding is
+also what makes the figure measurable, and getting the observation right took two
+corrections, both from @frenzox on #60:
+
+| what the stage observed | figure | what was wrong |
+| --- | ---: | --- |
+| `built.timestamp` | 43 | equal to `verified.timestamp_ms`, so the construction was elided entirely — the figure was identical with the call deleted |
+| one byte per field | 51 | the 32-byte copies were still elided |
+| a fold over the encoded bytes | 1,782 | real, but ~1,360 of it was the fold, which the real path does not do |
+| `core::hint::black_box(&encoded)` | **422** | the value escapes without generating work |
+
+Two lessons in one row each. A figure too cheap to be plausible is the same
+signal as a test that cannot fail: 43 cycles to build a 136-byte account should
+not have been published. And an observation that keeps a value alive can cost more
+than the thing being measured, so `black_box` is the tool rather than a checksum.
+
+The `-705` this section used to report for the four-term estimate was an artefact
+of the fold, not a property of the code.
 
 What "the write" contains, named in full because a residual should not be called a
 component: the ownership check on the feed account, decoding the clock from the
