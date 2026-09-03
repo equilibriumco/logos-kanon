@@ -79,6 +79,13 @@ aggregator-program = { path = "aggregator-program", version = "0.1.0" }
 kanon-clock = { path = "kanon-clock", version = "0.1.0" }
 kanon-idl = { path = "kanon-idl", version = "0.1.0" }
 kanon-sdk = { path = "kanon-sdk", version = "0.1.0" }
+# Declared here for `methods`' per-read measurement (M3-08), which has to hand
+# each consumer's guest the account bytes LEZ would: a Borsh-encoded trust or
+# source registration, an open order, and the price account the push mode wrote.
+# The guests spell their own paths, because a guest workspace does not see this
+# table.
+reference-consumer-pull = { path = "reference-consumers/pull", version = "0.1.0" }
+reference-consumer-aggregator-read = { path = "reference-consumers/aggregator-read", version = "0.1.0" }
 
 # LEZ, and the canonical price account the aggregator is required to populate. Both come from Logos, and the two pins are one decision
 # rather than two: `twap_oracle_core` pins `lee_core` by tag v0.2.0, and cargo does
