@@ -452,12 +452,19 @@ jobs:
     # the expensive one.
     timeout-minutes: 45
     env:
-      # The guest carries the account id of the test's fixed admin key as its
-      # genesis authority. Without it the aggregator cannot be initialised by
-      # anyone, which is `[M2-06:01]` working as designed and is why the test
-      # refuses to run against an unconfigured build. The key is `[0x11; 32]`,
-      # it signs for one account on a throwaway chain, and it controls nothing.
+      # Each guest carries the account id of its suite's fixed key as its genesis
+      # authority. Without it that program cannot be initialised by anyone, which
+      # is `[M2-06:01]` working as designed and is why each test refuses to run
+      # against an unconfigured build. Both keys are `[0x11; 32]` and `[0x22; 32]`,
+      # each signs for one account on a throwaway chain, and neither controls
+      # anything. Cargo runs the two test binaries one after another against the
+      # same chain, so the second meets whatever the first left behind; a key
+      # each keeps a suite's accounts its own.
+      #
+      # Both are set here rather than one per step, because `kanon-methods`
+      # builds all three guests in one invocation and each reads its own.
       KANON_GENESIS_ADMIN: 5b0e4f6dddea8b9ef3118d6002a25c09ab379653ffb60586f4604f1fa6a0b392
+      KANON_PULL_GENESIS_AUTHORITY: 8536b4cd1b24c4af1df73f6b509eadc2d26bebc1f94d10253658419fe643e197
       RISC0_BUILD_LOCKED: 1
     permissions:
       contents: read
@@ -531,7 +538,9 @@ jobs:
       # claims, initialises, registers and submits from nothing every run --
       # which is what makes its assertions about state rather than about
       # whatever a previous run left behind.
-      - name: Push verify and publish, end to end
+      # Both suites, in one invocation: cargo runs the two test binaries one
+      # after another, each driving its own program under its own key.
+      - name: Verify and publish, and verify and settle, end to end
         run: cargo test --manifest-path e2e/Cargo.toml --locked
 
       - name: Sequencer log
