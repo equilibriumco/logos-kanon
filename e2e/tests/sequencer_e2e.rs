@@ -1,4 +1,5 @@
-//! The push path across a real standalone LEZ sequencer (M2-19).
+//! The push path across a real standalone LEZ sequencer (M2-19), for all five of
+//! F7's feeds (M2-11, M2-12).
 //!
 //! `scripts/lez-sequencer.sh` stands one up; the CI job of the same name runs it
 //! and this alongside. Locally, `start` it first — with nothing listening these
@@ -21,6 +22,29 @@
 //! transaction still returns a hash, leaves every account untouched, and reports
 //! its reason only in `target/lez-sequencer/sequencer.log`. A test asserting the
 //! send is inert, and an inert end-to-end test is worse than none.
+//!
+//! # The one deviation from production: whose keys sign
+//!
+//! The five feeds are registered with **this test's signing keys**, not
+//! RedStone's. That is forced rather than chosen. A live chain reads the clock in
+//! real time, `MAX_MAX_AGE_MS` caps a feed's window at fifteen minutes, and the
+//! committed captures are weeks old — so RedStone's own signatures cannot be
+//! submitted to a running sequencer at all, and no `maxAge` a feed may legally
+//! register would admit them.
+//!
+//! What their real signatures do verify is `verifier-core`'s conformance suite,
+//! against those captures, with their keys and their published addresses. So:
+//!
+//! | | signatures | timestamps | chain |
+//! | --- | --- | --- | --- |
+//! | conformance (M1-21) | RedStone's | as captured | none |
+//! | here (M2-11, M2-12) | this test's | live | real |
+//!
+//! The combination neither covers is real signatures on a live chain, which needs
+//! live gateway data at submit time. That is the relayer's (M4) and testnet's
+//! (M5), and it is why F7 stays `partial` on the strength of this file: the five
+//! feeds are registered and publishing, but on a standalone sequencer rather than
+//! the devnet or testnet the requirement names.
 //!
 //! # Re-running against a chain that already has state
 //!
@@ -119,13 +143,17 @@ fn require_a_configured_build() {
 }
 
 // ---------------------------------------------------------------------------
-// The feed this test registers.
+// The five feeds this test registers (M2-11, M2-12).
 // ---------------------------------------------------------------------------
 
-/// Three signers and a threshold of three, so every configured signer has to
-/// report: the point here is the round trip, and a partially met threshold is
-/// the host suite's ground.
-const SIGNER_SEEDS: [u8; 3] = [1, 2, 3];
+/// Five signers registered, three of them signing.
+///
+/// The shape production has: `FEEDS.md` records one roster of five signers across
+/// all five feeds, and RFP-020's default threshold is three. `signed_payload`
+/// signs with the first three, so two registered signers are silent on every
+/// submission and the threshold is the binding constraint rather than decoration
+/// -- a price published here is a median over a genuine subset.
+const SIGNER_SEEDS: [u8; 5] = [1, 2, 3, 4, 5];
 const THRESHOLD: u8 = 3;
 
 const DECIMALS: u8 = 8;
@@ -135,34 +163,102 @@ const DECIMALS: u8 = 8;
 /// the block that executes the submission.
 const MAX_AGE_MS: u64 = 300_000;
 
-const BASE_ASSET: [u8; 32] = [0xB7; 32];
-const QUOTE_ASSET: [u8; 32] = [0x05; 32];
-
-/// `65_000.00000000` at eight decimals, as RedStone would scale it, and the
-/// second round's `66_000.00000000`. Two different values because an update has
-/// to be seen to move the price, and a second submission of the same number
-/// would move only the timestamp.
-const FIRST_VALUE: u64 = 6_500_000_000_000;
-const SECOND_VALUE: u64 = 6_600_000_000_000;
-
-fn feed_id() -> [u8; 32] {
-    let mut id = [0u8; 32];
-    id[..3].copy_from_slice(b"BTC");
-    id
+/// One of F7's five feeds.
+///
+/// The ids are RedStone's own, from `redstone-primary-prod` -- the same five
+/// `FEEDS.md` confirmed and the conformance vectors were captured for. The asset
+/// pairs are this test's: LEZ account ids for real assets are a deployment input
+/// nobody has issued yet, and what matters here is that the five differ, so a
+/// feed writing another's account fails rather than passes unnoticed.
+struct Feed {
+    id: &'static [u8],
+    base: [u8; 32],
+    quote: [u8; 32],
+    /// A plausible price at eight decimals, distinct per feed so that a price
+    /// account holding the wrong feed's number is visible.
+    value: u64,
 }
 
-/// The payload a signer set would publish for `timestamp_ms`.
+/// F7's five, in the order `FEEDS.md` lists them.
+const FEEDS: [Feed; 5] = [
+    Feed {
+        id: b"BTC",
+        base: [0xB7; 32],
+        quote: [0x05; 32],
+        value: 6_500_000_000_000,
+    },
+    Feed {
+        id: b"ETH",
+        base: [0xE7; 32],
+        quote: [0x05; 32],
+        value: 320_000_000_000,
+    },
+    Feed {
+        id: b"SOL",
+        base: [0x50; 32],
+        quote: [0x05; 32],
+        value: 18_000_000_000,
+    },
+    Feed {
+        id: b"XMR",
+        base: [0x8B; 32],
+        quote: [0x05; 32],
+        value: 22_000_000_000,
+    },
+    Feed {
+        id: b"ZEC",
+        base: [0x2E; 32],
+        quote: [0x05; 32],
+        value: 5_500_000_000,
+    },
+];
+
+impl Feed {
+    /// The id right-padded to the wire's field width, which is how a feed id is
+    /// both stored and used as the account's PDA seed.
+    fn padded_id(&self) -> [u8; 32] {
+        let mut id = [0u8; 32];
+        id[..self.id.len()].copy_from_slice(self.id);
+        id
+    }
+
+    fn label(&self) -> &'static str {
+        core::str::from_utf8(self.id).unwrap_or("??")
+    }
+}
+
+/// The second round's value for BTC, enough above its first that an update is
+/// visible.
+const BTC_SECOND_VALUE: u64 = 6_600_000_000_000;
+
+/// The payload `feed`'s signer set would publish for `timestamp_ms`.
 ///
 /// Full-width big-endian values, which is what RedStone puts on the wire.
 /// `Value::from_be_slice` right-aligns a shorter one, so a narrow value is
 /// readable but is not what a real package carries.
-fn signed_payload(timestamp_ms: u64, value_scaled: u64) -> Vec<u8> {
+///
+/// Signed by keys this test holds rather than by RedStone's. That is the one
+/// deviation from production in this file and it is forced: a live chain reads
+/// the clock in real time, `MAX_MAX_AGE_MS` caps a feed's window at fifteen
+/// minutes, and the committed captures are weeks old, so RedStone's own
+/// signatures cannot be submitted here at all. What their real signatures do
+/// verify is `verifier-core`'s conformance suite, against those captures, with
+/// their keys. The two together leave one untested combination -- real
+/// signatures on a live chain -- which needs live gateway data at submit time
+/// and is the relayer's (M4) and testnet's (M5).
+fn signed_payload(feed: &Feed, timestamp_ms: u64, value_scaled: u64) -> Vec<u8> {
     let mut value = [0u8; 32];
     value[24..].copy_from_slice(&value_scaled.to_be_bytes());
 
+    // The first `THRESHOLD` of the registered five, not all of them. Registering
+    // five and then signing with five makes quorum 5-of-5 and leaves `THRESHOLD`
+    // never binding -- which is what the first version of this did while claiming
+    // a median over a subset. Signing with exactly three makes the claim true and
+    // the subset real: two registered signers stay silent and the price is still
+    // published.
     let mut builder = PayloadBuilder::default();
-    for seed in SIGNER_SEEDS {
-        builder = builder.signed_package(&signing_key(seed), &[(b"BTC", &value)], timestamp_ms);
+    for seed in SIGNER_SEEDS.iter().take(usize::from(THRESHOLD)) {
+        builder = builder.signed_package(&signing_key(*seed), &[(feed.id, &value)], timestamp_ms);
     }
     builder.build()
 }
@@ -180,6 +276,19 @@ fn expected_price(value_scaled: u64) -> u128 {
 // ---------------------------------------------------------------------------
 // Reading the chain.
 // ---------------------------------------------------------------------------
+
+/// The chain, the program deployed on it, and the key that signs as its admin.
+///
+/// Bundled because these four travel together through every step and threading
+/// them individually put `submit_and_read_back` over clippy's argument limit
+/// once a feed joined them. Built after the deployment, which is where the
+/// program id comes from.
+struct Chain {
+    client: SequencerClient,
+    program: ProgramId,
+    key: lee::PrivateKey,
+    admin_id: lee::AccountId,
+}
 
 /// How long to wait for a transaction to show up in state.
 ///
@@ -362,12 +471,14 @@ async fn ensure_the_admin_account_is_owned(
 }
 
 /// Establishes the authority, and returns the config account's address.
-async fn ensure_the_authority_is_established(
-    client: &SequencerClient,
-    program: ProgramId,
-    key: &lee::PrivateKey,
-    admin_id: lee::AccountId,
-) -> lee::AccountId {
+async fn ensure_the_authority_is_established(chain: &Chain) -> lee::AccountId {
+    let Chain {
+        client,
+        program,
+        key,
+        admin_id,
+    } = chain;
+    let (program, admin_id) = (*program, *admin_id);
     let config_id =
         lee::AccountId::new(*compute_pda(&program, &[&seed_from_str(ADMIN_CONFIG_SEED)]).value());
 
@@ -408,15 +519,20 @@ async fn ensure_the_authority_is_established(
     config_id
 }
 
-/// Registers the feed, and returns its account address.
+/// Registers one feed, and returns its account address.
 async fn ensure_the_feed_is_registered(
-    client: &SequencerClient,
-    program: ProgramId,
-    key: &lee::PrivateKey,
-    admin_id: lee::AccountId,
+    chain: &Chain,
     config_id: lee::AccountId,
+    feed: &Feed,
 ) -> lee::AccountId {
-    let id = feed_id();
+    let Chain {
+        client,
+        program,
+        key,
+        admin_id,
+    } = chain;
+    let (program, admin_id) = (*program, *admin_id);
+    let id = feed.padded_id();
     let feed_account_id = lee::AccountId::new(
         *compute_pda(&program, &[&id, &seed_from_str(FEED_ACCOUNT_SEED)]).value(),
     );
@@ -429,8 +545,8 @@ async fn ensure_the_feed_is_registered(
 
     let expected = FeedAccount {
         feed_id: id,
-        base_asset: BASE_ASSET,
-        quote_asset: QUOTE_ASSET,
+        base_asset: feed.base,
+        quote_asset: feed.quote,
         decimals: DECIMALS,
         max_age_ms: MAX_AGE_MS,
         signers: signers.clone(),
@@ -451,8 +567,8 @@ async fn ensure_the_feed_is_registered(
             admin_id,
             &Instruction::RegisterFeed {
                 feed_id: id,
-                base_asset: BASE_ASSET,
-                quote_asset: QUOTE_ASSET,
+                base_asset: feed.base,
+                quote_asset: feed.quote,
                 decimals: DECIMALS,
                 max_age_ms: MAX_AGE_MS,
                 signers,
@@ -471,8 +587,10 @@ async fn ensure_the_feed_is_registered(
     .await;
 
     assert_eq!(
-        stored, expected,
-        "the registered feed is not the configuration this test asked for"
+        stored,
+        expected,
+        "{}: the registered feed is not the configuration this test asked for",
+        feed.label()
     );
 
     // The feed account is the program's own, and a submission is required to
@@ -481,7 +599,9 @@ async fn ensure_the_feed_is_registered(
     assert_eq!(
         account_now(client, feed_account_id).await.program_owner,
         program,
-        "the feed account is not owned by the aggregator, so the claim in the registration did not land"
+        "{}: the feed account is not owned by the aggregator, so the claim in the \
+         registration did not land",
+        feed.label()
     );
 
     feed_account_id
@@ -508,14 +628,19 @@ fn price_account_id(program: ProgramId, feed_account_id: lee::AccountId) -> lee:
 /// observation rather than a re-read: no previous run can have written this
 /// round, because it comes from the chain's clock during this one.
 async fn submit_and_read_back(
-    client: &SequencerClient,
-    program: ProgramId,
-    key: &lee::PrivateKey,
-    admin_id: lee::AccountId,
+    chain: &Chain,
+    feed: &Feed,
     feed_account_id: lee::AccountId,
     round: u64,
     value_scaled: u64,
 ) -> OraclePriceAccount {
+    let Chain {
+        client,
+        program,
+        key,
+        admin_id,
+    } = chain;
+    let (program, admin_id) = (*program, *admin_id);
     let price_id = price_account_id(program, feed_account_id);
 
     send_to_program(
@@ -529,7 +654,7 @@ async fn submit_and_read_back(
         key,
         admin_id,
         &Instruction::SubmitPrice {
-            payload: signed_payload(round, value_scaled),
+            payload: signed_payload(feed, round, value_scaled),
         },
     )
     .await;
@@ -580,7 +705,8 @@ async fn the_sequencer_is_there_and_producing_blocks() {
     );
 }
 
-/// M2's done-gate line: verify and publish, end to end, on a standalone sequencer.
+/// M2's done-gate line, and F7's five feeds: verify and publish, end to end, on a
+/// standalone sequencer, for BTC, ETH, SOL, XMR and ZEC.
 ///
 /// One test rather than several, and that is not a stylistic choice: cargo runs
 /// tests in a thread pool, the steps here are ordered, and they share one chain
@@ -599,81 +725,146 @@ async fn the_push_path_verifies_and_publishes_across_a_real_sequencer() {
 
     let program = deploy_the_guest(&client).await;
     ensure_the_admin_account_is_owned(&client, &key, admin_id).await;
-    let config_id = ensure_the_authority_is_established(&client, program, &key, admin_id).await;
-    let feed_account_id =
-        ensure_the_feed_is_registered(&client, program, &key, admin_id, config_id).await;
-    let price_id = price_account_id(program, feed_account_id);
 
-    // Timestamped at the chain's own clock, which is what makes the run
-    // unconditional: whatever a previous run left behind, this round is newer.
-    let stored_before = decode::<OraclePriceAccount>(&account_now(&client, price_id).await.data);
-    let round = chain_now_ms(&client).await;
-    if let Some(before) = &stored_before {
-        assert!(
-            round > before.timestamp,
-            "the chain clock ({round}) is not ahead of the stored observation ({}), so this \
-             submission could not be an update",
-            before.timestamp
+    let chain = Chain {
+        client,
+        program,
+        key,
+        admin_id,
+    };
+    let client = &chain.client;
+    let config_id = ensure_the_authority_is_established(&chain).await;
+
+    // M2-11 and M2-12: every one of F7's five feeds, registered and then
+    // published, on a chain. One loop rather than five tests, for the reason the
+    // doc comment gives -- they share a chain and a signer.
+    let mut written: Vec<(lee::AccountId, lee::AccountId, OraclePriceAccount)> = Vec::new();
+
+    for feed in &FEEDS {
+        let feed_account_id = ensure_the_feed_is_registered(&chain, config_id, feed).await;
+        let price_id = price_account_id(program, feed_account_id);
+
+        // Timestamped at the chain's own clock, which is what makes the run
+        // unconditional: whatever a previous run left behind, this round is newer.
+        let stored_before = decode::<OraclePriceAccount>(&account_now(client, price_id).await.data);
+        let round = chain_now_ms(client).await;
+        if let Some(before) = &stored_before {
+            assert!(
+                round > before.timestamp,
+                "{}: the chain clock ({round}) is not ahead of the stored observation ({}), \
+                 so this submission could not be an update",
+                feed.label(),
+                before.timestamp
+            );
+        }
+
+        let published =
+            submit_and_read_back(&chain, feed, feed_account_id, round, feed.value).await;
+
+        assert_eq!(
+            published,
+            OraclePriceAccount {
+                base_asset: kanon_idl::AccountId::new(feed.base),
+                quote_asset: kanon_idl::AccountId::new(feed.quote),
+                price: expected_price(feed.value),
+                timestamp: round,
+                source_id: REDSTONE_SOURCE_ID,
+                confidence_interval: 0,
+            },
+            "{}: the published account is not the one this payload and this registration \
+             describe",
+            feed.label()
+        );
+
+        // The account is the program's own, which is what makes it the canonical
+        // one rather than something a caller could have written.
+        assert_eq!(
+            account_now(client, price_id).await.program_owner,
+            program,
+            "{}: the price account is not owned by the aggregator",
+            feed.label()
+        );
+
+        written.push((feed_account_id, price_id, published));
+    }
+
+    // Five feeds, five accounts, each holding its own feed's price. A derivation
+    // that ignored the feed id, or a `publish` that wrote through to the wrong
+    // account, fails here rather than in review.
+    //
+    // Deliberately *not* called R3. R3 is about an upstream error for one feed
+    // leaving pushes for the others alone, and this loop is happy-path only --
+    // no upstream failure is introduced anywhere in it. @frenzox pointed that
+    // out on #62; an earlier version of this comment and of F7's note claimed
+    // R3's name for a different property. The failure R3 describes needs a
+    // relayer to produce it, so it stays M4's.
+    let addresses: std::collections::BTreeSet<_> =
+        written.iter().map(|(_, price_id, _)| *price_id).collect();
+    assert_eq!(
+        addresses.len(),
+        FEEDS.len(),
+        "the five feeds do not have five distinct price accounts: {addresses:?}"
+    );
+
+    // Re-read from the chain rather than re-checking what the loop already
+    // asserted. The first version compared the snapshot taken during the loop
+    // against the same expression that snapshot had already been asserted equal
+    // to, so it could not fail -- and it missed exactly the case it names: if
+    // ZEC's submission had also written BTC's account, BTC's snapshot was taken
+    // four submissions earlier and still held BTC's price. Only a read after all
+    // five have published can see that.
+    for (feed, (_, price_id, _)) in FEEDS.iter().zip(&written) {
+        let current: OraclePriceAccount = account_when(
+            client,
+            *price_id,
+            "the price account is still readable after all five published",
+            |account| decode(&account.data),
+        )
+        .await;
+
+        assert_eq!(
+            current,
+            OraclePriceAccount {
+                base_asset: kanon_idl::AccountId::new(feed.base),
+                quote_asset: kanon_idl::AccountId::new(feed.quote),
+                price: expected_price(feed.value),
+                timestamp: current.timestamp,
+                source_id: REDSTONE_SOURCE_ID,
+                confidence_interval: 0,
+            },
+            "{}'s account no longer holds its own feed's price after all five \
+             published, so a submission crossed feeds",
+            feed.label()
         );
     }
 
-    let published = submit_and_read_back(
-        &client,
-        program,
-        &key,
-        admin_id,
-        feed_account_id,
-        round,
-        FIRST_VALUE,
-    )
-    .await;
-
-    assert_eq!(
-        published,
-        OraclePriceAccount {
-            base_asset: kanon_idl::AccountId::new(BASE_ASSET),
-            quote_asset: kanon_idl::AccountId::new(QUOTE_ASSET),
-            price: expected_price(FIRST_VALUE),
-            timestamp: round,
-            source_id: REDSTONE_SOURCE_ID,
-            confidence_interval: 0,
-        },
-        "the published account is not the one this payload and this registration describe"
-    );
-
-    // The account is the program's own, which is what makes it the canonical one
-    // rather than something a caller could have written.
-    assert_eq!(
-        account_now(&client, price_id).await.program_owner,
-        program,
-        "the price account is not owned by the aggregator"
-    );
-
-    // The other half of the write path: an update at a newer round, moving the
-    // price and the timestamp and nothing else.
-    let next_round = chain_now_past(&client, round).await;
-    let updated = submit_and_read_back(
-        &client,
-        program,
-        &key,
-        admin_id,
-        feed_account_id,
-        next_round,
-        SECOND_VALUE,
-    )
-    .await;
+    // The other half of the write path, on BTC: an update at a newer round,
+    // moving the price and the timestamp and nothing else.
+    // Found by the literal id, so reordering `FEEDS` cannot point this phase at
+    // another feed. Two earlier versions could: `written[0]` was position zero
+    // outright, and searching for `BTC.id` was circular, because that constant
+    // was itself `&FEEDS[0]` -- moving ETH to the first slot would have made
+    // `BTC` mean ETH and the search find ETH. @frenzox caught both on #62.
+    let (btc, (btc_feed_account, _, btc_published)) = FEEDS
+        .iter()
+        .zip(&written)
+        .find(|(feed, _)| feed.id == b"BTC")
+        .expect("BTC is one of the five feeds");
+    let next_round = chain_now_past(client, btc_published.timestamp).await;
+    let updated =
+        submit_and_read_back(&chain, btc, *btc_feed_account, next_round, BTC_SECOND_VALUE).await;
 
     assert_eq!(
         updated,
         OraclePriceAccount {
-            price: expected_price(SECOND_VALUE),
+            price: expected_price(BTC_SECOND_VALUE),
             timestamp: next_round,
-            ..published
+            ..*btc_published
         },
         "an update moved something other than the price and the timestamp"
     );
     assert_ne!(
-        updated.price, published.price,
+        updated.price, btc_published.price,
         "the second round carried a different value, so a price that did not move means the \
          update was not applied"
     );
