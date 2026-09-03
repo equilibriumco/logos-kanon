@@ -954,8 +954,10 @@ fn push_isolated(vector: &Vector, stage: u8, case: Case) -> u64 {
 
 /// What the generated validator costs, and what each case's exclusive work costs.
 ///
-/// Prints rather than asserts; the assertions are below. Useful on its own when
-/// a figure moves and the question is which of the three moved.
+/// Prints *and* asserts, all five of them: it was printing three and pinning
+/// three when `COSTS.md` published five, which is where the dead build stage hid.
+/// Useful on its own when a figure moves and the question is which of the five
+/// moved.
 #[test]
 fn the_isolated_components_are_reproducible() {
     let vector = vector();
