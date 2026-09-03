@@ -1643,7 +1643,6 @@ dependencies = [
  "lee_core",
  "reference-consumer-pull",
  "risc0-zkvm",
- "serde",
  "spel-framework",
 ]
 

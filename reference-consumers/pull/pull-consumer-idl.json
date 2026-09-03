@@ -152,6 +152,7 @@
     }
   ],
   "errors": [],
+  "instruction_type": "reference_consumer_pull::Instruction",
   "instructions": [
     {
       "accounts": [

@@ -30,14 +30,15 @@ reference-consumer-pull = { path = "..", version = "0.1.0" }
 # only unifies them when the source and tag match character for character.
 spel-framework = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" }
 
-# `#[lez_program]` with no `instruction` argument generates the instruction enum
-# in this file, and the enum it generates derives serde -- so the macro's output
-# names a crate this manifest has to carry. `methods/guest` does not, because the
-# aggregator points the macro at an enum that already lives in a crate with
-# serde. The generated enum is the right choice here: a consumer's instruction
-# set has no host-side caller in this repository to share a definition with, and
-# a hand-written copy would be a second definition to keep in step.
-serde = { version = "1", features = ["derive"] }
+# No `serde` here, and its absence is the point rather than an omission. The
+# macro used to generate the instruction enum in this file, and the generated
+# enum derives serde, so this manifest had to carry the crate. It now points at
+# `reference_consumer_pull::Instruction` instead -- which M3-07 needs, because a
+# host-side caller cannot reach a type the macro creates inside a guest binary --
+# so the derive happens in a crate that already had serde and this manifest has
+# one fewer direct dependency. Not one fewer package: serde still arrives through
+# `reference-consumer-pull`, SPEL, LEZ and risc0. `methods/guest` has been this
+# shape all along.
 nssa_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", package = "lee_core" }
 
 [dev-dependencies]

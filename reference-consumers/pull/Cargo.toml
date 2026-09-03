@@ -67,3 +67,8 @@ verifier-core.workspace = true
 # through a crate, so its dependencies are declared by each consumer.
 serde_json = "1"
 hex = "0.4"
+# The codec the wire actually uses. `read_lee_inputs` deserialises the
+# instruction with `risc0_zkvm::serde`, so encoding with it in
+# `tests/instruction_parity.rs` is what makes that test a statement about the
+# transaction rather than about Rust.
+risc0-zkvm.workspace = true

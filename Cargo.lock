@@ -2553,6 +2553,7 @@ dependencies = [
  "hex",
  "lee_core",
  "pull-lib",
+ "risc0-zkvm",
  "serde",
  "serde_json",
  "spel-framework",

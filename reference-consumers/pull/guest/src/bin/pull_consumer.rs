@@ -80,7 +80,7 @@ const fn nibble(character: u8) -> u8 {
     }
 }
 
-#[lez_program]
+#[lez_program(instruction = "reference_consumer_pull::Instruction")]
 mod kanon_pull_consumer {
     #[allow(unused_imports)]
     use super::*;
