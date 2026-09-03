@@ -792,11 +792,16 @@ async fn the_push_path_verifies_and_publishes_across_a_real_sequencer() {
         written.push((feed_account_id, price_id, published));
     }
 
-    // Five feeds, five accounts, and each holding its own feed's price. R3's
-    // per-feed isolation is asserted on the host over post-states; this is the
-    // same property where the addresses are the chain's and the writes actually
-    // happened. A derivation that ignored the feed id, or a `publish` that wrote
-    // through to the wrong account, fails here rather than in review.
+    // Five feeds, five accounts, each holding its own feed's price. A derivation
+    // that ignored the feed id, or a `publish` that wrote through to the wrong
+    // account, fails here rather than in review.
+    //
+    // Deliberately *not* called R3. R3 is about an upstream error for one feed
+    // leaving pushes for the others alone, and this loop is happy-path only --
+    // no upstream failure is introduced anywhere in it. @frenzox pointed that
+    // out on #62; an earlier version of this comment and of F7's note claimed
+    // R3's name for a different property. The failure R3 describes needs a
+    // relayer to produce it, so it stays M4's.
     let addresses: std::collections::BTreeSet<_> =
         written.iter().map(|(_, price_id, _)| *price_id).collect();
     assert_eq!(
@@ -839,7 +844,15 @@ async fn the_push_path_verifies_and_publishes_across_a_real_sequencer() {
 
     // The other half of the write path, on BTC: an update at a newer round,
     // moving the price and the timestamp and nothing else.
-    let (btc_feed_account, _, btc_published) = &written[0];
+    // By feed id, not by position, because the constant above claims exactly
+    // that and `written[0]` made it false -- @frenzox caught the contradiction
+    // on #62.
+    let (btc_feed_account, _, btc_published) = FEEDS
+        .iter()
+        .zip(&written)
+        .find(|(feed, _)| feed.id == BTC.id)
+        .map(|(_, entry)| entry)
+        .expect("BTC is one of the five feeds");
     let next_round = chain_now_past(client, btc_published.timestamp).await;
     let updated =
         submit_and_read_back(&chain, BTC, *btc_feed_account, next_round, BTC_SECOND_VALUE).await;
