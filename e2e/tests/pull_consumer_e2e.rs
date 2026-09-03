@@ -40,8 +40,8 @@ use chain::{
 };
 use lee_core::program::ProgramId;
 use reference_consumer_pull::{
-    authority::CONFIG_ACCOUNT_SEED, order::ORDER_ACCOUNT_SEED, trust::TRUST_ACCOUNT_SEED,
-    ConfigAccount, FeedTrust, Instruction, OrderAccount,
+    authority::config_address, order::ORDER_ACCOUNT_SEED, trust::trust_address, ConfigAccount,
+    FeedTrust, Instruction, OrderAccount,
 };
 use sequencer_service_rpc::SequencerClient;
 use spel_framework::pda::{compute_pda, seed_from_str};
@@ -175,16 +175,19 @@ fn addresses_of(roster: [u8; 3]) -> Vec<[u8; 20]> {
 // Addresses, derived the way a client has to derive them.
 // ---------------------------------------------------------------------------
 
+/// Through the crate's own helpers, which exist so that a client's derivation
+/// and the guest's declared constraint cannot drift apart. Spelling either out
+/// here would make this file one of the places that drift.
 fn config_id(program: ProgramId) -> lee::AccountId {
-    lee::AccountId::new(*compute_pda(&program, &[&seed_from_str(CONFIG_ACCOUNT_SEED)]).value())
+    lee::AccountId::new(*config_address(&program).value())
 }
 
 fn trust_id(program: ProgramId) -> lee::AccountId {
-    lee::AccountId::new(
-        *compute_pda(&program, &[&feed_id(), &seed_from_str(TRUST_ACCOUNT_SEED)]).value(),
-    )
+    lee::AccountId::new(*trust_address(&program, &feed_id()).value())
 }
 
+/// Hand-rolled because an order's address has no published counterpart: the
+/// order module exports the seed, not a derivation over it.
 fn order_id_address(program: ProgramId, order_id: [u8; 32]) -> lee::AccountId {
     lee::AccountId::new(
         *compute_pda(&program, &[&order_id, &seed_from_str(ORDER_ACCOUNT_SEED)]).value(),
