@@ -271,7 +271,13 @@ fn expected_price(value_scaled: u64) -> u128 {
 /// them individually put `submit_and_read_back` over clippy's argument limit
 /// once a feed joined them. Built after the deployment, which is where the
 /// program id comes from.
-struct Chain {
+///
+/// Not in `chain.rs` with the transport, and not named `Chain` any more, both
+/// for the same reason: it is this suite's shape rather than the harness's. The
+/// pull suite signs with two keys -- an authority and an order's owner -- so a
+/// bundle carrying one `key` and one `admin_id` does not fit it, and a `Chain`
+/// beside a `mod chain` would read as the module's own type.
+struct Deployment {
     client: SequencerClient,
     program: ProgramId,
     key: lee::PrivateKey,
@@ -283,8 +289,8 @@ struct Chain {
 // ---------------------------------------------------------------------------
 
 /// Establishes the authority, and returns the config account's address.
-async fn ensure_the_authority_is_established(chain: &Chain) -> lee::AccountId {
-    let Chain {
+async fn ensure_the_authority_is_established(chain: &Deployment) -> lee::AccountId {
+    let Deployment {
         client,
         program,
         key,
@@ -333,11 +339,11 @@ async fn ensure_the_authority_is_established(chain: &Chain) -> lee::AccountId {
 
 /// Registers one feed, and returns its account address.
 async fn ensure_the_feed_is_registered(
-    chain: &Chain,
+    chain: &Deployment,
     config_id: lee::AccountId,
     feed: &Feed,
 ) -> lee::AccountId {
-    let Chain {
+    let Deployment {
         client,
         program,
         key,
@@ -440,13 +446,13 @@ fn price_account_id(program: ProgramId, feed_account_id: lee::AccountId) -> lee:
 /// observation rather than a re-read: no previous run can have written this
 /// round, because it comes from the chain's clock during this one.
 async fn submit_and_read_back(
-    chain: &Chain,
+    chain: &Deployment,
     feed: &Feed,
     feed_account_id: lee::AccountId,
     round: u64,
     value_scaled: u64,
 ) -> OraclePriceAccount {
-    let Chain {
+    let Deployment {
         client,
         program,
         key,
@@ -528,7 +534,7 @@ async fn the_push_path_verifies_and_publishes_across_a_real_sequencer() {
     .await;
     ensure_the_account_is_owned(&client, &key, admin_id).await;
 
-    let chain = Chain {
+    let chain = Deployment {
         client,
         program,
         key,
