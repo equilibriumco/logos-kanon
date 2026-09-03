@@ -231,7 +231,7 @@ note = "Equilibrium operates this under the SLA, so its logging, wallet monitori
 [[row]]
 id = "F9"
 status = "verified"
-tasks = ["M3-01", "M3-02", "M3-03", "M3-04", "M3-06"]
+tasks = ["M3-01", "M3-02", "M3-03", "M3-04", "M3-06", "M3-07"]
 implemented_in = [
   "pull-lib/src/lib.rs",
   "reference-consumers/pull/guest/src/bin/pull_consumer.rs",
