@@ -599,6 +599,18 @@ mod push_stage {
     pub const VERIFY: u8 = 1;
     /// The real `submit_price`, whole.
     pub const SUBMIT: u8 = 2;
+
+    // Outside the prefix chain: one thing each, to take the residual apart.
+    /// The PDA derivation SPEL's generated validator performs before the body.
+    pub const VALIDATOR_PDA: u8 = 3;
+    /// `OraclePriceAccount::try_from` -- the read only an update does.
+    pub const PUBLISHED_READ: u8 = 4;
+    /// `AutoClaim::pda_from_seeds` -- the claim only a first write does.
+    pub const AUTO_CLAIM: u8 = 5;
+    /// `publish::price_account` -- building the account, which only a first write does.
+    pub const BUILD: u8 = 6;
+    /// `publish::publish` -- the three checks, which only an update makes.
+    pub const PUBLISH: u8 = 7;
 }
 
 /// Which of the instruction's two paths is under measurement.
@@ -764,6 +776,25 @@ fn push_cycles(vector: &Vector, stage: u8, case: Case) -> u64 {
             case.label()
         );
     }
+
+    // The isolating stages report 1 when they did their work. Without this a
+    // stage that folded to a constant, or a decode that failed, reads as a very
+    // cheap component -- the same trap the post-state count closes for stage 2.
+    if matches!(
+        stage,
+        push_stage::VALIDATOR_PDA
+            | push_stage::PUBLISHED_READ
+            | push_stage::AUTO_CLAIM
+            | push_stage::BUILD
+            | push_stage::PUBLISH
+    ) {
+        assert_eq!(
+            signers,
+            1,
+            "{}: stage {stage} reported no work, so it is measuring nothing",
+            case.label()
+        );
+    }
     cycles
 }
 
@@ -794,14 +825,22 @@ fn the_push_write_costs_what_is_published() {
     let (verify_create, write_create, body_create) = push_components(&vector, Case::Create);
     let (verify_update, write_update, body_update) = push_components(&vector, Case::Update);
 
+    // The floors are in here because `COSTS.md` publishes them, and a published
+    // figure that nothing asserts is the drift this file exists to prevent. They
+    // are also the one pair that a change to *setup* would move while leaving
+    // every difference above intact, so without them that change is invisible.
+    // @frenzox asked for this on #60.
+    let floor_create = push_cycles(&vector, push_stage::FLOOR, Case::Create);
+    let floor_update = push_cycles(&vector, push_stage::FLOOR, Case::Update);
+
     assert_eq!(
-        [verify_create, write_create, body_create],
-        [3_039_850, 7_056, 3_046_906],
+        [floor_create, verify_create, write_create, body_create],
+        [138_475, 3_039_832, 7_348, 3_047_180],
         "the first-write figures moved"
     );
     assert_eq!(
-        [verify_update, write_update, body_update],
-        [3_039_850, 8_487, 3_048_337],
+        [floor_update, verify_update, write_update, body_update],
+        [153_882, 3_039_832, 8_554, 3_048_386],
         "the update figures moved"
     );
 }
@@ -825,33 +864,6 @@ fn verification_does_not_depend_on_the_price_account() {
     );
 }
 
-/// An update costs more than a first write, and the difference is one account read.
-///
-/// Worth asserting the direction rather than just the numbers, because it is the
-/// operationally relevant one: an update is what every heartbeat and every
-/// deviation trigger runs, so the recurring cost is the higher of the two. The
-/// gap is `OraclePriceAccount::try_from` over 136 bytes plus the comparison of
-/// the pair it carries -- the only work a first write skips.
-#[test]
-fn an_update_costs_more_than_a_first_write_because_it_reads_one() {
-    let vector = vector();
-
-    let create = push_components(&vector, Case::Create).1;
-    let update = push_components(&vector, Case::Update).1;
-
-    assert!(
-        update > create,
-        "an update ({update}) is no dearer than a first write ({create}), so \
-         either the published account is no longer being decoded or the two \
-         cases are the same path"
-    );
-    assert_eq!(
-        update - create,
-        1_431,
-        "the cost of reading the published account moved"
-    );
-}
-
 /// Both harnesses measure the same verification, to within the ELF.
 ///
 /// `verify_cost.rs` and `submit_cost.rs` are separate guests reaching
@@ -862,10 +874,12 @@ fn an_update_costs_more_than_a_first_write_because_it_reads_one() {
 /// A tolerance rather than exact equality, and the reason is not slack: a cycle
 /// count is a property of a *guest ELF*, not of the logical work, so two
 /// independently compiled binaries running identical source are not obliged to
-/// agree to the cycle. They agree to 60 out of 3,039,790, which is 0.002%. The
-/// bound is set at a tenth of a percent -- fifty times the observed gap, still
-/// far tighter than any real regression. Each guest's own figures stay pinned
-/// exactly; this is the only comparison here that cannot be.
+/// agree to the cycle. They agree to 42 out of 3,039,790, which is 0.0014%, and
+/// the gap moved from 60 to 42 when stages were added to `submit_cost.rs` --
+/// which is the property in action rather than a contradiction of it. The bound
+/// is a tenth of a percent, far tighter than any real regression. Each guest's
+/// own figures stay pinned exactly; this is the only comparison here that cannot
+/// be.
 #[test]
 fn both_harnesses_agree_about_what_verification_costs() {
     let vector = vector();
@@ -901,7 +915,8 @@ fn the_push_write_cost_table_is_reproducible() {
         thousands(create.0),
         thousands(update.0)
     );
-    // No padding inside the emphasis markers: `**    7,056**` renders the spaces.
+    // No padding inside the emphasis markers: `**    7,348**` would render the
+    // spaces literally.
     println!(
         "| **the write** | **{}** | **{}** |",
         thousands(create.1),
@@ -918,8 +933,252 @@ fn the_push_write_cost_table_is_reproducible() {
         100.0 * update.1 as f64 / update.2 as f64
     );
     println!(
-        "| _harness floor, subtracted out_ | {:>9} | {:>9} |\n",
+        "| _harness floor, subtracted out_ | {:>9} | {:>9} |",
         thousands(push_cycles(&vector, push_stage::FLOOR, Case::Create)),
         thousands(push_cycles(&vector, push_stage::FLOOR, Case::Update))
+    );
+    // Against the constant the assertions use, not a rounded "32M". The two
+    // differ by 4.9%, which is the difference between 0.0255% and the 0.027% an
+    // earlier draft published.
+    println!(
+        "| _the write, against LEZ's per-transaction budget_ | _{:.4}%_ | _{:.4}%_ |\n",
+        100.0 * create.1 as f64 / expected::LEZ_CYCLE_BUDGET as f64,
+        100.0 * update.1 as f64 / expected::LEZ_CYCLE_BUDGET as f64
+    );
+}
+
+/// What one isolating stage costs: itself, less the floor of the same case.
+fn push_isolated(vector: &Vector, stage: u8, case: Case) -> u64 {
+    push_cycles(vector, stage, case) - push_cycles(vector, push_stage::FLOOR, case)
+}
+
+/// What the generated validator costs, and what each case's exclusive work costs.
+///
+/// Prints rather than asserts; the assertions are below. Useful on its own when
+/// a figure moves and the question is which of the three moved.
+#[test]
+fn the_isolated_components_are_reproducible() {
+    let vector = vector();
+
+    let validator = push_isolated(&vector, push_stage::VALIDATOR_PDA, Case::Create);
+    let read = push_isolated(&vector, push_stage::PUBLISHED_READ, Case::Update);
+    let claim = push_isolated(&vector, push_stage::AUTO_CLAIM, Case::Create);
+
+    println!("\nvalidator PDA derivation: {}", thousands(validator));
+    println!("published-account read (update only): {}", thousands(read));
+    println!("auto-claim (first write only): {}", thousands(claim));
+
+    // Each measured on its own, so each is pinned on its own. They are not
+    // components of the write and do not sum to it -- see
+    // `an_update_costs_more_than_a_first_write` for why that was tried and
+    // abandoned.
+    assert_eq!(
+        [validator, read, claim],
+        [1_722, 1_442, 1_304],
+        "an isolated figure moved"
+    );
+}
+
+/// An update costs more than a first write, and the gap is a net between paths.
+///
+/// The direction is the operationally relevant fact: an update is what every
+/// heartbeat and every deviation trigger runs, so the recurring cost is the
+/// higher of the two.
+///
+/// What this deliberately does *not* claim is a cause. The first version of this
+/// measurement called the gap "the account read", and @frenzox pointed out on #60
+/// that the first-write path does create-only work of its own -- the claim in
+/// `post_states` -- so the gap is a net, not a component.
+///
+/// Two attempts to decompose it into isolated pieces both failed, and the reason
+/// is worth recording rather than retrying: `read - claim` is 138 cycles against
+/// a gap of 1,206, and adding the two write halves brings it to 1,035, still
+/// short. Isolated calls do not cost what inlined ones do, so the terms are not
+/// obliged to sum. The isolated figures below are each real and each pinned;
+/// their sum is not this gap and this test does not pretend otherwise.
+#[test]
+fn an_update_costs_more_than_a_first_write() {
+    let vector = vector();
+
+    let create = push_components(&vector, Case::Create).1;
+    let update = push_components(&vector, Case::Update).1;
+
+    assert!(
+        update > create,
+        "an update ({update}) is no dearer than a first write ({create}), so \
+         either the published account is no longer being decoded or the two \
+         cases have become the same path"
+    );
+    assert_eq!(
+        update - create,
+        1_206,
+        "the gap between the two paths moved"
+    );
+}
+
+/// The validator SPEL generates is not free, and is not in the body figures.
+///
+/// `price_account` is declared `#[account(mut, pda = [account("feed"),
+/// r#const("KANON_PRICE_ACCOUNT")])]`, so the derivation runs before
+/// `submit_price` is entered. Everything else here measures the body, so this is
+/// the figure that has to be added to it -- `COSTS.md` publishes them separately
+/// rather than pretending either is the instruction.
+#[test]
+fn the_generated_validator_costs_what_is_published() {
+    let vector = vector();
+
+    assert_eq!(
+        push_isolated(&vector, push_stage::VALIDATOR_PDA, Case::Create),
+        1_722,
+        "the validator's PDA derivation moved"
+    );
+}
+
+/// Every push figure at once, for re-pinning after a guest change.
+///
+/// Cycle counts are a property of the ELF, so adding a stage to `submit_cost.rs`
+/// moves all of them by a little. This prints the whole set so re-pinning is one
+/// step rather than six failures read one at a time.
+#[test]
+fn the_push_figures_for_repinning() {
+    let vector = vector();
+    for case in [Case::Create, Case::Update] {
+        let (verify, write, body) = push_components(&vector, case);
+        println!(
+            "\nREPIN {:>11}: floor {} verify {} write {} body {}",
+            case.label(),
+            push_cycles(&vector, push_stage::FLOOR, case),
+            verify,
+            write,
+            body
+        );
+    }
+    println!(
+        "REPIN isolated: validator {} read {} claim {} build {} publish {}",
+        push_isolated(&vector, push_stage::VALIDATOR_PDA, Case::Create),
+        push_isolated(&vector, push_stage::PUBLISHED_READ, Case::Update),
+        push_isolated(&vector, push_stage::AUTO_CLAIM, Case::Create),
+        push_isolated(&vector, push_stage::BUILD, Case::Create),
+        push_isolated(&vector, push_stage::PUBLISH, Case::Update)
+    );
+    let update_write = push_components(&vector, Case::Update).1;
+    println!(
+        "REPIN gap {} | budget share create {:.4}% update {:.4}%",
+        update_write - push_components(&vector, Case::Create).1,
+        100.0 * push_components(&vector, Case::Create).1 as f64 / expected::LEZ_CYCLE_BUDGET as f64,
+        100.0 * update_write as f64 / expected::LEZ_CYCLE_BUDGET as f64
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Registration (M2-18, P2's registration clause).
+//
+// P2 asks for the push side's "account write and registration". The write is
+// above; this is the other half. @frenzox noticed on #60 that the requirement
+// names it and nothing measured it.
+// ---------------------------------------------------------------------------
+
+/// What a first registration costs.
+///
+/// Measured on risc0-zkvm 3.0.5, guest rustc 1.97.0. Update together with
+/// `COSTS.md`, and note that this figure lives in its own guest so it does not
+/// move when a stage is added to `submit_cost.rs`.
+const REGISTRATION_CYCLES: u64 = 3_821;
+
+/// The admin whose signature authorises a registration.
+const REGISTER_ADMIN_KEY: [u8; 32] = [0x44; 32];
+
+fn register_run(vector: &Vector, stage: u8) -> (u64, (u32, u32)) {
+    type Slot = Arc<OnceLock<(u64, (u32, u32))>>;
+    static MEASURED: OnceLock<Mutex<HashMap<(String, u8), Slot>>> = OnceLock::new();
+
+    let slot = MEASURED
+        .get_or_init(Mutex::default)
+        .lock()
+        .expect("not poisoned")
+        .entry((vector.feed_id.clone(), stage))
+        .or_default()
+        .clone();
+    *slot.get_or_init(|| {
+        let config = aggregator_program::admin::AdminAccount {
+            admin: Some(REGISTER_ADMIN_KEY),
+            pending: None,
+        };
+        let input = (
+            stage,
+            borsh::to_vec(&config).expect("the admin account encodes"),
+            REGISTER_ADMIN_KEY.to_vec(),
+            vector.feed_id.as_bytes().to_vec(),
+            PUSH_BASE.to_vec(),
+            PUSH_QUOTE.to_vec(),
+            vector
+                .signers
+                .iter()
+                .flat_map(|s| *s.as_bytes())
+                .collect::<Vec<u8>>(),
+            vector.signers.len() as u8,
+            DECIMALS,
+            MAX_MAX_AGE_MS,
+            PUSH_OURS,
+        );
+
+        let env = ExecutorEnv::builder()
+            .write(&input)
+            .expect("input")
+            .build()
+            .expect("env");
+        let session = default_executor()
+            .execute(env, kanon_methods::REGISTER_COST_ELF)
+            .expect("execution");
+        let report: (u32, u32) = session.journal.decode().expect("journal");
+        (session.cycles(), report)
+    })
+}
+
+/// What a first registration costs, having checked it registered.
+fn register_cycles(vector: &Vector) -> u64 {
+    let (floor, _) = register_run(vector, 0);
+    let (registered, (ran, post_states)) = register_run(vector, 1);
+
+    assert_eq!(
+        ran, 1,
+        "the registration refused, so this is not a measurement of a registration"
+    );
+    assert_eq!(
+        post_states, 4,
+        "the registration produced {post_states} post-states, not four"
+    );
+    registered - floor
+}
+
+/// Registering a feed costs what `COSTS.md` publishes.
+///
+/// P2 names registration alongside the write, and this is the figure. It does no
+/// cryptography — Borsh, one PDA derivation and a handful of comparisons — so it
+/// is cheap in a way the write is not even in the same conversation with
+/// verification about.
+#[test]
+fn registering_a_feed_costs_what_is_published() {
+    let vector = vector();
+
+    assert_eq!(
+        register_cycles(&vector),
+        REGISTRATION_CYCLES,
+        "the registration figure moved"
+    );
+}
+
+/// Printed by the code that asserts it, like every other figure here.
+#[test]
+fn the_registration_figure_is_reproducible() {
+    let vector = vector();
+    let cycles = register_cycles(&vector);
+
+    println!("\n| | cycles |");
+    println!("| --- | ---: |");
+    println!("| a first registration | {} |", thousands(cycles));
+    println!(
+        "| _as a share of the per-transaction budget_ | _{:.4}%_ |\n",
+        100.0 * cycles as f64 / expected::LEZ_CYCLE_BUDGET as f64
     );
 }

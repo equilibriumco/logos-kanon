@@ -14,13 +14,47 @@
 //! | 1 | `Payload::decode` and [`verify_feed`] — the verification half |
 //! | 2 | the real [`submit_price`], whole |
 //!
-//! So `1 - 0` is the verification, `2 - 0` is the whole instruction body, and
-//! **`2 - 1` is what the push write costs on top of verifying** — which is the
-//! figure M2-18 exists to publish and the one P1 was missing.
+//! So `1 - 0` is the verification, `2 - 0` is the whole `submit_price` body, and
+//! **`2 - 1` is what the write costs on top of verifying** — the figure M2-18
+//! exists to publish and the one P1 was missing.
+//!
+//! Three stages sit outside that chain, each isolating one thing the residual
+//! bundles, because a residual nobody has taken apart is a place for a wrong
+//! explanation to live:
+//!
+//! | stage | measures |
+//! | --- | --- |
+//! | 3 | the PDA derivation SPEL's generated validator performs before the body |
+//! | 4 | `OraclePriceAccount::try_from`, the read only an update does |
+//! | 5 | `AutoClaim::pda_from_seeds`, the claim only a first write does |
+//!
+//! Stages 4 and 5 are what make the gap between the two cases explicable rather
+//! than merely reported: the update pays 4 and the first write pays 5, so the
+//! difference between them should be `4 - 5`, and
+//! `the_gap_between_the_cases_is_the_read_less_the_claim` asserts it is.
+//! @frenzox asked for exactly that on #60, having noticed the first version
+//! called the gap "the account read" when the first-write path was doing
+//! create-only work of its own.
 //!
 //! Setup is identical in every stage and happens before the branch, so zkVM
 //! startup, input deserialization, account construction and the journal commit
 //! cancel when two stages are subtracted.
+//!
+//! # What this does *not* measure
+//!
+//! `submit_price` is the delegated body, not the instruction as LEZ runs it. The
+//! generated handler validates its accounts first -- `price_account` carries
+//! `#[account(mut, pda = [account("feed"), r#const("KANON_PRICE_ACCOUNT")])]`, so
+//! SPEL derives and checks that address before the body is entered -- and the
+//! dispatcher decodes the instruction and wraps the result in `SpelOutput`
+//! afterwards. None of that is inside stage 2.
+//!
+//! Stage 3 puts a number on the validator's substantive work, the PDA
+//! derivation. The dispatcher and the `SpelOutput` wrapping remain outside every
+//! figure here, because reaching them means going through the macro's generated
+//! entry point, which takes a whole LEZ transaction rather than a function call.
+//! So the published figures are the body plus a named validator cost, and
+//! `COSTS.md` says so rather than calling them the instruction.
 //!
 //! # What `2 - 1` contains
 //!
@@ -61,18 +95,40 @@
 //! so a run that took an early exit is a failure rather than a suspiciously
 //! cheap component.
 
-use aggregator_program::submit_price;
+use aggregator_program::{kanon_idl::OraclePriceAccount, submit::PRICE_ACCOUNT_SEED, submit_price};
 use nssa_core::{
     account::{Account, AccountId, AccountWithMetadata, Data, Nonce},
     program::ProgramId,
 };
 use risc0_zkvm::guest::env;
+use spel_framework::{
+    pda::{compute_pda, seed_from_str},
+    spel_output::AutoClaim,
+};
 use verifier_core::{
     backend::{InProgramBackend, SignerAddress},
     decode::Payload,
     feed::{verify_feed, AssetPair, FeedConfig},
     time::{TimeError, TimeSource},
 };
+
+/// A realistic eight-decimal price, for the stages that isolate the write. Fixed
+/// rather than taken from the payload, so those figures do not move when the
+/// vectors are re-captured.
+const SAMPLE_VALUE: u128 = 300_012_345_678;
+
+/// The timestamp the clock account carries, read the cheap way.
+///
+/// Not `LezClock`: that decode is one of the things the residual contains, and
+/// pulling it into a stage that is meant to isolate the write would put it in
+/// two places at once.
+fn now_from(clock: &AccountWithMetadata) -> u64 {
+    let data = clock.account.data.as_ref();
+    match <[u8; 8]>::try_from(&data[8.min(data.len())..16.min(data.len())]) {
+        Ok(bytes) => u64::from_le_bytes(bytes),
+        Err(_) => 0,
+    }
+}
 
 /// The clock as a `TimeSource`, for the verification stage only.
 ///
@@ -227,14 +283,83 @@ fn run(
         return (0, 0, 0);
     }
 
-    if stage >= 2 {
-        // The real instruction, whole. Everything stage 1 does happens inside it,
-        // which is what makes the difference a figure about this code rather than
-        // about a restatement of it.
+    if stage == 2 {
+        // The real body, whole. Everything stage 1 does happens inside it, which
+        // is what makes the difference a figure about this code rather than about
+        // a restatement of it.
         return match submit_price(feed, price_account, clock_account, payload_bytes, ours) {
             Ok(post_states) => (0, 0, post_states.len() as u32),
             Err(_) => (0, 0, 0),
         };
+    }
+
+    // The three stages outside the prefix chain. Each calls exactly what the
+    // shipped path calls, so the figure is about that code and not a model of it.
+    if stage == 3 {
+        // What the generated validator does before the body: derive the address
+        // `#[account(pda = [account("feed"), r#const("KANON_PRICE_ACCOUNT")])]`
+        // declares, which is the same derivation `post_states` repeats on a first
+        // write and a caller has to reproduce.
+        let derived = compute_pda(
+            &ours,
+            &[feed.account_id.value(), &seed_from_str(PRICE_ACCOUNT_SEED)],
+        );
+        // Committed so the derivation cannot be optimised away, and so the host
+        // can tell a stage that ran from one that folded to a constant.
+        return (1, u64::from(derived.value()[0]), 0);
+    }
+
+    if stage == 4 {
+        // The read only an update does. On a first write the account is default
+        // and this decodes nothing, which is why the host asks for it per case.
+        return match OraclePriceAccount::try_from(&price_account.account.data) {
+            Ok(account) => (1, account.timestamp, 0),
+            Err(_) => (0, 0, 0),
+        };
+    }
+
+    if stage == 6 || stage == 7 {
+        // The two write halves, isolated. A `VerifiedFeed` is built here rather
+        // than verified, because what is under measurement is the write and a
+        // verification either side of it would swamp it. Its fields are public,
+        // so this is the real type and not a stand-in.
+        let verified = verifier_core::feed::VerifiedFeed {
+            value: verifier_core::value::Value::from_be_slice(&SAMPLE_VALUE.to_be_bytes())
+                .unwrap_or_default(),
+            price: SAMPLE_VALUE,
+            signers: 5,
+            timestamp_ms: now_from(&clock_account),
+        };
+
+        if stage == 6 {
+            // The create side: build the account from nothing.
+            let built = aggregator_program::publish::price_account(config, &verified);
+            return (1, built.timestamp, 0);
+        }
+
+        // The update side: the three checks `publish` makes before it writes.
+        return match OraclePriceAccount::try_from(&price_account.account.data) {
+            Ok(mut published) => {
+                match aggregator_program::publish::publish(&mut published, config, &verified) {
+                    Ok(()) => (1, published.timestamp, 0),
+                    Err(_) => (0, 0, 0),
+                }
+            }
+            Err(_) => (0, 0, 0),
+        };
+    }
+
+    if stage == 5 {
+        // The claim only a first write does, as `post_states` spells it.
+        let feed_seed = *feed.account_id.value();
+        let name_seed = seed_from_str(PRICE_ACCOUNT_SEED);
+        let claimed = AutoClaim::pda_from_seeds(&[&feed_seed, &name_seed])
+            .to_post_state(price_account.account);
+        return (
+            1,
+            u64::from(claimed.account().data.as_ref().len() as u32),
+            0,
+        );
     }
 
     // Stage 1: the verification half, called exactly as `submit_price` calls it.

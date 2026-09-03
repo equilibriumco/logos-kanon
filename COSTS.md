@@ -48,43 +48,106 @@ write the price, and that is the other half of what a push transaction spends
 
 | | first write | update |
 | --- | ---: | ---: |
-| verification | 3,039,850 | 3,039,850 |
-| **the write** | **7,056** | **8,487** |
-| whole instruction body | 3,046,906 | 3,048,337 |
-| _the write, as a share of the body_ | _0.232%_ | _0.278%_ |
-| _harness floor, subtracted out_ | 138,487 | 153,897 |
+| verification | 3,039,832 | 3,039,832 |
+| **the write** | **7,348** | **8,554** |
+| whole `submit_price` body | 3,047,180 | 3,048,386 |
+| _the write, as a share of the body_ | _0.241%_ | _0.281%_ |
+| _harness floor, subtracted out_ | 138,475 | 153,882 |
+| _the write, against LEZ's per-transaction budget_ | _0.0219%_ | _0.0255%_ |
 
-**The write is a rounding error against verifying.** A quarter of one percent,
-either way, and 8,487 cycles is 0.027% of LEZ's 32M per-transaction budget. The
-cost of a push submission is the cost of recovering signatures; nothing about the
-write or the accounts changes that conclusion, and no optimisation here is worth
-looking for.
+**The write is a rounding error against verifying.** Under three tenths of one
+percent of the body, and 8,554 cycles is 0.0255% of the 33,554,432-cycle
+per-transaction budget. The cost of a push submission is the cost of recovering
+signatures; no optimisation on the write side is worth looking for.
 
-Two figures rather than one because `submit_price` has two paths, decided by
-whether the price account already exists:
+### The body is not the whole instruction
+
+Those figures measure `aggregator_program::submit_price`, which is the delegated
+body. LEZ runs more than that. `price_account` is declared
+
+```rust
+#[account(mut, pda = [account("feed"), r#const("KANON_PRICE_ACCOUNT")])]
+```
+
+so SPEL generates a validator that derives and checks that address *before* the
+body is entered, and the dispatcher decodes the instruction and wraps the result
+afterwards. Measured separately:
+
+| | cycles |
+| --- | ---: |
+| the generated validator's PDA derivation | 1,722 |
+
+The dispatcher and the `SpelOutput` wrapping are in none of these figures, and
+cannot be reached by calling a function: they need the macro's generated entry
+point, which takes a whole LEZ transaction. So what is published here is **the
+body, plus a named validator cost** — not the instruction as a chain executes it.
+Against 3.05M cycles of verification the gap is immaterial; it is stated because a
+figure called "the instruction" that excluded a validator would be wrong.
+
+### The two paths
+
+`submit_price` branches on whether the price account already exists:
 
 - a **first write** builds the account from nothing. Once per feed, ever.
-- an **update** decodes the published `OraclePriceAccount` first — 136 bytes —
-  and checks the pair it already carries. Every heartbeat and every deviation
-  trigger after that.
+- an **update** decodes the published `OraclePriceAccount` — 136 bytes — and
+  checks the pair it carries. Every heartbeat and every deviation trigger after
+  that.
 
-So the recurring cost is the higher one, and the 1,431-cycle difference between
-them is precisely that account read. `an_update_costs_more_than_a_first_write_because_it_reads_one`
-asserts both the direction and the gap.
+So the recurring cost is the update's. The 1,206-cycle difference between them is
+a **net between two paths, not a component**: an update pays for a read and for
+`publish`'s three checks, while a first write pays for a claim in `post_states`
+and for building the account. Each of those was measured on its own:
 
-What "the write" contains, named in full because a residual should not be called
-a component: the ownership check on the feed account, decoding the clock from the
+| measured in isolation | cycles |
+| --- | ---: |
+| published-account read, update only | 1,442 |
+| `publish`'s checks, update only (includes the read above) | 2,382 |
+| `AutoClaim::pda_from_seeds`, first write only | 1,304 |
+| `publish::price_account`, first write only | 43 |
+
+**These do not sum to 1,206, and that is not a discrepancy to chase.** Isolated
+calls do not cost what inlined ones do: `read - claim` is 138 cycles, and the two
+write halves together give 1,035, both short of the gap. Two attempts to make the
+terms add up failed for that reason, which is recorded here so a third is not
+attempted. Each figure above is real, pinned by exact equality, and useful for
+knowing what an operation costs; none of them is a component of the write.
+
+What "the write" contains, named in full because a residual should not be called a
+component: the ownership check on the feed account, decoding the clock from the
 account LEZ pins, decoding the stored `FeedAccount`, the paused check, rebuilding
 the signer set and `FeedConfig` from what was stored, triaging the price account
-between the two cases, decoding the published account in the update case,
-choosing the asset pair to check against, computing the new account, and
-producing the post-states LEZ applies. Splitting it further would need
-`kanon-clock` and `borsh` as direct guest dependencies, which is a real cost for
-a breakdown of 0.2%.
+between the two cases, the read or the claim above, choosing the asset pair to
+check against, computing the new account, and producing the post-states LEZ
+applies.
 
 Not in these figures: what LEZ spends reading the instruction data before the
 program is entered, about 113 cycles a byte, which *is* material and is
 `MAX_PAYLOAD_BYTES`'s subject (ADR 26).
+
+### Registering a feed
+
+P2 names the push side's "account write **and** registration", so registration is
+the other figure it asks for:
+
+| | cycles |
+| --- | ---: |
+| a first registration | 3,821 |
+| _as a share of the per-transaction budget_ | _0.0114%_ |
+
+Half the cost of a write, and for the same reason: no cryptography. What a
+registration spends is Borsh, one PDA derivation and a handful of comparisons.
+
+Measured on a **first** registration — the feed account fully default, which is
+the state that claims it. A re-registration after a deregistration takes a
+different branch; it happens once per retired feed and never on an operating
+path, so it is not measured. On the same terms as the write, this is the
+`register_feed` body: the generated validator and the dispatcher are outside it.
+
+It lives in its own guest, `methods/guest/src/bin/register_cost.rs`, rather than
+as another stage of `submit_cost.rs`. Cycle counts are a property of an ELF, so
+a stage added to one guest moves every figure that guest publishes — keeping
+registration separate means the write figures do not have to be re-pinned when
+registration changes, and a sibling binary does not perturb them.
 
 ## How it is measured
 
@@ -118,8 +181,8 @@ against the signer count. A run that took an early exit is cheap, and would
 otherwise read as a fast component rather than as a failure.
 
 The write is measured the same way by a second guest,
-`methods/guest/src/bin/submit_cost.rs`, which brackets the instruction instead of
-the pipeline:
+`methods/guest/src/bin/submit_cost.rs`, which brackets the body instead of the
+pipeline:
 
 | stage | adds |
 | --- | --- |
@@ -127,8 +190,13 @@ the pipeline:
 | 1 | `Payload::decode` and `verify_feed`, called as `submit_price` calls them |
 | 2 | the real `submit_price`, whole |
 
-So `1 - 0` is verification, `2 - 0` is the instruction body, and `2 - 1` is the
-write. Each of the two cases is measured with its own stage 0, because the price
+So `1 - 0` is verification, `2 - 0` is the body, and `2 - 1` is the write.
+
+Five further stages sit outside that chain, each calling one thing the shipped
+path calls: the generated validator's PDA derivation, the published-account read,
+the auto-claim, `publish::price_account` and `publish`. They are what turn the
+figures in *The two paths* from assertions into measurements, and each is pinned
+separately. Each of the two cases is measured with its own stage 0, because the price
 account is built during setup: subtracting an update's stage 2 from a *first
 write*'s stage 1 credits the update with 15,410 cycles of setup it never paid,
 which is how the first version of this measurement was wrong.
@@ -141,7 +209,7 @@ makes every one of these figures collapse, and the check is what turns that into
 a failure.
 
 Two guests reaching `verify_feed` by different routes also corroborate each
-other: they agree on verification to 60 cycles in 3,039,790, which is 0.002%.
+other: they agree on verification to 42 cycles in 3,039,790, which is 0.0014%.
 That comparison is the one figure here bounded rather than pinned exactly, and
 the reason is that a cycle count is a property of a guest ELF rather than of the
 work — two independently compiled binaries running identical source are not
