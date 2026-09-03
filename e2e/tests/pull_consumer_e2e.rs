@@ -26,9 +26,11 @@
 //!
 //! `lez-sequencer.sh start` gives a clean chain, which is what CI gets. Locally
 //! a second run meets the accounts the first one created, so each setup step is
-//! conditional on the state it would create. Order ids are derived from the
-//! chain's clock at the start of the run, so no previous run can have opened
-//! them, and every run therefore has to open and fill its own orders or fail.
+//! conditional on the state it would create. Order ids carry the host clock's
+//! nanoseconds, so no previous run can have opened them and every run has to
+//! open and fill its own orders or fail. The chain's own clock would not do:
+//! it advances once per block, so two runs started inside the same fifteen
+//! seconds would derive the same ids and meet each other's filled orders.
 
 #[path = "support/chain.rs"]
 mod chain;
@@ -369,11 +371,16 @@ async fn the_pull_path_verifies_and_settles_across_a_real_sequencer() {
     ensure_the_authority_is_established(&client, program, &authority_key, authority_id).await;
     ensure_the_roster_is(&client, program, &authority_key, authority_id, FIRST_ROSTER).await;
 
-    // Order ids from the chain's clock, so no previous local run can have opened
-    // them and every run has to open and fill its own.
-    let run = chain_now_ms(&client).await;
+    // Nanoseconds from the host clock, so no previous local run can have opened
+    // these and every run has to open and fill its own. Not the chain's clock:
+    // that advances once per block, so two runs inside the same fifteen seconds
+    // would collide and each would meet the other's already-filled orders.
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the host clock is past the epoch")
+        .as_nanos();
     let mut first_id = [0u8; 32];
-    first_id[..8].copy_from_slice(&run.to_be_bytes());
+    first_id[..16].copy_from_slice(&run.to_be_bytes());
     let mut second_id = first_id;
     second_id[31] = 1;
 
