@@ -146,12 +146,13 @@ fn require_a_configured_build() {
 // The five feeds this test registers (M2-11, M2-12).
 // ---------------------------------------------------------------------------
 
-/// Five signers and a threshold of three.
+/// Five signers registered, three of them signing.
 ///
-/// The shape production has: `FEEDS.md` records one roster of five signers
-/// across all five feeds, and RFP-020's default threshold is three. So a price
-/// here is agreed by a *subset*, which is the arrangement an operating feed uses
-/// and the one where a median of three out of five is what gets published.
+/// The shape production has: `FEEDS.md` records one roster of five signers across
+/// all five feeds, and RFP-020's default threshold is three. `signed_payload`
+/// signs with the first three, so two registered signers are silent on every
+/// submission and the threshold is the binding constraint rather than decoration
+/// -- a price published here is a median over a genuine subset.
 const SIGNER_SEEDS: [u8; 5] = [1, 2, 3, 4, 5];
 const THRESHOLD: u8 = 3;
 
@@ -253,9 +254,15 @@ fn signed_payload(feed: &Feed, timestamp_ms: u64, value_scaled: u64) -> Vec<u8> 
     let mut value = [0u8; 32];
     value[24..].copy_from_slice(&value_scaled.to_be_bytes());
 
+    // The first `THRESHOLD` of the registered five, not all of them. Registering
+    // five and then signing with five makes quorum 5-of-5 and leaves `THRESHOLD`
+    // never binding -- which is what the first version of this did while claiming
+    // a median over a subset. Signing with exactly three makes the claim true and
+    // the subset real: two registered signers stay silent and the price is still
+    // published.
     let mut builder = PayloadBuilder::default();
-    for seed in SIGNER_SEEDS {
-        builder = builder.signed_package(&signing_key(seed), &[(feed.id, &value)], timestamp_ms);
+    for seed in SIGNER_SEEDS.iter().take(usize::from(THRESHOLD)) {
+        builder = builder.signed_package(&signing_key(*seed), &[(feed.id, &value)], timestamp_ms);
     }
     builder.build()
 }
@@ -798,11 +805,34 @@ async fn the_push_path_verifies_and_publishes_across_a_real_sequencer() {
         "the five feeds do not have five distinct price accounts: {addresses:?}"
     );
 
-    for (feed, (_, _, published)) in FEEDS.iter().zip(&written) {
+    // Re-read from the chain rather than re-checking what the loop already
+    // asserted. The first version compared the snapshot taken during the loop
+    // against the same expression that snapshot had already been asserted equal
+    // to, so it could not fail -- and it missed exactly the case it names: if
+    // ZEC's submission had also written BTC's account, BTC's snapshot was taken
+    // four submissions earlier and still held BTC's price. Only a read after all
+    // five have published can see that.
+    for (feed, (_, price_id, _)) in FEEDS.iter().zip(&written) {
+        let current: OraclePriceAccount = account_when(
+            client,
+            *price_id,
+            "the price account is still readable after all five published",
+            |account| decode(&account.data),
+        )
+        .await;
+
         assert_eq!(
-            published.price,
-            expected_price(feed.value),
-            "{}'s account holds another feed's price, so a write crossed feeds",
+            current,
+            OraclePriceAccount {
+                base_asset: kanon_idl::AccountId::new(feed.base),
+                quote_asset: kanon_idl::AccountId::new(feed.quote),
+                price: expected_price(feed.value),
+                timestamp: current.timestamp,
+                source_id: REDSTONE_SOURCE_ID,
+                confidence_interval: 0,
+            },
+            "{}'s account no longer holds its own feed's price after all five \
+             published, so a submission crossed feeds",
             feed.label()
         );
     }
