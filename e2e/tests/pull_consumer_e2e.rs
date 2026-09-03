@@ -12,8 +12,11 @@
 //! deploys the push program, reads a price account, or names `aggregator-program`
 //! at all. That is F9 on a running chain rather than in a dependency walk: the
 //! closure job proves a pull consumer *cannot* reach the aggregator, and this
-//! proves it does not *need* to. The absence is deliberate — do not add the
-//! aggregator to this file to reuse a fixture.
+//! proves it does not *need* to. Nothing enforces the absence here: the closure
+//! walk covers `pull-lib`, the consumer and its guest workspace, not `e2e`, where
+//! `aggregator-program` is a dev-dependency the push suite legitimately uses. So
+//! this paragraph is the only thing holding it — do not add the aggregator to this
+//! file to reuse a fixture.
 //!
 //! **The roster moves.** A compiled roster would have made
 //! `rotate_signers` unnecessary and a rotation impossible without a rebuild.
@@ -340,7 +343,9 @@ async fn open_an_order(
     assert!(!opened.filled, "a new order is not filled");
     assert_eq!(
         opened.max_age_ms, MAX_AGE_MS,
-        "the window is captured from the registration, not from the owner"
+        "the order did not capture the registration's window. `OpenOrder` carries no \
+         `max_age_ms`, so this catches the field being dropped rather than a window \
+         sourced from the wrong party -- an owner has no way to supply one"
     );
 
     address
