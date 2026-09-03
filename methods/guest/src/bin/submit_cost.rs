@@ -333,8 +333,22 @@ fn run(
 
         if stage == 6 {
             // The create side: build the account from nothing.
+            // Build *and encode*, which is what the real path does: `post_states`
+            // assigns `Data::from(written)` straight after. Encoding is also what
+            // makes the figure measurable at all -- a construction whose fields
+            // are never all read is dead code, and observing one field only keeps
+            // that field alive. With the checksum over `built.timestamp` alone the
+            // stage reported the same 43 cycles whether the call was there or not,
+            // which is what @frenzox found on #60; with a checksum over one byte
+            // per field it reported 51, still eliding the 32-byte copies. Over the
+            // encoded bytes nothing can be skipped.
             let built = aggregator_program::publish::price_account(config, &verified);
-            return (1, built.timestamp, 0);
+            let encoded = Data::from(&built);
+            let checksum = encoded
+                .as_ref()
+                .iter()
+                .fold(0u64, |acc, byte| acc.rotate_left(1) ^ u64::from(*byte));
+            return (1, checksum, 0);
         }
 
         // The update side: the three checks `publish` makes before it writes.

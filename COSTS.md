@@ -49,14 +49,14 @@ write the price, and that is the other half of what a push transaction spends
 | | first write | update |
 | --- | ---: | ---: |
 | verification | 3,039,832 | 3,039,832 |
-| **the write** | **7,348** | **8,554** |
-| whole `submit_price` body | 3,047,180 | 3,048,386 |
-| _the write, as a share of the body_ | _0.241%_ | _0.281%_ |
+| **the write** | **7,386** | **8,582** |
+| whole `submit_price` body | 3,047,218 | 3,048,414 |
+| _the write, as a share of the body_ | _0.242%_ | _0.282%_ |
 | _harness floor, subtracted out_ | 138,475 | 153,882 |
-| _the write, against LEZ's per-transaction budget_ | _0.0219%_ | _0.0255%_ |
+| _the write, against LEZ's per-transaction budget_ | _0.0220%_ | _0.0256%_ |
 
 **The write is a rounding error against verifying.** Under three tenths of one
-percent of the body, and 8,554 cycles is 0.0255% of the 33,554,432-cycle
+percent of the body, and 8,582 cycles is 0.0256% of the 33,554,432-cycle
 per-transaction budget. The cost of a push submission is the cost of recovering
 signatures; no optimisation on the write side is worth looking for.
 
@@ -93,7 +93,7 @@ figure called "the instruction" that excluded a validator would be wrong.
   checks the pair it carries. Every heartbeat and every deviation trigger after
   that.
 
-So the recurring cost is the update's. The 1,206-cycle difference between them is
+So the recurring cost is the update's. The 1,196-cycle difference between them is
 a **net between two paths, not a component**: an update pays for a read and for
 `publish`'s three checks, while a first write pays for a claim in `post_states`
 and for building the account. Each of those was measured on its own:
@@ -101,16 +101,26 @@ and for building the account. Each of those was measured on its own:
 | measured in isolation | cycles |
 | --- | ---: |
 | published-account read, update only | 1,442 |
-| `publish`'s checks, update only (includes the read above) | 2,382 |
+| `publish`'s checks, update only (includes the read above) | 2,381 |
 | `AutoClaim::pda_from_seeds`, first write only | 1,304 |
-| `publish::price_account`, first write only | 43 |
+| `publish::price_account` and encoding the result, first write only | 1,782 |
 
-**These do not sum to 1,206, and that is not a discrepancy to chase.** Isolated
-calls do not cost what inlined ones do: `read - claim` is 138 cycles, and the two
-write halves together give 1,035, both short of the gap. Two attempts to make the
-terms add up failed for that reason, which is recorded here so a third is not
-attempted. Each figure above is real, pinned by exact equality, and useful for
-knowing what an operation costs; none of them is a component of the write.
+**These do not sum to 1,196, and that is not a discrepancy to chase.** Isolated
+calls do not cost what inlined ones do. `read - claim` is 138 cycles. Taking all
+four — what only an update does, less what only a first write does — gives
+2,381 − (1,304 + 1,782) = **−705**, the wrong sign. Two attempts to make the terms
+add up failed, the second further from the answer than the first, and that is
+recorded here so a third is not attempted. Each figure above is real, pinned by
+exact equality, and useful for knowing what an operation costs; none is a
+component of the write.
+
+The build figure is build *and encode*, deliberately. A construction whose fields
+are never all read is dead code: with the stage observing only the built
+account's timestamp, the compiler elided the call entirely and the figure was
+identical with the call deleted — 43 cycles of nothing, which @frenzox found on
+#60. Observing one byte per field still elided the 32-byte copies, at 51. The
+real path builds the account and then assigns `Data::from(written)`, so measuring
+the pair is both faithful and the only version that cannot be optimised away.
 
 What "the write" contains, named in full because a residual should not be called a
 component: the ownership check on the feed account, decoding the clock from the
@@ -131,17 +141,23 @@ the other figure it asks for:
 
 | | cycles |
 | --- | ---: |
-| a first registration | 3,821 |
-| _as a share of the per-transaction budget_ | _0.0114%_ |
+| a first registration | 5,270 |
+| _as a share of the per-transaction budget_ | _0.0157%_ |
 
-Half the cost of a write, and for the same reason: no cryptography. What a
-registration spends is Borsh, one PDA derivation and a handful of comparisons.
+Cheap for the same reason the write is: no cryptography. What a registration
+spends is the authority gate, Borsh, one PDA derivation and a handful of
+comparisons.
+
+The gate is in the figure because the handler runs it: `register_feed`'s generated
+handler calls `admin::authorise` before delegating, and a measurement that skipped
+it published 3,821 — the cost of the helper rather than of registering a feed.
+@frenzox found that on #60.
 
 Measured on a **first** registration — the feed account fully default, which is
 the state that claims it. A re-registration after a deregistration takes a
 different branch; it happens once per retired feed and never on an operating
-path, so it is not measured. On the same terms as the write, this is the
-`register_feed` body: the generated validator and the dispatcher are outside it.
+path, so it is not measured. On the same terms as the write, the generated
+validator and the dispatcher are outside it.
 
 It lives in its own guest, `methods/guest/src/bin/register_cost.rs`, rather than
 as another stage of `submit_cost.rs`. Cycle counts are a property of an ELF, so

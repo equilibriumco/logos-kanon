@@ -590,7 +590,7 @@ fn the_largest_payload_the_decoder_accepts_is_read_and_verified_inside_the_budge
 // part that reads the accounts and writes the price.
 // ---------------------------------------------------------------------------
 
-/// Stages of `submit_cost.rs`, which brackets the push instruction rather than
+/// Stages of `submit_cost.rs`, which brackets the `submit_price` body rather than
 /// the verification pipeline.
 mod push_stage {
     /// Input, setup and journal: the three accounts built, nothing run.
@@ -798,7 +798,7 @@ fn push_cycles(vector: &Vector, stage: u8, case: Case) -> u64 {
     cycles
 }
 
-/// What the whole instruction body costs, and what the write costs inside it.
+/// What the whole `submit_price` body costs, and what the write costs inside it.
 ///
 /// Per case, because the price account is built during setup: the 136 bytes an
 /// update carries only cancel out of the subtraction if every stage of that case
@@ -835,12 +835,12 @@ fn the_push_write_costs_what_is_published() {
 
     assert_eq!(
         [floor_create, verify_create, write_create, body_create],
-        [138_475, 3_039_832, 7_348, 3_047_180],
+        [138_475, 3_039_832, 7_386, 3_047_218],
         "the first-write figures moved"
     );
     assert_eq!(
         [floor_update, verify_update, write_update, body_update],
-        [153_882, 3_039_832, 8_554, 3_048_386],
+        [153_882, 3_039_832, 8_582, 3_048_414],
         "the update figures moved"
     );
 }
@@ -915,7 +915,7 @@ fn the_push_write_cost_table_is_reproducible() {
         thousands(create.0),
         thousands(update.0)
     );
-    // No padding inside the emphasis markers: `**    7,348**` would render the
+    // No padding inside the emphasis markers: `**    7,386**` would render the
     // spaces literally.
     println!(
         "| **the write** | **{}** | **{}** |",
@@ -923,7 +923,7 @@ fn the_push_write_cost_table_is_reproducible() {
         thousands(update.1)
     );
     println!(
-        "| whole instruction body | {:>9} | {:>9} |",
+        "| whole `submit_price` body | {:>9} | {:>9} |",
         thousands(create.2),
         thousands(update.2)
     );
@@ -963,7 +963,14 @@ fn the_isolated_components_are_reproducible() {
     let validator = push_isolated(&vector, push_stage::VALIDATOR_PDA, Case::Create);
     let read = push_isolated(&vector, push_stage::PUBLISHED_READ, Case::Update);
     let claim = push_isolated(&vector, push_stage::AUTO_CLAIM, Case::Create);
+    let build = push_isolated(&vector, push_stage::BUILD, Case::Create);
+    let publish = push_isolated(&vector, push_stage::PUBLISH, Case::Update);
 
+    println!("build and encode (first write only): {}", thousands(build));
+    println!(
+        "publish's checks, incl. the read (update only): {}",
+        thousands(publish)
+    );
     println!("\nvalidator PDA derivation: {}", thousands(validator));
     println!("published-account read (update only): {}", thousands(read));
     println!("auto-claim (first write only): {}", thousands(claim));
@@ -972,9 +979,12 @@ fn the_isolated_components_are_reproducible() {
     // components of the write and do not sum to it -- see
     // `an_update_costs_more_than_a_first_write` for why that was tried and
     // abandoned.
+    // All five, because `COSTS.md` publishes all five. Build and publish were
+    // printed and unpinned in the first version, which @frenzox flagged on #60
+    // alongside the deeper problem that build was measuring nothing at all.
     assert_eq!(
-        [validator, read, claim],
-        [1_722, 1_442, 1_304],
+        [validator, read, claim, build, publish],
+        [1_722, 1_442, 1_304, 1_782, 2_381],
         "an isolated figure moved"
     );
 }
@@ -991,11 +1001,13 @@ fn the_isolated_components_are_reproducible() {
 /// `post_states` -- so the gap is a net, not a component.
 ///
 /// Two attempts to decompose it into isolated pieces both failed, and the reason
-/// is worth recording rather than retrying: `read - claim` is 138 cycles against
-/// a gap of 1,206, and adding the two write halves brings it to 1,035, still
-/// short. Isolated calls do not cost what inlined ones do, so the terms are not
-/// obliged to sum. The isolated figures below are each real and each pinned;
-/// their sum is not this gap and this test does not pretend otherwise.
+/// is worth recording rather than retrying. `read - claim` is 138 cycles against
+/// a gap of 1,196. Taking all four operations -- what only an update does, less
+/// what only a first write does -- gives 2,381 - (1,304 + 1,782) = **-705**, the
+/// wrong sign. Isolated calls do not cost what inlined ones do, so the terms are
+/// under no obligation to sum, and the second attempt got further from the answer
+/// than the first. The isolated figures are each real and each pinned; their sum
+/// is not this gap and this test does not pretend otherwise.
 #[test]
 fn an_update_costs_more_than_a_first_write() {
     let vector = vector();
@@ -1011,7 +1023,7 @@ fn an_update_costs_more_than_a_first_write() {
     );
     assert_eq!(
         update - create,
-        1_206,
+        1_196,
         "the gap between the two paths moved"
     );
 }
@@ -1083,7 +1095,7 @@ fn the_push_figures_for_repinning() {
 /// Measured on risc0-zkvm 3.0.5, guest rustc 1.97.0. Update together with
 /// `COSTS.md`, and note that this figure lives in its own guest so it does not
 /// move when a stage is added to `submit_cost.rs`.
-const REGISTRATION_CYCLES: u64 = 3_821;
+const REGISTRATION_CYCLES: u64 = 5_270;
 
 /// The admin whose signature authorises a registration.
 const REGISTER_ADMIN_KEY: [u8; 32] = [0x44; 32];

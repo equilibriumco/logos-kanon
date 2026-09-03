@@ -15,7 +15,7 @@
 //! | stage | adds |
 //! | --- | --- |
 //! | 0 | nothing: input, setup, the four accounts built, journal |
-//! | 1 | the real [`register_feed`], whole |
+//! | 1 | [`authorise`] and then the real [`register_feed`], as the handler runs them |
 //!
 //! So `1 - 0` is a registration. There is no prefix chain because there is
 //! nothing to take apart: registration does no cryptography, and what it costs is
@@ -23,10 +23,14 @@
 //!
 //! # What this is not
 //!
-//! The `register_feed` body, on the same terms as `submit_cost.rs`: SPEL's
-//! generated validator runs before it and the dispatcher wraps it afterwards,
-//! and neither is inside these figures. `COSTS.md` says so where it publishes
-//! them.
+//! The generated validator and the dispatcher, on the same terms as
+//! `submit_cost.rs`: the validator checks the accounts before the handler body
+//! runs and the dispatcher wraps the result afterwards, and neither is inside
+//! this figure. `COSTS.md` says so where it publishes it.
+//!
+//! What *is* inside it, after #60, is the authority gate: the handler calls
+//! `admin::authorise` before delegating, so a figure that skipped it was the cost
+//! of the helper and not of registering a feed.
 //!
 //! Registration is measured on a **first** registration — the feed account fully
 //! default, which is the state that claims it. A re-registration after a
@@ -39,7 +43,7 @@
 //! not a measurement. Failure reports through the journal and the host asserts on
 //! what it finds there.
 
-use aggregator_program::register_feed;
+use aggregator_program::{admin::authorise, register_feed};
 use nssa_core::{
     account::{Account, AccountId, AccountWithMetadata, Data, Nonce},
     program::ProgramId,
@@ -106,6 +110,13 @@ fn main() {
     };
 
     let report: Report = if stage == 0 {
+        (0, 0)
+    } else if authorise(&config, &admin, ours).is_err() {
+        // The gate the generated handler runs before the delegated helper. It was
+        // missing from the first version of this guest, which made 3,821 the cost
+        // of the helper rather than of a registration -- @frenzox found that on
+        // #60. Reported as a refusal so a broken gate cannot pass as a cheap
+        // registration.
         (0, 0)
     } else {
         match register_feed(
