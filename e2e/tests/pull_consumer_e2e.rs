@@ -131,9 +131,13 @@ const MARKET_VALUE: u64 = 6_500_000_000_000;
 
 /// A price on the `Q64.64` scale the consumer compares limits on.
 ///
-/// Computed the same way `expected_price` does rather than read from the crate
-/// under test, so a change to that arithmetic fails here rather than agreeing
-/// with itself.
+/// Computed here rather than through the crate under test, and the orders below
+/// are opened at exactly this value rather than under it. A settlement fills on
+/// `price >= limit`, so a limit at half the market clears whatever the verifier
+/// scaled the payload to -- `<< 63`, `<< 65` or a registration at the wrong
+/// `decimals` would all still fill, and the only price-sensitive outcome this
+/// suite has is whether an order filled at all. At the exact value, a scale that
+/// moved in either direction stops clearing and the settlement never lands.
 fn q64(value_scaled: u64) -> u128 {
     (u128::from(value_scaled) << 64) / 10u128.pow(u32::from(DECIMALS))
 }
@@ -379,7 +383,7 @@ async fn the_pull_path_verifies_and_settles_across_a_real_sequencer() {
         &owner_key,
         owner_id,
         first_id,
-        q64(MARKET_VALUE) / 2,
+        q64(MARKET_VALUE),
     )
     .await;
 
@@ -410,7 +414,7 @@ async fn the_pull_path_verifies_and_settles_across_a_real_sequencer() {
     .await;
     assert_eq!(
         filled.limit_price_q64,
-        q64(MARKET_VALUE) / 2,
+        q64(MARKET_VALUE),
         "a settlement moved something other than `filled`"
     );
 
@@ -432,7 +436,7 @@ async fn the_pull_path_verifies_and_settles_across_a_real_sequencer() {
         &owner_key,
         owner_id,
         second_id,
-        q64(MARKET_VALUE) / 2,
+        q64(MARKET_VALUE),
     )
     .await;
 
