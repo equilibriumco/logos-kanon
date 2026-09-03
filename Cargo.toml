@@ -68,6 +68,10 @@ license = "MIT OR Apache-2.0"
 # anything published resolves to whatever exists at build time.
 verifier-core = { path = "verifier-core", version = "0.1.0" }
 pull-lib = { path = "pull-lib", version = "0.1.0" }
+# Declared here for `methods`' push-write measurement (M2-18), which needs the
+# instruction it is measuring. The guest spells its own path, because the guest
+# workspace does not see this table.
+aggregator-program = { path = "aggregator-program", version = "0.1.0" }
 kanon-clock = { path = "kanon-clock", version = "0.1.0" }
 kanon-idl = { path = "kanon-idl", version = "0.1.0" }
 kanon-sdk = { path = "kanon-sdk", version = "0.1.0" }
