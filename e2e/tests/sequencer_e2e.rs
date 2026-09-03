@@ -227,12 +227,8 @@ impl Feed {
     }
 }
 
-/// BTC, which the update phase uses. Named rather than indexed so the phase
-/// reads as being about a feed instead of about position zero.
-const BTC: &Feed = &FEEDS[0];
-
-/// The second round's value for [`BTC`], enough above its first that an update
-/// is visible.
+/// The second round's value for BTC, enough above its first that an update is
+/// visible.
 const BTC_SECOND_VALUE: u64 = 6_600_000_000_000;
 
 /// The payload `feed`'s signer set would publish for `timestamp_ms`.
@@ -844,18 +840,19 @@ async fn the_push_path_verifies_and_publishes_across_a_real_sequencer() {
 
     // The other half of the write path, on BTC: an update at a newer round,
     // moving the price and the timestamp and nothing else.
-    // By feed id, not by position, because the constant above claims exactly
-    // that and `written[0]` made it false -- @frenzox caught the contradiction
-    // on #62.
-    let (btc_feed_account, _, btc_published) = FEEDS
+    // Found by the literal id, so reordering `FEEDS` cannot point this phase at
+    // another feed. Two earlier versions could: `written[0]` was position zero
+    // outright, and searching for `BTC.id` was circular, because that constant
+    // was itself `&FEEDS[0]` -- moving ETH to the first slot would have made
+    // `BTC` mean ETH and the search find ETH. @frenzox caught both on #62.
+    let (btc, (btc_feed_account, _, btc_published)) = FEEDS
         .iter()
         .zip(&written)
-        .find(|(feed, _)| feed.id == BTC.id)
-        .map(|(_, entry)| entry)
+        .find(|(feed, _)| feed.id == b"BTC")
         .expect("BTC is one of the five feeds");
     let next_round = chain_now_past(client, btc_published.timestamp).await;
     let updated =
-        submit_and_read_back(&chain, BTC, *btc_feed_account, next_round, BTC_SECOND_VALUE).await;
+        submit_and_read_back(&chain, btc, *btc_feed_account, next_round, BTC_SECOND_VALUE).await;
 
     assert_eq!(
         updated,
