@@ -260,40 +260,44 @@ ensure_image() {
 # failure is `docker run` complaining about a missing executable, which reads
 # like a broken script rather than like an image that needs republishing.
 assert_image_runnable() {
-  local ref entrypoint format
+  local ref problem
   ref="$(image_ref)"
-  # An inspect that fails is not an image that passes. Without this the
-  # substitution yields the empty string, `[ "" = 0 ]` is false, and the
-  # function reports "runnable" for an image it could not read at all -- so a
-  # pruned image or a daemon hiccup would come back as the `docker run` error
-  # this check exists to translate.
-  entrypoint="$(docker image inspect -f '{{len .Config.Entrypoint}}' "$ref" 2>&1)" \
-    || die "could not inspect $ref: $entrypoint"
-  if [ "$entrypoint" = 0 ]; then
-    die "$ref carries no entrypoint, so it predates adr/0034 and cannot be run."$'\n'"Re-run the 'LEZ sequencer image' workflow to republish it, or: KANON_SEQUENCER_RUNTIME=host $0 start"
+
+  problem="$(image_problem "$ref")"
+  if [ -n "$problem" ]; then
+    # One refresh, whichever of the two is stale. The entrypoint check used to
+    # exit here on its own, so the `FROM scratch` case -- the very transition
+    # this was written for -- never reached the pull below: someone holding an
+    # old local image met the error for ever while the registry had the
+    # replacement, and re-running the publish workflow could not help them
+    # because they never fetched the result.
+    log "$ref $problem; refreshing from the registry"
+    docker pull "$ref" >/dev/null 2>&1 || true
+    problem="$(image_problem "$ref")"
   fi
 
-  # The entrypoint check above only ever catches the one transition it was
-  # written for. The tag is the LEZ revision, so a Dockerfile change at an
-  # unchanged revision -- a package added to the apt list, a path moved inside
-  # the payload -- produces an image this check would wave through, and a
-  # developer holding the older tag never pulls the replacement because
-  # `ensure_image` uses a local image as-is. The format label is what makes those
-  # visible.
-  format="$(image_format "$ref")"
-  if [ "$format" != "$IMAGE_FORMAT" ]; then
-    # A stale *local* image is the likely cause, not a stale published one.
-    # `ensure_image` uses whatever is on the machine as-is, so someone who pulled
-    # before the format moved keeps meeting this error while the registry has
-    # had the answer all along -- and re-running the publish workflow does
-    # nothing for them, because it republishes something they never fetch. So
-    # the tag is refreshed once and re-read before this is called a failure.
-    log "$ref is image format '${format:-<none>}', not $IMAGE_FORMAT; refreshing from the registry"
-    docker pull "$ref" >/dev/null 2>&1 || true
-    format="$(image_format "$ref")"
+  [ -z "$problem" ] || die \
+    "$ref $problem, after a refresh."$'\n'"Re-run the 'LEZ sequencer image' workflow to republish it, or: KANON_SEQUENCER_RUNTIME=host $0 start"
+}
+
+# Why an image cannot be run, or the empty string.
+#
+# Both reasons in one place so that neither can be checked without the other:
+# an entrypoint says the image predates ADR 34 at all, the format label says
+# which shape of it this is.
+image_problem() {
+  local ref="$1" entrypoint format
+  # An inspect that fails is not an image that passes: the substitution would
+  # yield the empty string and every comparison below would read as "fine".
+  entrypoint="$(docker image inspect -f '{{len .Config.Entrypoint}}' "$ref" 2>&1)" \
+    || { printf 'could not be inspected: %s' "$entrypoint"; return; }
+  if [ "$entrypoint" = 0 ]; then
+    printf 'carries no entrypoint, so it predates adr/0034'
+    return
   fi
-  [ "$format" = "$IMAGE_FORMAT" ] || die \
-    "$ref is image format '${format:-<none>}' and this script needs $IMAGE_FORMAT, after a refresh."$'\n'"Re-run the 'LEZ sequencer image' workflow to republish it, or: KANON_SEQUENCER_RUNTIME=host $0 start"
+  format="$(image_format "$ref")"
+  [ "$format" = "$IMAGE_FORMAT" ] \
+    || printf "is image format '%s' and this script needs %s" "${format:-<none>}" "$IMAGE_FORMAT"
 }
 
 # The format label on an image, or the empty string.
@@ -366,20 +370,34 @@ bedrock_up() {
   log "bedrock up on :$BEDROCK_PORT"
 }
 
-# Whether a sequencer this script started is still alive, in either shape.
+# Might anything this state directory started still be alive?
 #
-# Both are checked whichever runtime is selected, and that is what makes the
-# "already running" refusal in `cmd_start` useful: a host sequencer left over
+# One question, one function, and every caller that would otherwise act on a
+# guess asks this one: the readiness loop, `start`'s refusal to run beside an
+# existing sequencer, and the gate on deleting the run state. It is phrased so
+# that **uncertainty answers yes** -- a daemon that will not talk, an inspect
+# that failed for a reason of its own, a container that exists but is not
+# running. Only a positive confirmation of absence returns false.
+#
+# The phrasing is the point. Three rounds of review found seven ways to arrive at
+# "nothing is running" by mistake, in five different callers, and every one of
+# them was a caller asking its own version of the question and getting a
+# fail-open answer from a `docker` command that had not actually said no. There
+# is nowhere left to ask it differently.
+#
+# Both shapes are checked whichever runtime is selected: a host sequencer left
 # from an earlier run holds `$PORT`, and a container started against it would
-# fail to bind with an error a reader has to go into the log to find. `start`
-# wipes the state directory, so the pid file cannot be stale by the time the
-# readiness loop below asks the same question.
+# fail to bind with an error a reader has to go into the log to find.
 sequencer_running() {
   local id
   id="$(started_container)" || true
-  if [ -n "$id" ] \
-    && [ "$(docker inspect -f '{{.State.Running}}' "$id" 2>/dev/null)" = true ]; then
-    return 0
+  if [ -n "$id" ]; then
+    case "$(container_state "$id")" in
+      # Anything but a confirmed absence counts as alive. A stopped container
+      # still owns the bind mount, and an inspect that failed for a reason of
+      # its own tells us nothing at all.
+      present|unknown) return 0 ;;
+    esac
   fi
   [ -f "$STATE_DIR/pid" ] && kill -0 "$(cat "$STATE_DIR/pid")" 2>/dev/null
 }
@@ -500,7 +518,7 @@ start_host() {
 }
 
 cmd_start() {
-  local dir home guest_home previous actual
+  local dir home guest_home previous actual running
 
   case "$RUNTIME" in
     container|host) ;;
@@ -536,9 +554,16 @@ cmd_start() {
         # previous container is reported instead.
         previous="$(started_container)" || true
         actual="$(docker inspect -f '{{.Id}}' "$CONTAINER" 2>/dev/null)" || actual=""
-        if [ -n "$previous" ] && [ "$actual" = "$previous" ] \
-          && [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != true ]; then
+        # Positively stopped, not merely "did not say running": an inspect that
+        # errors returns the empty string, and `!= true` would have read that as
+        # stopped and removed a container nobody could see the state of.
+        running="$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" || running=""
+        if [ -n "$previous" ] && [ "$actual" = "$previous" ] && [ "$running" = false ]; then
           docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+          # And the removal is confirmed before the id file goes, for the reason
+          # `stop` confirms it: the file is the only record there was one.
+          [ "$(container_state "$CONTAINER")" = absent ] \
+            || die "could not remove this checkout's stopped container $CONTAINER"
           rm -f "$STATE_DIR/container"
         else
           die "a container named $CONTAINER is in the way and is not this checkout's own stopped one; rename with KANON_SEQUENCER_CONTAINER, or stop it where it was started"
@@ -709,17 +734,11 @@ cmd_stop() {
     docker stop --signal SIGINT "$id" >/dev/null 2>&1 || true
     docker rm -f "$id" >/dev/null 2>&1 || log "could not remove $id"
 
-    # The id file is the only record that this container exists, so it is
-    # dropped only once the container demonstrably does not. Removing it after a
-    # failed `docker rm` left the *next* `stop` with nothing to look up: that
-    # one would find no id, conclude nothing was running, and delete the
-    # database of a container still holding it. The first stop refused
-    # correctly and the second undid the refusal.
-    case "$(container_state "$id")" in
-      absent) rm -f "$STATE_DIR/container" ;;
-      present) log "container $id is still there"; stopped_everything=0 ;;
-      *) log "could not tell whether container $id is still there"; stopped_everything=0 ;;
-    esac
+    # The id file is the only record that this container exists, so it goes only
+    # on a confirmed absence. Dropping it after a failed removal left the *next*
+    # `stop` with nothing to look up, and that one deleted the database of a
+    # container still holding it.
+    [ "$(container_state "$id")" = absent ] && rm -f "$STATE_DIR/container"
   fi
 
   if [ -f "$STATE_DIR/pid" ]; then
@@ -772,19 +791,21 @@ cmd_stop() {
       || { log "could not bring bedrock down"; stopped_everything=0; }
   fi
 
-  # The last word, and it asks the question directly rather than trusting the
-  # bookkeeping above: something still answering here is something whose database
-  # must not be deleted.
+  # The gate, and the only one. Everything above is an *attempt*; this is the
+  # question, asked once, of the single function that answers it. A stop that
+  # cannot prove the sequencer is gone deletes nothing, whatever the attempts
+  # above happened to report -- and `stopped_everything` is now only about what
+  # to tell the reader, not about what is safe.
   if sequencer_running; then
-    log "a sequencer is still running"
-    stopped_everything=0
-  fi
-
-  if [ "$stopped_everything" = 0 ]; then
     log "run state left at $STATE_DIR; deleting it under a running sequencer takes its database away"
-    die "stop did not stop everything, so it deleted nothing"
+    die "stop cannot confirm the sequencer is gone, so it deleted nothing"
   fi
+  [ "$stopped_everything" = 1 ] || log "something did not stop cleanly; the sequencer is gone all the same"
 
+  # The gate has confirmed there is no container, so its id is a record of
+  # nothing. Removed here rather than beside the removal attempt, because this is
+  # the only place that knows it is safe.
+  rm -f "$STATE_DIR/container"
   remove_state_subpath home
   log "stopped"
 }

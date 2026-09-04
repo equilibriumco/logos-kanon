@@ -75,18 +75,17 @@ letting `docker run` fail as though the script were broken.
   compose project, and `docker compose` reads that file from the host. So `fetch` (or
   `build`) still runs first, in both runtimes, and `bedrock_up` now says so when the
   directory is missing.
-- **`stop` deletes the run state only when it stopped everything.** A container is
-  stopped through a daemon that can be unreachable, and a `docker` call that fails is
-  indistinguishable from one that had nothing to do. The host path turned out to have
-  the same hole for a different reason and it is closed too: `kill -9` returns when the
-  signal is queued rather than when the process is gone, and the pid file was removed
-  regardless — so a sequencer that outlived SIGKILL left nothing for the check to find.
-  Both are now waited on, and the pid file survives a process that does. Removing the state directory is
-  irreversible — it is the sequencer's RocksDB — so it is now conditional on every stop
-  having succeeded, and `stop` fails loudly rather than tidying up around a chain that
-  is still serving. This was found by doing it: `stop` from a shell with no docker
-  socket unlinked the database of a sequencer that went on producing blocks off the
-  open inodes.
+- **One function decides whether anything might still be running, and every caller asks
+  it.** Deleting the run state is the one irreversible act here — it is the sequencer's
+  RocksDB — and three rounds of review found *seven* ways to reach "nothing is running"
+  by mistake, in five different callers: a daemon that could not be reached, a `docker
+  rm` that failed, an id file dropped anyway, a label that proved the wrong thing, an
+  inspect error read as an absence, twice. Every one was a caller asking its own version
+  of the question and getting a fail-open answer from a command that had not said no.
+  The fix that stuck was not another check but a single `sequencer_running`, phrased so
+  that **uncertainty answers yes**, used by the readiness loop, by `start`'s refusal and
+  by the gate on deletion alike. `stop` now attempts, then asks once; the attempts report
+  to the reader and decide nothing.
 - **The sequencer only listens for SIGINT, so both runtimes send it.**
   `listen_for_shutdown_signal` awaits `tokio::signal::ctrl_c()` and installs no
   SIGTERM handler, so docker's default stop signal is ignored until the SIGKILL that
