@@ -212,9 +212,12 @@ compose file is LEZ's own and is read from the host — so `fetch` or `build` co
 Both services run as containers (ADR 34). The sequencer's uses `--network host`, which
 is what lets LEZ's committed debug config be used exactly as it ships: its
 `bedrock_config.node_url` is `http://localhost:18080`, and on a bridge network
-`localhost` would be the container itself. That makes the container path linux-only. On
-a host the published image cannot serve — NixOS, a non-x86_64 machine, anything that is
-not linux — run the binary directly instead:
+`localhost` would be the container itself. That is free on linux. On Docker Desktop it
+needs 4.34 or later with host networking switched on in *Settings → Resources →
+Network*, which is off by default — supported, but untested here.
+
+On a host the published image cannot serve at all — NixOS, a non-x86_64 machine — run
+the binary directly instead:
 
 ```sh
 scripts/lez-sequencer.sh build

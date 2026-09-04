@@ -61,10 +61,16 @@ letting `docker run` fail as though the script were broken.
 
 ## Consequences
 
-- **The container path is linux-only.** `--network host` is not the same thing on
-  Docker Desktop. Both targets here are linux — CI is `ubuntu-24.04` — and the way out
-  on any other host is `KANON_SEQUENCER_RUNTIME=host` with `build`, which is the route
-  such a host needed anyway.
+- **Host networking is free on linux and a setting elsewhere.** It is not linux-only:
+  Docker Desktop has supported `--network host` on macOS and Windows since 4.34, and
+  documents it as working in both directions, so a port a container binds is reachable
+  from the host's own `localhost`. But it is off by default and has to be turned on in
+  *Settings → Resources → Network*, it is layer 4 only, and it is incompatible with
+  Enhanced Container Isolation. Neither target here is affected — CI is `ubuntu-24.04`
+  and the machines this is developed on are linux — so the macOS path is **untested**
+  rather than unsupported, and this is written down so nobody reads a green CI run as
+  evidence for it. On a host where the image's glibc will not run at all,
+  `KANON_SEQUENCER_RUNTIME=host` with `build` is the route, as it was before.
 - **A LEZ checkout is still required to start anything.** Bedrock is still LEZ's own
   compose project, and `docker compose` reads that file from the host. So `fetch` (or
   `build`) still runs first, in both runtimes, and `bedrock_up` now says so when the
@@ -95,11 +101,12 @@ letting `docker run` fail as though the script were broken.
 
 - **Put the sequencer on Bedrock's compose network.** A compose override adding it as a
   second service, with `network_mode: "service:<node>"` so that `localhost:18080` is
-  Bedrock, would keep bridge networking and work on Docker Desktop. Rejected for now on
-  two counts: the port has to be published by whichever container owns the namespace,
-  which means editing LEZ's own service to expose `3055`, and the arrangement couples
-  the script to LEZ's compose service name. If host networking becomes a problem, this
-  is the shape to reach for.
+  Bedrock, would keep bridge networking and need no host-networking setting anywhere.
+  Rejected for now on two counts: the port has to be published by whichever container
+  owns the namespace, which means editing LEZ's own service to expose `3055`, and the
+  arrangement couples the script to LEZ's compose service name. If host networking
+  turns out to be a nuisance on a machine somebody actually uses, this is the shape to
+  reach for.
 - **Rewrite `bedrock_config.node_url` and run on a bridge network.** Rejected for ADR
   12's reason: the value of pointing the sequencer at the config that ships in the
   checkout is that it is the config that ships in the checkout.

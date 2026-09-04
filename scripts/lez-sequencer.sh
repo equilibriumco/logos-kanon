@@ -365,9 +365,11 @@ sequencer_help() {
 # network `localhost` is the container itself, so any other arrangement means
 # rewriting a field of LEZ's own config -- which is the thing ADR 12 set out not
 # to do. It also puts the RPC straight onto the host's `$PORT`, so nothing
-# downstream has to know a container is involved. The cost is that this path is
-# Linux-only; `KANON_SEQUENCER_RUNTIME=host` is the way out, and ADR 34 records
-# the alternative that was weighed against it.
+# downstream has to know a container is involved. It needs no setting up on
+# linux; on Docker Desktop it needs 4.34 or later with host networking enabled
+# in Settings -> Resources -> Network, which is off by default.
+# `KANON_SEQUENCER_RUNTIME=host` is the way out either way, and ADR 34 records
+# the alternative that was weighed against this.
 #
 # `--user` matters more than it looks: RocksDB writes into the bind mount below,
 # and a root-owned state directory is one `stop` cannot delete, under a `target/`
