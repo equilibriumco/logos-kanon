@@ -164,24 +164,23 @@ unit LEZ charges in and not comparable with anything else in `COSTS.md`.
   exist at the commit being measured. A pass obtained that way is worth nothing and looks
   exactly like a real one.
 
-  **Compare within one build directory.** A guest's image id depends on the absolute path
-  the repository is checked out at: cargo derives `-C metadata` from the package id, whose
-  source id for a path dependency is that absolute path, and the hash reaches the ELF
-  through every crate-disambiguated symbol name. Two checkouts of one commit at two paths
-  produce three different product ids on one machine, at one toolchain, with `--locked`.
-  So "the ids did not move" is a statement about one directory and says nothing about
-  anybody else's. That is a property of the build rather than of this task, and it is
-  being taken up separately; it is recorded here because it is the condition under which
-  this rule is true.
+  **Build the way the repository builds.** Reviewing this rule turned up that a guest's
+  image id depended on the absolute path the repository was checked out at, which would
+  have made "the ids did not move" a statement about one directory and about nobody
+  else's. `[M3-08:02]` removes that: the guests are compiled in a container at a fixed
+  path, so the ids this rule is about are a property of the source. The rule needs the
+  containerised build to be the one that produced both figures being compared, which is
+  the default and takes no thought unless `KANON_GUEST_BUILD=host` is set.
 
 - **The two guards were weighed separately, and only one is expensive.** Pinning the ids
   the way cycle figures are pinned would catch an edge, at the price of a re-publish on
-  every legitimate change to a consumer that is still being written — and, given the
-  paragraph above, a pin that only holds in the directory it was recorded in. That one
-  waits. Pinning each guest lockfile's package set is the cheaper guard and does not
-  share those costs: a lockfile moves when a *dependency* moves, which is the event the
-  rule exists to catch, and not when source changes. It is worth adding as soon as
-  something depends on the rule holding without somebody remembering it.
+  every legitimate change to a consumer that is still being written. That one waits, on
+  cost rather than on meaning: since `[M3-08:02]` a pinned id is a figure anybody can
+  reproduce, which is what it was not before. Pinning each guest lockfile's package set
+  is the cheaper guard and does not share those costs: a lockfile moves when a
+  *dependency* moves, which is the event the rule exists to catch, and not when source
+  changes. It is worth adding as soon as something depends on the rule holding without
+  somebody remembering it.
 - **P3 now has both baselines it needs.** A precompile removes recovery, which is 96% of
   a pull read and none of a push read, so the delta is per-mode for a structural reason
   rather than a presentational one.

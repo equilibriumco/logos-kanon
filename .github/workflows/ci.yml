@@ -342,7 +342,12 @@ jobs:
           rzup install rust 1.97.0
 
       # Cross-compiles all three product guests, which is what `kanon-methods`
-      # builds: the aggregator and both reference consumers. The cost baseline
+      # builds: the aggregator and both reference consumers. Since `[M3-08:02]` they
+      # compile inside RISC Zero's builder image, at a fixed path, so the image
+      # ids this produces are the ids anybody else's build produces. Docker is
+      # preinstalled on the runner; the rzup toolchain above is still required,
+      # because `risc0-build` reads its version to compute the guest rustflags
+      # even on the container path, and panics if it is absent. The cost baseline
       # proved the toolchain on measurement code; this is the same proof for the
       # crates that ship, and it is where a dependency added to `verifier-core`
       # that turns out not to be guest-compatible fails. For the pull consumer it
