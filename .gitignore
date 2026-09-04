@@ -9,3 +9,7 @@ target/
 
 # Editor scratch.
 .code_marks/
+
+# Per-developer tool settings. Local to whoever is working here, so the repository
+# says so rather than relying on each contributor's own global ignore file.
+.claude/
