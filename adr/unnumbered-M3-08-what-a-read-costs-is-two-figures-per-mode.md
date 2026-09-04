@@ -152,6 +152,16 @@ unit LEZ charges in and not comparable with anything else in `COSTS.md`.
   1,200-byte capture is roughly 136,000 cycles before `settle` is entered. A push
   settlement carries a feed id. ADR 26 bounds it; `COSTS.md` names it so a per-read
   comparison is not read as complete without it.
+- **Nothing enforces this, and that is deliberate for now.** No test pins
+  `PULL_CONSUMER_ID` or `AGGREGATOR_READ_CONSUMER_ID`, so the rule below is a rule for
+  people rather than for CI: **a change to either consumer's guest manifest requires the
+  three product image ids to be re-measured before it lands**, because a dependency edge
+  added there is a dependency edge added to a deployed program. Pinning the ids the way
+  cycle figures are pinned would catch it, at the price of a re-publish on every
+  legitimate change to a consumer that is still being written; pinning each guest
+  lockfile's package set would catch the edge specifically and is the cheaper of the two.
+  Neither is worth its churn while M3 and M4 are still moving these crates, and both
+  become worth it once they stop.
 - **P3 now has both baselines it needs.** A precompile removes recovery, which is 96% of
   a pull read and none of a push read, so the delta is per-mode for a structural reason
   rather than a presentational one.
