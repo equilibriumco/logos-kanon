@@ -51,15 +51,28 @@ that the plain `embed_methods()` path is not intended to be reproducible.
 Verified rather than inferred from that reasoning: two checkouts at two paths, built this
 way, produce all three product ids byte-identical.
 
-### The pinned tag is the load-bearing half
+### The pin is by digest, and it is the load-bearing half
 
 `risc0-build` defaults to `r0.1.88.0`. Taking the default would swap the guest compiler
 under every figure in `COSTS.md`, all measured on guest rustc 1.97.0, and turn a change
 about *where* a guest is compiled into a change about *what* compiles it. Pinned to
 `r0.1.97.0` — the tag carrying that compiler — all 31 cost assertions pass unchanged.
 
-The tag and ADR 8's pins say the same thing and have to move together. A future toolchain
-bump is now two edits, and a mismatch between them is a re-measurement nobody asked for.
+**A tag is not a pin.** It is a mutable pointer, so two builds of this commit far enough
+apart could resolve one to different image contents and produce different program ids —
+the failure this decision exists to prevent, arriving slowly rather than immediately. The
+image is therefore pinned by digest, spelled `r0.1.97.0@sha256:7ae0a27f…`: Docker accepts
+`repo:tag@digest` and resolves the digest, so the tag survives for legibility and decides
+nothing.
+
+**And a pin `risc0-build` will ignore is not a pin either.** `RISC0_DOCKER_CONTAINER_TAG`
+is consulted *ahead* of the configured image, so the build script refuses to run when that
+variable is set to anything else, rather than quietly building a different program and
+publishing its ids as these. Both it and the escape hatch are declared
+`rerun-if-env-changed`, so changing either rebuilds instead of serving a stale ELF.
+
+The digest and ADR 8's pins say the same thing and have to move together. A toolchain bump
+is now two edits, and a mismatch between them is a re-measurement nobody asked for.
 
 ### `KANON_GUEST_BUILD=host` remains
 
@@ -92,7 +105,7 @@ concluded and what made that guard the expensive one.
 ## Consequences
 
 - **The three product ids change once, here.** They are now what a container at
-  `r0.1.97.0` produces from this source, and reproducible by anybody with that image:
+  that digest produces from this source, and reproducible by anybody who pulls it:
 
   | program | id |
   | --- | --- |
@@ -114,6 +127,12 @@ concluded and what made that guard the expensive one.
 - **A clean containerised build is slower**, measured at 5m 42s including the image pull
   and 3m 53s after. The runner cache covers `target/`, and the ELFs land under it, so the
   cost falls on cold caches rather than on every run.
+- **The guest list is derived, not restated.** `risc0-build` applies default — host —
+  options to any guest absent from the map it is handed, so a list of guests beside
+  `[package.metadata.risc0]` would be a second copy whose disagreement is silent: a fourth
+  guest added there and not here would compile outside the container and have a directory
+  in its id again, with nothing to say so. The build script reads that metadata instead,
+  which costs one dependency edge on `toml`, already in the graph, and no new package.
 - **It does not fit on a stock runner, and the failure is not legible.** The builder image
   is 1.73 GB compressed, and the container resolves each guest workspace's dependencies
   inside itself, on top of whatever the job already needs. The first CI run failed twice

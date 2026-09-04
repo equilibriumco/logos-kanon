@@ -1852,6 +1852,7 @@ dependencies = [
  "risc0-build",
  "risc0-zkvm",
  "serde_json",
+ "toml",
  "verifier-core",
 ]
 
