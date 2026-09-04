@@ -280,9 +280,25 @@ assert_image_runnable() {
   # developer holding the older tag never pulls the replacement because
   # `ensure_image` uses a local image as-is. The format label is what makes those
   # visible.
-  format="$(docker image inspect -f "{{index .Config.Labels \"$FORMAT_LABEL\"}}" "$ref" 2>/dev/null)" || format=""
+  format="$(image_format "$ref")"
+  if [ "$format" != "$IMAGE_FORMAT" ]; then
+    # A stale *local* image is the likely cause, not a stale published one.
+    # `ensure_image` uses whatever is on the machine as-is, so someone who pulled
+    # before the format moved keeps meeting this error while the registry has
+    # had the answer all along -- and re-running the publish workflow does
+    # nothing for them, because it republishes something they never fetch. So
+    # the tag is refreshed once and re-read before this is called a failure.
+    log "$ref is image format '${format:-<none>}', not $IMAGE_FORMAT; refreshing from the registry"
+    docker pull "$ref" >/dev/null 2>&1 || true
+    format="$(image_format "$ref")"
+  fi
   [ "$format" = "$IMAGE_FORMAT" ] || die \
-    "$ref is image format '${format:-<none>}' and this script needs $IMAGE_FORMAT."$'\n'"Re-run the 'LEZ sequencer image' workflow to republish it, or: KANON_SEQUENCER_RUNTIME=host $0 start"
+    "$ref is image format '${format:-<none>}' and this script needs $IMAGE_FORMAT, after a refresh."$'\n'"Re-run the 'LEZ sequencer image' workflow to republish it, or: KANON_SEQUENCER_RUNTIME=host $0 start"
+}
+
+# The format label on an image, or the empty string.
+image_format() {
+  docker image inspect -f "{{index .Config.Labels \"$FORMAT_LABEL\"}}" "$1" 2>/dev/null || true
 }
 
 cmd_fetch() {
@@ -441,6 +457,24 @@ start_container() {
   printf '%s' "$id" >"$STATE_DIR/container"
 }
 
+# Whether a container exists, distinguishing "no" from "could not tell".
+#
+# `docker inspect` exits non-zero both for a container that is genuinely absent
+# and for a daemon that would not answer, and the two must not be treated alike:
+# reading the second as the first is how `stop` concludes there is nothing left
+# and deletes a live sequencer's database. Prints `present`, `absent`, or
+# `unknown`, and every caller here fails closed on the third.
+container_state() {
+  local id="$1" out
+  if out="$(docker inspect "$id" 2>&1)"; then
+    printf 'present'
+  elif printf '%s' "$out" | grep -qi 'no such object'; then
+    printf 'absent'
+  else
+    printf 'unknown'
+  fi
+}
+
 # The container this run started, or nothing.
 #
 # Read from the state directory rather than derived from `$CONTAINER`, for the
@@ -466,7 +500,7 @@ start_host() {
 }
 
 cmd_start() {
-  local dir home guest_home
+  local dir home guest_home previous actual
 
   case "$RUNTIME" in
     container|host) ;;
@@ -490,13 +524,27 @@ cmd_start() {
   # the machine, so the label decides, and a collision with something else is
   # reported rather than deleted.
   if [ "$RUNTIME" = container ]; then
-    if docker inspect "$CONTAINER" >/dev/null 2>&1; then
-      if [ "$(docker inspect -f "{{index .Config.Labels \"$OWNER_LABEL\"}}" "$CONTAINER" 2>/dev/null)" = 1 ]; then
-        docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-      else
-        die "a container named $CONTAINER exists and was not started by this script; rename with KANON_SEQUENCER_CONTAINER or remove it yourself"
-      fi
-    fi
+    case "$(container_state "$CONTAINER")" in
+      absent) ;;
+      unknown) die "a container named $CONTAINER may exist but docker would not say; not removing anything" ;;
+      present)
+        # The id recorded by *this* state directory, and nothing weaker. A label
+        # only proves some checkout of this script started it, and that is not
+        # the same claim: two checkouts share the default name, so checkout B
+        # starting up would find A's running container carrying the shared label
+        # and remove it. A name collision that is not this directory's own
+        # previous container is reported instead.
+        previous="$(started_container)" || true
+        actual="$(docker inspect -f '{{.Id}}' "$CONTAINER" 2>/dev/null)" || actual=""
+        if [ -n "$previous" ] && [ "$actual" = "$previous" ] \
+          && [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != true ]; then
+          docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+          rm -f "$STATE_DIR/container"
+        else
+          die "a container named $CONTAINER is in the way and is not this checkout's own stopped one; rename with KANON_SEQUENCER_CONTAINER, or stop it where it was started"
+        fi
+        ;;
+    esac
     ensure_image
     assert_image_runnable
   else
@@ -638,7 +686,7 @@ cmd_stop() {
   local id
   id="$(started_container)" || true
   if [ "$stopped_everything" = 1 ] && [ -n "$id" ] \
-    && docker inspect "$id" >/dev/null 2>&1; then
+    && [ "$(container_state "$id")" = present ]; then
     log "stopping sequencer container $id"
     # Only in the container runtime, and the distinction is not pedantic. The
     # removal above is deliberately attempted whatever the runtime, so a stray
@@ -659,9 +707,19 @@ cmd_stop() {
     # anywhere else gets it right; this flag is belt and braces for an image
     # predating that.
     docker stop --signal SIGINT "$id" >/dev/null 2>&1 || true
-    docker rm -f "$id" >/dev/null 2>&1 \
-      || { log "could not remove $id"; stopped_everything=0; }
-    rm -f "$STATE_DIR/container"
+    docker rm -f "$id" >/dev/null 2>&1 || log "could not remove $id"
+
+    # The id file is the only record that this container exists, so it is
+    # dropped only once the container demonstrably does not. Removing it after a
+    # failed `docker rm` left the *next* `stop` with nothing to look up: that
+    # one would find no id, conclude nothing was running, and delete the
+    # database of a container still holding it. The first stop refused
+    # correctly and the second undid the refusal.
+    case "$(container_state "$id")" in
+      absent) rm -f "$STATE_DIR/container" ;;
+      present) log "container $id is still there"; stopped_everything=0 ;;
+      *) log "could not tell whether container $id is still there"; stopped_everything=0 ;;
+    esac
   fi
 
   if [ -f "$STATE_DIR/pid" ]; then
