@@ -130,8 +130,13 @@ concluded and what made that guard the expensive one.
   within one build directory" is obsolete: comparing across directories is now the point.
   "Wipe `target/riscv-guest` first" still holds, because a stale ELF from another branch
   is a false pass whatever compiles it.
-- **Docker becomes a requirement for building this repository**, as it already is for the
-  sequencer harness (ADR 34). The escape hatch exists and is signposted.
+- **Docker with buildx becomes a requirement for building this repository**, as docker
+  already is for the sequencer harness (ADR 34). The plugin is not incidental:
+  `risc0-build` runs `docker build --output`, which only BuildKit provides, and the
+  legacy builder's refusal names the flag rather than the cause. CI cannot catch that --
+  GitHub's runners ship buildx, so the requirement is invisible exactly where it is
+  exercised and visible only outside it, which is where it was found. `build.rs` checks
+  for it before anything else and fails naming it.
 - **Both lockfiles move.** `e2e/` resolves `kanon-methods` in its own workspace (ADR 7,
   `[M2-19:01]`), so the `toml` edge lands in `e2e/Cargo.lock` as well, and a `--locked`
   build fails on whichever of the two is forgotten.
@@ -171,7 +176,11 @@ concluded and what made that guard the expensive one.
   `lgs build`, which reaches the same image through a release build of `methods/`.
   Anybody adding another needs that step, and will otherwise be debugging a linker
   crash.
-- **What this does not settle is the cross-machine question.** Both causes found here were
-  measured on one machine, and a container plausibly closes both, but `m0/versions.md`
-  question 6 asked about two machines and this evidence does not answer that. It is now a
-  cheaper experiment than it was: two people, one image tag, ids compared.
+- **`m0/versions.md` question 6 is answered, affirmatively and by measurement.** That
+  question asked whether two machines at the same pins produce the same guest ELF, and
+  said nothing in this repository established it. A review of this branch built it on a
+  second machine and got all three product ids identical to the ones recorded above,
+  which were produced here — so a release can be independently verified by rebuilding it,
+  which is the property the deployment story had been assuming without evidence. Both
+  halves are measured: the answer was *no* before this decision and *yes* after it. What
+  it does not extend to is a third architecture, since the builder image is x86_64.

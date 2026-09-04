@@ -1,4 +1,9 @@
-use std::{collections::BTreeSet, env, fs, path::Path, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    env, fs,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
 
 use risc0_build::{DockerOptionsBuilder, GuestOptionsBuilder};
 
@@ -69,6 +74,8 @@ fn main() {
         );
     }
 
+    require_buildx();
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo sets this"));
     let root = manifest_dir
         .parent()
@@ -99,6 +106,33 @@ fn main() {
             .iter()
             .map(|(name, _)| (name.as_str(), options.clone()))
             .collect(),
+    );
+}
+
+/// Refuse early, and by name, when the daemon cannot run the build at all.
+///
+/// `risc0-build` invokes `docker build --output`, which exists only on BuildKit: a docker
+/// install with the legacy builder rejects it as `unknown flag: --output`, several lines
+/// above the `docker build failed` that reaches the developer. CI never meets this --
+/// GitHub's runners ship buildx -- so the requirement is invisible exactly where it is
+/// checked and visible only to whoever builds outside it, which is the first thing that
+/// happened when somebody did.
+fn require_buildx() {
+    let available = Command::new("docker")
+        .args(["buildx", "version"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+
+    assert!(
+        available,
+        "`docker buildx` is required to build the guests, and `docker buildx version` \
+         did not succeed. `risc0-build` runs `docker build --output`, which the legacy \
+         builder rejects; the error it produces names the flag rather than the cause. \
+         Install the buildx plugin, or use {ESCAPE_HATCH}=host to build outside the \
+         container -- ids from a host build depend on this checkout's path and must not \
+         be published."
     );
 }
 

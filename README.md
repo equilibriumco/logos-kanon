@@ -115,8 +115,11 @@ container, because `risc0-build` reads its version to compute the guest's rustfl
 
 ### A program id is a property of the source
 
-**Building the guests needs a docker daemon.** They compile inside RISC Zero's builder
-image, pinned by digest, and not for isolation: a program's id *is* its guest image id, and
+**Building the guests needs a docker daemon with the buildx plugin.** `risc0-build` runs
+`docker build --output`, which only BuildKit provides; the legacy builder rejects it with
+a message about the flag rather than about the cause, so `build.rs` checks for buildx up
+front and says which. They compile inside RISC Zero's builder image, pinned by digest,
+and not for isolation: a program's id *is* its guest image id, and
 outside a container that id depends on the absolute path the repository happens to sit
 at. Cargo derives `-C metadata` from a package id whose source id, for a path dependency,
 is that path, and the hash reaches the ELF through every mangled symbol name. Two

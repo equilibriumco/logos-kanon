@@ -263,6 +263,17 @@ is what was measured — but the deployment story quietly assumes the stronger p
 and nobody has checked it. Two builds of one commit on two machines, ids compared,
 would answer it.
 
+**Answered, and the answer changed under us.** It was *no*: a guest's image id depended
+on the absolute path the repository was checked out at, because cargo derives
+`-C metadata` from a package id whose source id, for a path dependency, is that path. Two
+directories on one machine were enough to show it, which is a weaker condition than the
+two machines proposed here. `[M3-08:02]` records the mechanism and compiles the guests in
+a container at a fixed path, and it is now *yes*: a review of that change built the same
+commit on a second machine and got all three product ids identical to the ones that ADR
+records. So a release can be verified by rebuilding it, which is what this question was
+really asking. Unextended: the builder image is x86_64, so this says nothing about
+another architecture.
+
 ## Changing any of this
 
 Bump it, run both guardrail suites, and update the constants, the affected report
