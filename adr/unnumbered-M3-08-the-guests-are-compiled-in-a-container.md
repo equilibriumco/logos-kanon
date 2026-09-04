@@ -114,6 +114,14 @@ concluded and what made that guard the expensive one.
 - **A clean containerised build is slower**, measured at 5m 42s including the image pull
   and 3m 53s after. The runner cache covers `target/`, and the ELFs land under it, so the
   cost falls on cold caches rather than on every run.
+- **It does not fit on a stock runner, and the failure is not legible.** The builder image
+  is 1.73 GB compressed, and the container resolves each guest workspace's dependencies
+  inside itself, on top of whatever the job already needs. The first CI run failed twice
+  on that one cause and only one of them said so: `no space left on device` unpacking the
+  image in one job, and `ld terminated with signal 7 [Bus error]` in another, which is
+  what a truncated mmap looks like when the disk fills under a linker. The three jobs that
+  build `kanon-methods` now reclaim the runner's preinstalled SDKs first. Anybody adding a
+  fourth such job needs that step, and will otherwise be debugging a linker crash.
 - **What this does not settle is the cross-machine question.** Both causes found here were
   measured on one machine, and a container plausibly closes both, but `m0/versions.md`
   question 6 asked about two machines and this evidence does not answer that. It is now a
