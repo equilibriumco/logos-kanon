@@ -130,6 +130,17 @@ concluded and what made that guard the expensive one.
 - **A clean containerised build is slower**, measured at 5m 42s including the image pull
   and 3m 53s after. The runner cache covers `target/`, and the ELFs land under it, so the
   cost falls on cold caches rather than on every run.
+- **A container inherits no environment, and the guests read some.** Each program takes
+  its genesis authority through `option_env!`, which resolves against the compiler's
+  environment — and the compiler is now inside a container that inherits nothing. Left
+  alone, every guest would have built without one, compiled cleanly, and refused every
+  transaction at execution time with `this build configured no genesis authority`, which
+  is how CI found it. The build script forwards what the guests read, discovered by
+  scanning them for the call rather than by keeping a list, for the same reason the guest
+  packages are derived: an authority reaching one guest and not another is a difference
+  nothing would announce. Only variables actually set are forwarded, so an unset one
+  still takes `option_env!`'s `None` branch exactly as on the host, and the ids above are
+  the ones an unconfigured build produces.
 - **The guest list is derived, not restated.** `risc0-build` applies default — host —
   options to any guest absent from the map it is handed, so a list of guests beside
   `[package.metadata.risc0]` would be a second copy whose disagreement is silent: a fourth

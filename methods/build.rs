@@ -1,4 +1,4 @@
-use std::{env, fs, path::Path, path::PathBuf};
+use std::{collections::BTreeSet, env, fs, path::Path, path::PathBuf};
 
 use risc0_build::{DockerOptionsBuilder, GuestOptionsBuilder};
 
@@ -63,7 +63,12 @@ fn main() {
         .expect("methods/ sits under the workspace root")
         .to_path_buf();
 
+    let guests = guests(&manifest_dir);
+
     let docker = DockerOptionsBuilder::default()
+        // A container inherits nothing from the host, so the build-time configuration
+        // the guests read has to be handed over explicitly.
+        .env(forwarded_env(&guests))
         // The whole repository, because a guest workspace depends on crates above it --
         // `verifier-core` and `kanon-idl` among them -- and the container sees only what
         // is copied into it.
@@ -77,13 +82,61 @@ fn main() {
         .build()
         .expect("every field the builder requires is set");
 
-    let guests = guest_packages(&manifest_dir);
     risc0_build::embed_methods_with_options(
         guests
             .iter()
-            .map(|guest| (guest.as_str(), options.clone()))
+            .map(|(name, _)| (name.as_str(), options.clone()))
             .collect(),
     );
+}
+
+/// The build-time environment the guests read, taken from the guests themselves.
+///
+/// `option_env!` resolves against the compiler's environment, and the compiler now runs
+/// in a container that inherits none of ours, so anything the guests read has to be
+/// forwarded. Discovered rather than listed for the reason the package names are: a name
+/// held here by hand would be one more copy that can fall out of step, and the failure is
+/// quiet -- a guest built without its authority compiles, runs, and refuses every
+/// transaction at execution time with an error about a build that configured none.
+///
+/// Only variables actually set are forwarded, so an unset one still takes `option_env!`'s
+/// `None` branch exactly as it does on the host.
+fn forwarded_env(guests: &[(String, PathBuf)]) -> Vec<(String, String)> {
+    let mut names = BTreeSet::new();
+    for (_, dir) in guests {
+        read_option_env(&dir.join("src"), &mut names);
+    }
+    names
+        .into_iter()
+        .filter_map(|name| {
+            println!("cargo:rerun-if-env-changed={name}");
+            env::var(&name).ok().map(|value| (name, value))
+        })
+        .collect()
+}
+
+/// Every name a `option_env!` under `dir` reads.
+fn read_option_env(dir: &Path, into: &mut BTreeSet<String>) {
+    const CALL: &str = "option_env!(\"";
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            read_option_env(&path, into);
+        } else if path.extension().is_some_and(|kind| kind == "rs") {
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            for (at, _) in text.match_indices(CALL) {
+                let rest = &text[at + CALL.len()..];
+                if let Some(end) = rest.find('"') {
+                    into.insert(rest[..end].to_owned());
+                }
+            }
+        }
+    }
 }
 
 /// The guest packages, read from the metadata `risc0-build` reads to find them.
@@ -94,7 +147,7 @@ fn main() {
 /// build. A fourth entry added to `[package.metadata.risc0]` and not here would compile
 /// outside the container and go back to having a directory in its program id, with
 /// nothing to say so.
-fn guest_packages(manifest_dir: &Path) -> Vec<String> {
+fn guests(manifest_dir: &Path) -> Vec<(String, PathBuf)> {
     let manifest: toml::Value = fs::read_to_string(manifest_dir.join("Cargo.toml"))
         .expect("this crate has a manifest")
         .parse()
@@ -110,16 +163,18 @@ fn guest_packages(manifest_dir: &Path) -> Vec<String> {
         .iter()
         .map(|path| {
             let path = path.as_str().expect("a guest path is a string");
-            let guest: toml::Value = fs::read_to_string(manifest_dir.join(path).join("Cargo.toml"))
+            let dir = manifest_dir.join(path);
+            let guest: toml::Value = fs::read_to_string(dir.join("Cargo.toml"))
                 .unwrap_or_else(|_| panic!("guest `{path}` has a manifest"))
                 .parse()
                 .unwrap_or_else(|_| panic!("guest `{path}`'s manifest is TOML"));
-            guest
+            let name = guest
                 .get("package")
                 .and_then(|package| package.get("name"))
                 .and_then(|name| name.as_str())
                 .unwrap_or_else(|| panic!("guest `{path}` is a named package"))
-                .to_owned()
+                .to_owned();
+            (name, dir)
         })
         .collect()
 }
