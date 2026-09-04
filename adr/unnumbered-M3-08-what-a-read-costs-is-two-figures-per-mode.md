@@ -13,11 +13,11 @@ P2 asks for cost measurement "per mode". M1-25 measured verification, M2-18 the 
 write and a registration. What neither answers is the question a consumer author asks:
 **what does it cost me to obtain a price?** In push mode that is an account read. In pull
 mode there is no published account, so it is a verification — and the two therefore
-differ by three orders of magnitude rather than by a tuning margin. P3's per-mode
+differ by a factor of several hundred rather than by a tuning margin. P3's per-mode
 precompile delta rests on both figures existing, which is why this task precedes it.
 
-Two things had to be decided before a number could be published, and both are decisions
-about *what to measure* rather than about how.
+Three things had to be decided before a number could be published, and all three are
+decisions about *what to measure* rather than about how.
 
 ## Decision 1: two figures per mode, not one
 
@@ -38,12 +38,46 @@ something with the price.
 *Rejected: measure only the library call.* It is the portable number, but a figure with
 no program around it invites the reply that a real consumer pays more, and there would be
 nothing published to answer with. The residual between the two is small on both sides
-(2,025 and 5,163 cycles) and that smallness is itself worth publishing: it says the
+(7,275 and 6,479 cycles) and that smallness is itself worth publishing: it says the
 domain is not where a read's cost goes.
 
 *Rejected: measure only `settle`.* Publishes our limit order as the mode's price.
 
-## Decision 2: the measurement guests go in the consumers' own workspaces
+## Decision 2: the read is what the mode forces, and the setup absorbs the rest
+
+**A stage 1 arm performs only the mode's own read; everything a consumer holds before it
+reads is decoded in the setup that cancels.**
+
+The two modes' reads are compared to each other, and the residuals beside them are
+compared to each other, so what a stage 1 contains has to mean the same thing on both
+sides. The first draft did not manage that. Pull's stage 1 decoded the `FeedTrust` *and*
+the reference consumer's `OrderAccount`, because `verify_price` needs the asset pair off
+the order; push's decoded the `PriceSource` and no order at all. So one mode charged its
+limit order to the read and the other charged the same work to the residual, and the two
+residuals — published side by side, one line apart — were measuring different things.
+The size of the error is not marginal: the order decode is about 2,000 cycles and the
+registration decode about 1,800, roughly a fifth of the whole push figure.
+
+Both decodes therefore moved above the branch. A setup runs identically in every stage,
+so it cancels out of every difference, and what remains in stage 1 is the roster rebuild
+and `verify_price` on one side, the clock decode and `read_price` on the other — which is
+what Decision 1 says a read is. Corrected, the residuals are 7,275 and 6,479 rather than
+2,025 and 5,163: close together, which is the result the argument predicted and the first
+draft's numbers contradicted.
+
+A consequence worth naming: stage 1 is **not a prefix of `settle`'s execution**, and no
+longer claims to be. The real settlement decodes the order first, reaches the registration
+through `trust::read`'s guards, and checks the order's terms before it reads a price at
+all. Stage 1 is a measurement of one operation over values already in hand. `2 - 1` is
+still what settling costs beyond reading, because subtraction does not care what order the
+work was done in, but "the same calls in the same order" was a claim the code did not
+support and it has been removed from both guests.
+
+*Rejected: decode inside stage 1 on both sides, symmetrically.* It equalises the error
+instead of removing it, and publishes a "mode's read" that includes the reference
+consumer's toy trade — which is the thing Decision 1 exists to keep out.
+
+## Decision 3: the measurement guests go in the consumers' own workspaces
 
 **Each cost guest is a binary in the guest workspace of the consumer it measures, and
 neither adds a dependency edge to that workspace.**
@@ -83,20 +117,30 @@ unit LEZ charges in and not comparable with anything else in `COSTS.md`.
 
 ## Consequences
 
-- **The headline figure is a ratio, and it is asserted.** A pull read is 3,046,550
-  cycles against a push read's 8,388 — 363×, and
-  `a_pull_read_costs_three_orders_of_magnitude_more_than_a_push_read` pins it.
+- **The headline figure is a ratio, and it is asserted.** A pull read is 3,041,427
+  cycles against a push read's 6,803 — 447×, and
+  `a_pull_read_costs_hundreds_of_times_more_than_a_push_read` pins it.
   `the_gap_between_the_modes_is_signature_recovery` pins the explanation: five-signer
   recovery is 96% of the difference, so the gap is one component rather than a pile of
-  small ones.
-- **`verify_price` agrees with the component table to within 497 cycles**, which is the
+  small ones. It is 96% and not all of it, and both this file and `COSTS.md` say so:
+  the remaining 4% is the rest of verification.
+- **`verify_price` agrees with the component table to within 739 cycles**, which is the
   cross-check that the pull read really is an update's verification rather than something
-  adjacent to it. Those 497 are one clock decode and the library call.
-- **The published decode's first figure was wrong, and cheaply so.** 45 cycles for 136
-  bytes, because the stage returned one field and the optimiser elided the rest. This is
-  the second time in this repository that an implausibly cheap figure came from an
-  observation that did not keep its value alive, and the second time
-  `core::hint::black_box` was the fix. `COSTS.md` records both.
+  adjacent to it. Those 739 are one clock decode and the library call.
+- **Push mode's read is mostly hashing, and an earlier draft said it hashed nothing.**
+  `read_price` checks the account's address first, which derives two PDAs, each a SHA-256
+  over its seeds: 3,654 cycles, 54% of the read and more than twice the account's decode.
+  It is now its own measured stage rather than part of a remainder attributed to "the
+  checks". What push mode avoids is signature recovery, not cryptography — which is also
+  why the consumer's guest manifest pins `sha2` to the accelerator.
+- **Two observation holes were found, and the second was the expensive kind.** The
+  published decode reported 45 cycles for 136 bytes because the stage returned one field;
+  `core::hint::black_box` over the whole value gives 1,575. The whole-`settle` stages had
+  the same hole and hid it better, returning only `post_states.len()` so that every field
+  of every returned account was a value nothing read. That one produced a *plausible*
+  figure, in the stage that dominates the table, which is what makes it the more
+  instructive of the two: implausibility is a signal that a figure is elided, but
+  plausibility is not evidence that it is not.
 - **What LEZ spends reading instruction data is outside every figure here**, and it falls
   asymmetrically: a pull settlement carries the payload, at about 113 cycles a byte, so a
   1,200-byte capture is roughly 136,000 cycles before `settle` is entered. A push

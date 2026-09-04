@@ -186,47 +186,69 @@ variations on one design (M3-08).
 
 | | pull | push |
 | --- | ---: | ---: |
-| **the mode's read** | **3,046,550** | **8,388** |
-| settling, beyond the read | 2,025 | 5,163 |
-| the whole `settle` body | 3,048,575 | 13,551 |
-| _harness floor, subtracted out_ | 140,970 | 68,285 |
-| _the read, against LEZ's per-transaction budget_ | _9.08%_ | _0.0250%_ |
+| **the mode's read** | **3,041,427** | **6,803** |
+| settling, beyond the read | 7,275 | 6,479 |
+| the whole `settle` body | 3,048,702 | 13,282 |
+| _harness floor, subtracted out_ | 147,494 | 70,584 |
+| _the read, against LEZ's per-transaction budget_ | _9.06%_ | _0.0203%_ |
 
-**A pull read costs 363 times a push read.** Not a tuning difference — the pull
+**A pull read costs 447 times a push read.** Not a tuning difference — the pull
 consumer has nothing published to fetch, so its read *is* a verification, and it
 pays that on every read. The push consumer reads six fields the aggregator
-already verified once, and hashes nothing.
+already verified once, and recovers no signatures.
 
-Every cycle of the gap is signature recovery. `cost.rs` measures five-signer
-recovery at 2,922,890, which is 96% of the 3,038,162-cycle difference, and
-`the_gap_between_the_modes_is_signature_recovery` asserts that share rather than
-leaving it as a claim. There is no arrangement of the surrounding code that
-matters next to it, which is the same conclusion the component table reaches for
-an update and the reason ADR 3's `VerifierBackend` exists.
+96% of the gap is signature recovery, and nothing else in it comes close.
+`cost.rs` measures five-signer recovery at 2,922,890 against a difference of
+3,034,624, and `the_gap_between_the_modes_is_signature_recovery` asserts that
+share rather than leaving it as a claim. The other 4% is the rest of
+verification — the package walk, the hashing, the membership lookups — so the
+claim is that the gap is one component and not that it is only one component.
+That is the same conclusion the component table reaches for an update, and the
+reason ADR 3's `VerifierBackend` exists.
+
+Both stage 1s contain the same kind of work, which is what makes the two
+residuals on the second row comparable. Everything a consumer holds *before* it
+reads — the registration's decode on both sides, and the order's on the pull
+side, where `verify_price` needs the asset pair off it — is done in the setup
+that cancels. An earlier draft did those decodes inside the read and so charged
+the reference consumer's limit order to pull mode and a fifth of the push figure
+to push mode, which is what made the two residuals look four times further apart
+than they are. `[M3-08:01]` records the correction.
 
 ### What each read is made of
 
 | pull | cycles |
 | --- | ---: |
-| rebuilding the registered roster | 6,263 |
-| `verify_price` over five packages at a threshold of three | 3,040,287 |
+| rebuilding the registered roster | 898 |
+| `verify_price` over five packages at a threshold of three | 3,040,529 |
 
 | push | cycles |
 | --- | ---: |
-| `LezClock::from_account` | 274 |
-| `OraclePriceAccount::try_from_slice` | 1,548 |
-| the four checks around it | the remainder, 6,566 |
+| deriving the price account's address | 3,654 |
+| `OraclePriceAccount::try_from_slice` | 1,575 |
+| `LezClock::from_account` | 267 |
+| the four remaining checks | the remainder, 1,307 |
 
-The pull side's `verify_price` figure is within 497 cycles of the 3,039,790 the
+The pull side's `verify_price` figure is within 739 cycles of the 3,039,790 the
 component table gives for the same five-signer payload, and that agreement is
 worth stating: it means the pull read is an update's verification and not
-something adjacent to it. The 497 is one clock decode and the library call
+something adjacent to it. The 739 is one clock decode and the library call
 around it.
 
-The push side's four checks are the address the price is published to, the
-aggregator's ownership of it, the `source_id`, the asset pair, and the staleness
-window in both directions. `read.rs` names them in the order they run, cheapest
-refusal first.
+**The largest item in a push read is hashing**, which is worth saying plainly
+because an earlier draft of this file said the mode hashed nothing. `read_price`
+opens by checking that the account it was handed is the one this feed publishes
+to, and computing that address means `compute_pda` twice — once for the feed
+account, once for the price account derived from it — each a SHA-256 over its
+seeds. At 3,654 cycles that is 54% of the read, more than twice the account's
+decode, and it is why the consumer's guest manifest pins `sha2` to the risc0
+accelerator. What push mode avoids is signature *recovery*, not cryptography.
+
+The four checks left in the remainder are the aggregator's ownership of the
+account, the `source_id`, the asset pair, and the staleness window in both
+directions. `read.rs` names all five in the order they run, cheapest refusal
+first, and the address is first because everything after it is a statement about
+the wrong account otherwise.
 
 ### The operations each residual bundles
 
@@ -236,22 +258,26 @@ component.
 
 | measured in isolation | pull | push |
 | --- | ---: | ---: |
-| the consumer's own registration (`trust::read` / `source::read`) | 3,387 | 1,847 |
-| the order's decode | 2,031 | 2,029 |
-| filling the order and encoding it | 2,861 | 2,849 |
+| the consumer's own registration (`trust::read` / `source::read`) | 3,385 | 1,839 |
+| the order's decode | 2,034 | 2,021 |
+| filling the order and encoding it | 2,917 | 2,838 |
 
 **These do not sum to the residual, and are not meant to**, for the reason M2-18
 recorded: isolated calls do not cost what inlined ones do. The pull residual is
-2,025 cycles and the three figures above it total 8,279, which is not a
-contradiction — the settlement decodes the order once and `settle` inlines what a
-separate call cannot.
+7,275 cycles and the three figures above it total 8,336, which is not a
+contradiction — `settle` inlines what a separate call cannot.
 
-Two of the three rows agreeing across modes to within a few cycles is the
-expected result rather than a coincidence: M3-05 and M3-06 hold the same limit
-order on purpose, so the same order type is decoded, filled and encoded on both
-sides. Where the two differ is `trust::read` against `source::read`, and the
-1,540-cycle difference is a `FeedTrust` carrying a signer roster and a data
-service label against a `PriceSource` carrying five fixed-width fields.
+Two of the three rows agreeing across modes to within about ten cycles is the
+expected result rather than a coincidence, though not because the type is shared:
+the two consumers own separate `OrderAccount` types, and the pull one carries a
+`decimals` the push one does not, because a pull consumer has to know the scale
+a payload's integer is on and a push consumer is handed a `Q64.64` already. What
+M3-05 and M3-06 hold in common is the *shape* — the same seven fields of the same
+widths, plus that one byte — which is why the decode and the write price out
+within a few cycles of each other. Where the two genuinely differ is `trust::read`
+against `source::read`, and the 1,546-cycle difference is a `FeedTrust` carrying a
+signer roster and a data service label against a `PriceSource` carrying five
+fixed-width fields.
 
 ### The elision trap, again
 
@@ -259,12 +285,21 @@ The published account's decode first measured **45 cycles**, which is not a
 plausible price for reading 136 bytes — the component table gives 1,442 for the
 same decode. The stage returned one field of the decoded value, so the optimiser
 elided every other field. Observing the whole value through
-`core::hint::black_box` gives 1,548. The order decodes moved the same way, from
-1,879 to 2,031.
+`core::hint::black_box` gives 1,575. The order decodes moved the same way, from
+1,879 to 2,034.
 
-This is the second time this file records that failure and the second time
+The whole-`settle` stages had the same hole and it went unnoticed longer, because
+the figure it produced was not implausible. Those stages returned only
+`post_states.len()`, so every field of every returned account was a value nothing
+read, and an optimiser is entitled to skip building what never escapes. They now
+observe the post-states themselves before taking the length. It is the same fix
+in the stage that dominates the table, which is the one place a silent elision
+would have been worth the most.
+
+This is the third time this file records that failure and the third time
 `black_box` is the fix rather than a checksum. A figure too cheap to be plausible
-is the same signal as a test that cannot fail.
+is the same signal as a test that cannot fail — and a figure that is merely
+*plausible* is not evidence that the value was kept alive.
 
 ### What is not in these figures
 

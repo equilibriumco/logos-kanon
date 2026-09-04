@@ -8,12 +8,13 @@
 //!   and establishes the price itself, so its read is a verification, and it
 //!   pays that on every read.
 //! - **Push.** The aggregator verified once, at submission. A consumer reads the
-//!   account it wrote and checks provenance, freshness and the asset pair, with
-//!   no cryptography at all.
+//!   account it wrote and checks provenance, freshness and the asset pair. No
+//!   signature is recovered; the hashing that remains is the two PDA derivations
+//!   that establish *which* account it is reading, and they are the majority of
+//!   the figure.
 //!
-//! So the same requirement — P2's "per mode" — is answered by two figures that
-//! are three orders of magnitude apart, and that gap is the point rather than an
-//! artefact. `COSTS.md` states it, and `[M3-08:01]` records what "a read" is
+//! So the same requirement — P2's "per mode" — is answered by two figures a
+//! factor of 447 apart, and that gap is the point rather than an artefact. `COSTS.md` states it, and `[M3-08:01]` records what "a read" is
 //! taken to mean on each side and why two figures per mode are published rather
 //! than one.
 //!
@@ -31,6 +32,15 @@
 //! Both are `stage 1 - stage 0` for the mode's read and `stage 2 - stage 0` for
 //! the whole `settle` body, with the isolated stages above 2 pricing what the
 //! residual contains.
+//!
+//! The two stage 1s contain the same *kind* of work, which is what lets the two
+//! residuals beside them be compared. Everything a consumer holds before it
+//! reads — the registration's decode on both sides, and the order's on the pull
+//! side, where `verify_price` needs the pair off it — happens in the setup above
+//! the branch and cancels. An earlier draft did those decodes inside stage 1 and
+//! so charged the reference consumer's limit order to pull mode's read and a
+//! fifth of the push figure to push mode's; the two guests carry the correction
+//! and `[M3-08:01]` records it.
 //!
 //! # Why the figures are pinned by exact equality
 //!
@@ -110,54 +120,86 @@ mod stage {
     /// decode separates; `verify_price` performs it internally, so on the pull
     /// side it is inside the read.
     pub const CLOCK: u8 = 7;
+    /// Push side only. The two PDA derivations `read_price` opens with.
+    pub const ADDRESS: u8 = 8;
 }
 
 /// Published in `COSTS.md`, and asserted here so the two cannot drift.
 mod pull {
     /// The mode's read: rebuild the registered roster, then verify the payload
     /// against it. Five packages at a threshold of three.
-    pub const READ: u64 = 3_046_550;
+    pub const READ: u64 = 3_041_427;
+    /// What that read is of LEZ's per-transaction budget, as `COSTS.md` prints it.
+    pub const BUDGET_SHARE: &str = "9.06%";
     /// `verify_price` without the roster rebuild that precedes it.
     ///
-    /// Within 497 cycles of `cost.rs`'s 3,039,790 for the same five-signer
+    /// Within 739 cycles of `cost.rs`'s 3,039,790 for the same five-signer
     /// payload, and that agreement is the point: a pull read *is* an update's
     /// verification, plus one clock decode and the library call around it.
-    pub const VERIFY: u64 = 3_040_287;
+    pub const VERIFY: u64 = 3_040_529;
     /// The whole `settle` body.
-    pub const SETTLE: u64 = 3_048_575;
+    pub const SETTLE: u64 = 3_048_702;
     /// What settling costs on top of reading.
-    pub const BEYOND_READ: u64 = 2_025;
-    pub const FLOOR: u64 = 140_970;
-    pub const REGISTRATION: u64 = 3_387;
-    pub const ORDER_DECODE: u64 = 2_031;
-    pub const ROSTER: u64 = 6_263;
-    pub const ORDER_WRITE: u64 = 2_861;
+    pub const BEYOND_READ: u64 = 7_275;
+    pub const FLOOR: u64 = 147_494;
+    pub const REGISTRATION: u64 = 3_385;
+    pub const ORDER_DECODE: u64 = 2_034;
+    /// `signer_addresses` and `config`, over a `FeedTrust` the setup decoded.
+    ///
+    /// Small because it is only the rebuild: an earlier draft measured 6,263 here
+    /// and most of that was the trust account's decode and the order's, which
+    /// have since moved into the setup that cancels.
+    pub const ROSTER: u64 = 898;
+    pub const ORDER_WRITE: u64 = 2_917;
 }
 
 /// The other mode, on the same terms. Also published in `COSTS.md`.
 mod push {
     /// The mode's read: decode the clock, then read the published account
-    /// against the registration. No cryptography anywhere in it.
-    pub const READ: u64 = 8_388;
+    /// against the registration the setup decoded.
+    pub const READ: u64 = 6_803;
+    /// What that read is of LEZ's per-transaction budget, as `COSTS.md` prints it.
+    pub const BUDGET_SHARE: &str = "0.0203%";
     /// The whole `settle` body.
-    pub const SETTLE: u64 = 13_551;
+    pub const SETTLE: u64 = 13_282;
     /// What settling costs on top of reading.
-    pub const BEYOND_READ: u64 = 5_163;
-    pub const FLOOR: u64 = 68_285;
-    pub const REGISTRATION: u64 = 1_847;
-    pub const ORDER_DECODE: u64 = 2_029;
+    pub const BEYOND_READ: u64 = 6_479;
+    pub const FLOOR: u64 = 70_584;
+    pub const REGISTRATION: u64 = 1_839;
+    pub const ORDER_DECODE: u64 = 2_021;
     /// `OraclePriceAccount::try_from_slice`. `cost.rs` measures the same decode
     /// inside `submit_price` at 1,442; the gap is the `black_box` this stage
     /// needs and the difference between an isolated call and an inlined one.
-    pub const PUBLISHED_DECODE: u64 = 1_548;
-    pub const CLOCK: u64 = 274;
-    pub const ORDER_WRITE: u64 = 2_849;
+    pub const PUBLISHED_DECODE: u64 = 1_575;
+    pub const CLOCK: u64 = 267;
+    /// `price_account_address`: two `compute_pda` calls, each a SHA-256 over its
+    /// seeds. The single largest item in a push read, and the reason the claim
+    /// that this mode "hashes nothing" was wrong.
+    pub const ADDRESS: u64 = 3_654;
+    pub const ORDER_WRITE: u64 = 2_838;
 
     /// How many times a pull read costs what a push read costs.
     ///
     /// The figure M3-08 exists to produce, and the reason P2 asks for costs per
     /// mode rather than once: the two are not variations on one number.
-    pub const PULL_IS_THIS_MANY_TIMES_DEARER: u64 = 363;
+    pub const PULL_IS_THIS_MANY_TIMES_DEARER: u64 = 447;
+}
+
+/// LEZ's per-transaction cycle budget, the same constant `cost.rs` divides by.
+const BUDGET: u64 = 33_554_432;
+
+/// A read's share of that budget, formatted the way `COSTS.md` prints it.
+///
+/// Formatted rather than compared as a number so that the published string and
+/// the asserted one are the same object: a percentage nobody asserts is a
+/// percentage that goes stale silently.
+fn budget_share(cycles: u64) -> String {
+    let pct = cycles as f64 * 100.0 / BUDGET as f64;
+    if pct >= 1.0 {
+        format!("{pct:.2}%")
+    } else {
+        format!("{pct:.4}%")
+    }
 }
 
 fn vector() -> Vector {
@@ -386,6 +428,11 @@ fn a_pull_read_costs_what_is_published() {
         "a pull read moved. It is a verification, so this figure tracks `verify_feed`: \
          check `cost.rs` before assuming this guest changed"
     );
+    assert_eq!(
+        budget_share(read - floor),
+        pull::BUDGET_SHARE,
+        "a pull read's share of the per-transaction budget moved"
+    );
 }
 
 #[test]
@@ -493,6 +540,10 @@ fn the_read_table_is_reproducible() {
             cycles(Mode::Push, stage::PREREQUISITE) - floor_push,
         ),
         (
+            "push:   of which the address derivation",
+            cycles(Mode::Push, stage::ADDRESS) - floor_push,
+        ),
+        (
             "push: settling, beyond the read",
             cycles(Mode::Push, stage::SETTLE) - cycles(Mode::Push, stage::READ),
         ),
@@ -518,6 +569,20 @@ fn the_read_table_is_reproducible() {
     for (name, value) in rows.iter().chain(push.iter()) {
         println!("| {name:42} | {value:>11} |");
     }
+    // The two percentages `COSTS.md` publishes, printed by the code that asserts
+    // them so the table is reproducible in full rather than in most of its rows.
+    for (name, share) in [
+        (
+            "pull: the read, against LEZ's budget",
+            budget_share(cycles(Mode::Pull, stage::READ) - floor),
+        ),
+        (
+            "push: the read, against LEZ's budget",
+            budget_share(cycles(Mode::Push, stage::READ) - floor_push),
+        ),
+    ] {
+        println!("| {name:42} | {share:>11} |");
+    }
     println!();
 }
 
@@ -529,10 +594,15 @@ fn a_push_mode_read_costs_what_is_published() {
     );
     assert_eq!(floor, push::FLOOR, "the harness floor moved");
     assert_eq!(read - floor, push::READ, "a push-mode read moved");
+    assert_eq!(
+        budget_share(read - floor),
+        push::BUDGET_SHARE,
+        "a push read's share of the per-transaction budget moved"
+    );
 }
 
 #[test]
-fn the_two_operations_a_push_read_cannot_skip_cost_what_is_published() {
+fn the_operations_a_push_read_cannot_skip_cost_what_is_published() {
     let floor = cycles(Mode::Push, stage::FLOOR);
     assert_eq!(
         cycles(Mode::Push, stage::CLOCK) - floor,
@@ -543,6 +613,11 @@ fn the_two_operations_a_push_read_cannot_skip_cost_what_is_published() {
         cycles(Mode::Push, stage::PREREQUISITE) - floor,
         push::PUBLISHED_DECODE,
         "the published account's decode moved"
+    );
+    assert_eq!(
+        cycles(Mode::Push, stage::ADDRESS) - floor,
+        push::ADDRESS,
+        "deriving the price account's address moved"
     );
 }
 
@@ -586,7 +661,7 @@ fn the_push_sides_isolated_operations_cost_what_is_published() {
 /// Asserted rather than left to the reader's arithmetic, because it is the one
 /// figure a reader takes away and the two modes' rows are far apart in the table.
 #[test]
-fn a_pull_read_costs_three_orders_of_magnitude_more_than_a_push_read() {
+fn a_pull_read_costs_hundreds_of_times_more_than_a_push_read() {
     let pull_read = cycles(Mode::Pull, stage::READ) - cycles(Mode::Pull, stage::FLOOR);
     let push_read = cycles(Mode::Push, stage::READ) - cycles(Mode::Push, stage::FLOOR);
     assert_eq!(
@@ -596,15 +671,21 @@ fn a_pull_read_costs_three_orders_of_magnitude_more_than_a_push_read() {
     );
 }
 
-/// Every cycle of the difference is recovery, and nothing else comes close.
+/// Almost every cycle of the difference is recovery, and nothing else comes close.
 ///
 /// The claim `COSTS.md` makes and the one a reader is most likely to doubt: that
-/// the gap is not a pile of small differences but one component. `cost.rs`
-/// measures five-signer recovery at 2,922,890, which is 96% of a pull read.
+/// the gap is not a pile of small differences but one component. It is 96% of the
+/// gap rather than all of it, and the remaining 4% is stated as such in both
+/// places rather than rounded away.
 #[test]
 fn the_gap_between_the_modes_is_signature_recovery() {
     let pull_read = cycles(Mode::Pull, stage::READ) - cycles(Mode::Pull, stage::FLOOR);
     let push_read = cycles(Mode::Push, stage::READ) - cycles(Mode::Push, stage::FLOOR);
+    // Copied from `cost.rs`'s `expected::COMPONENTS` row for five signers, which
+    // is a separate test binary and so a separate crate: there is nothing to
+    // import. `recovery_cycles_are_unchanged` there pins the original, and this
+    // assertion fails the moment the two disagree, which is what keeps the copy
+    // from going stale on its own.
     const FIVE_SIGNER_RECOVERY: u64 = 2_922_890;
     let gap = pull_read - push_read;
     let share = FIVE_SIGNER_RECOVERY * 100 / gap;

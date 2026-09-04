@@ -41,6 +41,23 @@
 //! Stage 5 is the one with a job beyond curiosity: `1 - 5` isolates
 //! `verify_price` from the roster rebuild that has to precede it.
 //!
+//! # What the read is not allowed to contain
+//!
+//! Stage 1 is a measurement of one operation, not a replay of `settle`'s opening
+//! moves — `settle` decodes the order first, reaches the registration through
+//! `trust::read`, and checks the order's terms before it verifies anything.
+//! Reproducing that order here would buy nothing and did cost something: an
+//! earlier draft decoded the registration *and* the `OrderAccount` inside stage
+//! 1, which charged the reference consumer's limit order to the pull mode's read
+//! while the push guest charged its own order decode to the residual. Two
+//! residuals published side by side then meant different things.
+//!
+//! So both decodes moved above the branch, into the setup every stage pays and
+//! every difference cancels. What stage 1 measures is the roster rebuild and
+//! `verify_price`, which is what `[M3-08:01]` says a pull read is, and what the
+//! push guest's stage 1 measures is the same shape: the mode's own work over
+//! values a consumer already holds.
+//!
 //! **They are under no obligation to sum to anything.** M2-18 tried to make
 //! isolated figures account for a difference between two paths and could not —
 //! inlined code does not cost what a separate call costs — and `COSTS.md`
@@ -119,8 +136,47 @@ fn main() {
     };
     let feed = <[u8; 32]>::try_from(feed_id.as_slice()).unwrap_or([0; 32]);
 
-    let report = run(stage, &payload_bytes, order, trust, clock, feed, ours);
+    let (registered, stored) = match (
+        FeedTrust::try_from_slice(trust.account.data.as_ref()),
+        OrderAccount::try_from_slice(order.account.data.as_ref()),
+    ) {
+        (Ok(registered), Ok(stored)) => (registered, stored),
+        _ => {
+            env::commit(&(0u32, 0u64, 0u32));
+            return;
+        }
+    };
+
+    // Re-opaqued after the decodes above have been taken, so that stage 4's
+    // isolated decode of the same bytes cannot be folded into the setup's. A
+    // `black_box` before the first decode would not do it: two pure decodes of
+    // one opaque value are still common subexpressions.
+    let order = core::hint::black_box(order);
+    let trust = core::hint::black_box(trust);
+
+    let prepared = Prepared {
+        order,
+        trust,
+        clock,
+        feed_id: feed,
+        ours,
+        registered,
+        stored,
+    };
+    let report = run(stage, &payload_bytes, prepared);
     env::commit(&report);
+}
+
+/// What the setup prepared, so a stage arm measures its own work and not the
+/// decoding that got there.
+struct Prepared {
+    order: AccountWithMetadata,
+    trust: AccountWithMetadata,
+    clock: AccountWithMetadata,
+    feed_id: [u8; 32],
+    ours: ProgramId,
+    registered: FeedTrust,
+    stored: OrderAccount,
 }
 
 fn account_owned_by(owner: ProgramId, data: Vec<u8>, id: [u8; 32]) -> AccountWithMetadata {
@@ -136,35 +192,44 @@ fn account_owned_by(owner: ProgramId, data: Vec<u8>, id: [u8; 32]) -> AccountWit
     }
 }
 
-fn run(
-    stage: u8,
-    payload_bytes: &[u8],
-    order: AccountWithMetadata,
-    trust: AccountWithMetadata,
-    clock: AccountWithMetadata,
-    feed_id: [u8; 32],
-    ours: ProgramId,
-) -> Report {
+fn run(stage: u8, payload_bytes: &[u8], prepared: Prepared) -> Report {
     match stage {
         0 => (0, 0, 0),
 
         // The real body, whole. Everything stage 1 does happens inside it, which
         // is what makes the difference a figure about this code rather than about
         // a restatement of it.
-        2 => match settle(order, trust, clock, feed_id, payload_bytes, ours) {
-            Ok(post_states) => (1, 0, post_states.len() as u32),
+        2 => match settle(
+            prepared.order,
+            prepared.trust,
+            prepared.clock,
+            prepared.feed_id,
+            payload_bytes,
+            prepared.ours,
+        ) {
+            // The post-states through `black_box` before their length is taken.
+            // A settlement observed only by how many accounts it returned is one
+            // whose account contents nothing reads, and the optimiser is
+            // entitled to skip building what never escapes -- the same trap the
+            // 45-cycle decode fell into, in the stage that dominates this table.
+            Ok(post_states) => {
+                core::hint::black_box(&post_states);
+                (1, 0, post_states.len() as u32)
+            }
             Err(_) => (0, 0, 0),
         },
 
-        1 | 5 => read(stage, payload_bytes, &order, &trust, &clock),
+        1 | 5 => read(stage, payload_bytes, &prepared),
 
-        // The consumer's own registration, read the way `settle` reads it.
-        3 => match trust::read(&trust, ours) {
+        // The consumer's own registration, read the way `settle` reads it: the
+        // owner and empty-data guards included, which is why this is dearer than
+        // the bare decode the setup performed.
+        3 => match trust::read(&prepared.trust, prepared.ours) {
             Ok(registered) => (1, registered.max_age_ms, 0),
             Err(_) => (0, 0, 0),
         },
 
-        4 => match OrderAccount::try_from_slice(order.account.data.as_ref()) {
+        4 => match OrderAccount::try_from_slice(prepared.order.account.data.as_ref()) {
             // The whole value through `black_box`, not one field of it: the
             // optimiser elides every field nothing looks at, and a decode figure
             // that priced one `u128` would be a figure for something else.
@@ -176,7 +241,7 @@ fn run(
             Err(_) => (0, 0, 0),
         },
 
-        6 => write(&order),
+        6 => write(&prepared.order),
 
         _ => (0, 0, 0),
     }
@@ -184,27 +249,15 @@ fn run(
 
 /// Stage 1, and stage 5 as its prefix.
 ///
-/// Exactly the calls `settle` makes and in the same order, rather than a model of
-/// them: the consumer's own `verify` is private, so this is the same two public
-/// calls it is built from. The pair it verifies against is the *order's*, which is
-/// the point of that argument — the configuration carries the authority's, so the
-/// check holds two independently written records against each other rather than a
-/// value against itself (ADR 32, and `order.rs` says it at length).
-fn read(
-    stage: u8,
-    payload_bytes: &[u8],
-    order: &AccountWithMetadata,
-    trust: &AccountWithMetadata,
-    clock: &AccountWithMetadata,
-) -> Report {
-    let Ok(registered) = FeedTrust::try_from_slice(trust.account.data.as_ref()) else {
-        return (0, 0, 0);
-    };
-    let Ok(stored) = OrderAccount::try_from_slice(order.account.data.as_ref()) else {
-        return (0, 0, 0);
-    };
-    let signers = registered.signer_addresses();
-    let Ok(config) = registered.config(&signers) else {
+/// The two public calls the consumer's own private `verify` is built from, over
+/// a registration and an order the setup already decoded. The pair verified
+/// against is the *order's*, which is the point of that argument — the
+/// configuration carries the authority's, so the check holds two independently
+/// written records against each other rather than a value against itself
+/// (ADR 32, and `order.rs` says it at length).
+fn read(stage: u8, payload_bytes: &[u8], prepared: &Prepared) -> Report {
+    let signers = prepared.registered.signer_addresses();
+    let Ok(config) = prepared.registered.config(&signers) else {
         return (0, 0, 0);
     };
 
@@ -219,9 +272,9 @@ fn read(
     match verify_price(
         payload_bytes,
         &config,
-        &AssetPair::new(stored.base_asset, stored.quote_asset),
-        clock.account_id.value(),
-        clock.account.data.as_ref(),
+        &AssetPair::new(prepared.stored.base_asset, prepared.stored.quote_asset),
+        prepared.clock.account_id.value(),
+        prepared.clock.account.data.as_ref(),
         &InProgramBackend::new(),
     ) {
         Ok(verified) => (u32::from(verified.signers), verified.price as u64, 0),
