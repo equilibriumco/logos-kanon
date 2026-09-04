@@ -6,12 +6,19 @@
 # Usage: `build` or `fetch`, then `start`, `smoke`, `stop`. `pin` prints the
 # revision. Run with no arguments for the full list.
 #
-# Two things a reader needs before the code makes sense:
+# Three things a reader needs before the code makes sense:
 #
 #   * `build` compiles LEZ from source and is what a developer uses. `fetch`
 #     pulls a prebuilt image, published once per revision by
 #     `lez-sequencer-image.yml`, and is what CI uses. Both leave the same layout
 #     behind, so `start`, `smoke` and `stop` do not care which ran.
+#
+#   * `start` runs the sequencer **in a container** by default, beside the
+#     Bedrock node that was already one. `KANON_SEQUENCER_RUNTIME=host` runs the
+#     binary as a host process instead, which is the only thing that works where
+#     the published image's glibc does not -- NixOS, or any host that is not
+#     x86_64 linux, where `build` is the way in. ADR 34 records the switch and
+#     what host networking costs; ADR 12 is the decision it supersedes in part.
 #
 #   * The LEZ revision is read from the committed product lockfiles, never
 #     configured here, and the script refuses to run if they disagree. A
@@ -45,7 +52,32 @@ readonly LEZ_REPO_URL="https://github.com/logos-blockchain/logos-execution-zone"
 # not fit a standard runner, so `ci.yml` pulls this and `fetch` unpacks it into
 # the layout `build` would have produced.
 readonly IMAGE="${KANON_SEQUENCER_IMAGE:-ghcr.io/equilibriumco/kanon-lez-sequencer}"
+# Which of the two `start` paths runs. `container` is the default because it is
+# the one that does not depend on the host's libc matching the image's; `host`
+# is for a machine where a glibc binary will not run, and is what `build`
+# produces for.
+readonly RUNTIME="${KANON_SEQUENCER_RUNTIME:-container}"
+# Named rather than left to docker so `stop` can find it after a shell has gone
+# away, and so two checkouts on one machine collide loudly rather than silently
+# sharing a port.
+readonly CONTAINER="${KANON_SEQUENCER_CONTAINER:-kanon-lez-sequencer}"
 readonly PORT="${KANON_SEQUENCER_PORT:-3055}"
+# Where the image keeps the config the sequencer is pointed at. The image's own
+# copy of the file `fetch` extracts, so the two runtimes read the same bytes --
+# LEZ's committed debug config, unmodified, which is the property ADR 12 chose
+# host networking to keep.
+readonly CONTAINER_CONFIG=/lez/lez/sequencer/service/configs/debug/sequencer_config.json
+# The image's WORKDIR, and where the run state is bind-mounted. Named because
+# `--home` has to be given the path as the *sequencer* sees it, not as the host
+# does.
+readonly CONTAINER_HOME=/var/lib/lez
+# The host-side config path and binary, resolved in `cmd_start` once the checkout
+# is known. The binary is resolved eagerly there rather than inside the two
+# functions that need it: `sequencer_bin` reports a missing build by dying, and
+# a `die` inside a command substitution only kills the subshell -- the caller
+# would go on to run `--help` with an empty command and report that instead.
+HOST_CONFIG=""
+HOST_BIN=""
 # Fixed by the debug config's `bedrock_config.node_url`, which is
 # `http://localhost:18080`. Changing it means rewriting the config, so it is
 # not offered as a knob.
@@ -183,6 +215,39 @@ cmd_build() {
 # it, and the binary it carries is dynamically linked against ubuntu-24.04, so
 # this is for CI. On a developer machine, and on NixOS in particular, use
 # `build`.
+image_ref() { printf '%s:%s' "$IMAGE" "$(lez_rev)"; }
+
+# The image for the pinned revision, on this machine.
+#
+# An image already present is used as-is, which makes both callers idempotent and
+# lets the container path be exercised locally against a hand-built image rather
+# than only against the registry.
+ensure_image() {
+  local ref
+  ref="$(image_ref)"
+  if docker image inspect "$ref" >/dev/null 2>&1; then
+    log "using local image $ref"
+  else
+    log "pulling $ref"
+    docker pull "$ref" || die \
+      "no published sequencer image for $(lez_rev)."$'\n'"Run the 'LEZ sequencer image' workflow to publish one, or build locally: $0 build"
+  fi
+}
+
+# That the image is one the container runtime can actually run.
+#
+# Every image published before ADR 34 is `FROM scratch` with no entrypoint.
+# `fetch` still works against one -- extraction does not care -- so this is
+# asserted by `start` and not by `ensure_image`, which both share. Without it the
+# failure is `docker run` complaining about a missing executable, which reads
+# like a broken script rather than like an image that needs republishing.
+assert_image_runnable() {
+  local ref
+  ref="$(image_ref)"
+  [ "$(docker image inspect -f '{{len .Config.Entrypoint}}' "$ref")" = 0 ] || return 0
+  die "$ref carries no entrypoint, so it predates adr/0034 and cannot be run."$'\n'"Re-run the 'LEZ sequencer image' workflow to republish it, or: KANON_SEQUENCER_RUNTIME=host $0 start"
+}
+
 cmd_fetch() {
   local rev dir cid
   rev="$(lez_rev)"
@@ -193,25 +258,17 @@ cmd_fetch() {
     return 0
   fi
 
-  # An image already on the machine is used as-is, which makes this idempotent
-  # and lets the extraction path be exercised locally against a hand-built
-  # image rather than only against the registry.
-  if docker image inspect "$IMAGE:$rev" >/dev/null 2>&1; then
-    log "using local image $IMAGE:$rev"
-  else
-    log "pulling $IMAGE:$rev"
-    docker pull "$IMAGE:$rev" || die \
-      "no published sequencer image for $rev."$'\n'"Run the 'LEZ sequencer image' workflow to publish one, or build locally: $0 build"
-  fi
+  ensure_image
 
   assert_safe_to_remove "$dir" "KANON_LEZ_CACHE checkout"
   rm -rf "$dir"
   mkdir -p "$dir"
 
-  # A command has to be supplied even though nothing is ever run: the image is
-  # `FROM scratch` and carries no CMD, and `docker create` refuses with "no
-  # command specified" without one. The path named here is never executed; the
-  # container exists only so its filesystem can be copied out.
+  # The container is created and never started: it exists only so its filesystem
+  # can be copied out. The argument is left in place from when the image was
+  # `FROM scratch` and `docker create` refused without one; the image has an
+  # entrypoint of its own now, so it is redundant rather than load-bearing, and
+  # harmless either way because nothing here runs.
   cid="$(docker create "$IMAGE:$rev" /lez/target/release/sequencer_service)" \
     || die "could not create a container from $IMAGE:$rev"
   if ! docker cp "$cid:/lez/." "$dir/"; then
@@ -234,7 +291,11 @@ sequencer_bin() {
 bedrock_up() {
   local dir
   dir="$(checkout_dir)/bedrock"
-  [ -d "$dir" ] || die "no bedrock directory in the LEZ checkout at $dir"
+  # Wanted in both runtimes: the compose file is LEZ's own and has to be on the
+  # host for `docker compose` to read it, so even the container path needs a
+  # checkout. `fetch` is the cheap way to get one.
+  [ -d "$dir" ] || die \
+    "no bedrock directory in the LEZ checkout at $dir; run: $0 fetch (or $0 build)"
 
   log "starting bedrock node (docker compose)"
   ( cd "$dir" && docker compose up -d )
@@ -252,17 +313,125 @@ bedrock_up() {
   log "bedrock up on :$BEDROCK_PORT"
 }
 
+# Whether a sequencer this script started is still alive, in either shape.
+#
+# Both are checked whichever runtime is selected, and that is what makes the
+# "already running" refusal in `cmd_start` useful: a host sequencer left over
+# from an earlier run holds `$PORT`, and a container started against it would
+# fail to bind with an error a reader has to go into the log to find. `start`
+# wipes the state directory, so the pid file cannot be stale by the time the
+# readiness loop below asks the same question.
+sequencer_running() {
+  if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = true ]; then
+    return 0
+  fi
+  [ -f "$STATE_DIR/pid" ] && kill -0 "$(cat "$STATE_DIR/pid")" 2>/dev/null
+}
+
+# Brings `$STATE_DIR/sequencer.log` up to date.
+#
+# A host process writes there itself, so this is a no-op for it. A container's
+# output lives in docker's own log, and copying it out each time round the loop
+# is what lets one `grep` serve both runtimes -- and leaves a file behind that
+# `logs` can read after the container is gone.
+refresh_log() {
+  [ "$RUNTIME" = container ] || return 0
+  docker logs "$CONTAINER" >"$STATE_DIR/sequencer.log" 2>&1 || true
+}
+
+# The sequencer's `--help`, from whichever artefact is about to be run.
+#
+# The CLI is not stable across LEZ releases, so the sequencer is asked what it
+# accepts rather than told. v0.2.1 takes `--listen-address` and `--home`; v0.2.0,
+# which the product now tracks, takes neither and fails outright on an unknown
+# flag. Feature-detecting keeps this script working across a pin move instead of
+# breaking on the one after next.
+#
+# A sequencer that cannot print its help cannot run either, and treating that as
+# "no flags supported" would start it subtly misconfigured instead of failing, so
+# both callers below turn a failure here into an error.
+sequencer_help() {
+  if [ "$RUNTIME" = container ]; then
+    docker run --rm "$(image_ref)" --help 2>&1
+  else
+    "$HOST_BIN" --help 2>&1
+  fi
+}
+
+# The sequencer in a container, beside the Bedrock node that was already one.
+#
+# `--network host` is what lets the committed config be used exactly as it
+# ships. `bedrock_config.node_url` is `http://localhost:18080`, and in a bridge
+# network `localhost` is the container itself, so any other arrangement means
+# rewriting a field of LEZ's own config -- which is the thing ADR 12 set out not
+# to do. It also puts the RPC straight onto the host's `$PORT`, so nothing
+# downstream has to know a container is involved. The cost is that this path is
+# Linux-only; `KANON_SEQUENCER_RUNTIME=host` is the way out, and ADR 34 records
+# the alternative that was weighed against it.
+#
+# `--user` matters more than it looks: RocksDB writes into the bind mount below,
+# and a root-owned state directory is one `stop` cannot delete, under a `target/`
+# the developer owns.
+start_container() {
+  local home
+  home="$STATE_DIR/home"
+
+  log "starting sequencer container $CONTAINER on :$PORT (home $home)"
+  docker run --detach --name "$CONTAINER" \
+    --network host \
+    --user "$(id -u):$(id -g)" \
+    --volume "$home:$CONTAINER_HOME" \
+    --env RISC0_DEV_MODE="${RISC0_DEV_MODE:-1}" \
+    --env RUST_LOG="${RUST_LOG:-info}" \
+    "$(image_ref)" \
+    "$CONTAINER_CONFIG" --port "$PORT" "$@" >/dev/null \
+    || die "could not start $CONTAINER from $(image_ref)"
+}
+
+# The sequencer as a host process, from a binary `build` or `fetch` left behind.
+start_host() {
+  local home
+  home="$STATE_DIR/home"
+
+  log "starting sequencer on :$PORT (home $home)"
+  (
+    cd "$home"
+    RISC0_DEV_MODE="${RISC0_DEV_MODE:-1}" RUST_LOG="${RUST_LOG:-info}" \
+      "$HOST_BIN" "$HOST_CONFIG" --port "$PORT" "$@" \
+      >"$STATE_DIR/sequencer.log" 2>&1 &
+    printf '%s' "$!" >"$STATE_DIR/pid"
+  )
+}
+
 cmd_start() {
-  local bin dir cfg home
-  bin="$(sequencer_bin)"
+  local dir home guest_home
+
+  case "$RUNTIME" in
+    container|host) ;;
+    *) die "KANON_SEQUENCER_RUNTIME is '$RUNTIME'; expected 'container' or 'host'" ;;
+  esac
+
   dir="$(checkout_dir)"
   # v0.2.x nests the crate tree under `lez/`. That relocation is what breaks
-  # scaffold's hardcoded paths; here it is simply where the config is.
-  cfg="$dir/lez/sequencer/service/configs/debug/sequencer_config.json"
-  [ -f "$cfg" ] || die "no debug sequencer config at $cfg"
+  # scaffold's hardcoded paths; here it is simply where the config is. The
+  # container reads the same file from inside the image, which is why the two
+  # paths differ by a prefix and not by content.
+  HOST_CONFIG="$dir/lez/sequencer/service/configs/debug/sequencer_config.json"
 
-  if [ -f "$STATE_DIR/pid" ] && kill -0 "$(cat "$STATE_DIR/pid")" 2>/dev/null; then
-    die "a sequencer is already running (pid $(cat "$STATE_DIR/pid")); run: $0 stop"
+  if sequencer_running; then
+    die "a sequencer is already running; run: $0 stop"
+  fi
+  # A stopped container of the same name still owns the name, so `docker run`
+  # below would refuse. Removing one that is not running is safe and is what
+  # makes `start` after a crash work without a manual `stop`.
+  if [ "$RUNTIME" = container ]; then
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    ensure_image
+    assert_image_runnable
+  else
+    [ -f "$HOST_CONFIG" ] || die \
+      "no debug sequencer config at $HOST_CONFIG; run: $0 fetch (or $0 build)"
+    HOST_BIN="$(sequencer_bin)"
   fi
 
   bedrock_up
@@ -271,19 +440,19 @@ cmd_start() {
   home="$STATE_DIR/home"
   mkdir -p "$home"
 
-  # The sequencer's CLI is not stable across LEZ releases, so the binary is asked
-  # what it accepts rather than told. v0.2.1 takes `--listen-address` and
-  # `--home`; v0.2.0, which the product now tracks, takes neither and fails
-  # outright on an unknown flag. Feature-detecting keeps this script working
-  # across a pin move instead of breaking on the one after next.
+  # Where the state directory appears to the sequencer, which is the only thing
+  # `--home` can be given.
+  if [ "$RUNTIME" = container ]; then
+    guest_home="$CONTAINER_HOME"
+  else
+    guest_home="$home"
+  fi
+
   local help
   local -a extra
-  # A binary that cannot print its help cannot run either, and treating that as
-  # "no flags supported" would start the sequencer subtly misconfigured instead
-  # of failing. So the failure is surfaced here.
-  if ! help="$("$bin" --help 2>&1)"; then
+  if ! help="$(sequencer_help)"; then
     log "$help"
-    die "$bin could not run; if this came from \`fetch\`, the image is for x86_64 linux"
+    die "the sequencer could not run; if this came from \`fetch\`, the image is for x86_64 linux"
   fi
   extra=()
   case "$help" in
@@ -293,30 +462,29 @@ cmd_start() {
   case "$help" in
     # `--home` overrides the config's own `home` so the config can be used
     # exactly as committed. Without it the config's value applies, which in the
-    # debug config is `.` -- and since the sequencer is started from `$home`
-    # below, the RocksDB state still lands in a directory this script owns and
-    # can delete. That is why the `cd` is load-bearing rather than tidiness.
-    *--home*) extra+=(--home "$home") ;;
-    *) log "no --home in this build; the config's own home applies, relative to $home" ;;
+    # debug config is `.` -- and since both runtimes start the sequencer *in*
+    # the state directory (a `cd` on the host, a `WORKDIR` in the image), the
+    # RocksDB state still lands where this script can delete it. That is why
+    # both are load-bearing rather than tidiness.
+    *--home*) extra+=(--home "$guest_home") ;;
+    *) log "no --home in this build; the config's own home applies, relative to $guest_home" ;;
   esac
 
   # RISC0_DEV_MODE makes block production fast enough for tests to run at all;
   # the proofs it produces are not real ones, which is why testnet verification
   # is a separate deliverable and not something CI claims.
-  log "starting sequencer on :$PORT (home $home)"
-  (
-    cd "$home"
-    RISC0_DEV_MODE="${RISC0_DEV_MODE:-1}" RUST_LOG="${RUST_LOG:-info}" \
-      "$bin" "$cfg" --port "$PORT" "${extra[@]}" \
-      >"$STATE_DIR/sequencer.log" 2>&1 &
-    printf '%s' "$!" >"$STATE_DIR/pid"
-  )
+  if [ "$RUNTIME" = container ]; then
+    start_container "${extra[@]}"
+  else
+    start_host "${extra[@]}"
+  fi
 
-  local pid waited=0
-  pid="$(cat "$STATE_DIR/pid")"
+  local waited=0
+  refresh_log
   until grep -q "RPC server started" "$STATE_DIR/sequencer.log" 2>/dev/null; do
-    if ! kill -0 "$pid" 2>/dev/null; then
+    if ! sequencer_running; then
       log "sequencer exited during startup; last lines:"
+      refresh_log
       tail -30 "$STATE_DIR/sequencer.log" >&2 || true
       die "sequencer failed to start"
     fi
@@ -327,6 +495,7 @@ cmd_start() {
       die "sequencer did not report a listening RPC within ${READY_TIMEOUT}s"
     fi
     sleep 1
+    refresh_log
   done
 
   printf 'http://127.0.0.1:%s' "$PORT" >"$STATE_DIR/rpc"
@@ -364,6 +533,22 @@ cmd_smoke() {
 }
 
 cmd_stop() {
+  # Unconditionally, and not only in container mode: a `stop` run with a
+  # different `KANON_SEQUENCER_RUNTIME` than the `start` that preceded it should
+  # still clean up, and removing a container that does not exist costs nothing.
+  #
+  # The last log is copied out first, because `docker rm` takes docker's copy
+  # with it and a sequencer that misbehaved is exactly when the log is wanted.
+  if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    log "stopping sequencer container $CONTAINER"
+    docker logs "$CONTAINER" >"$STATE_DIR/sequencer.log" 2>&1 || true
+    # SIGTERM first, for the reason the host path gives below: the service shuts
+    # its store down cleanly on it. `docker stop` sends one and escalates to
+    # SIGKILL after its own timeout.
+    docker stop "$CONTAINER" >/dev/null 2>&1 || true
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  fi
+
   if [ -f "$STATE_DIR/pid" ]; then
     local pid
     pid="$(cat "$STATE_DIR/pid")"
@@ -393,7 +578,20 @@ cmd_stop() {
   log "stopped"
 }
 
-cmd_logs() { tail -n "${2:-50}" "$STATE_DIR/sequencer.log"; }
+# The sequencer's log, from wherever it currently lives.
+#
+# A running container's log is docker's, and the file under `$STATE_DIR` is only
+# as fresh as the last `refresh_log`; once the container is gone, `stop` has
+# copied the final one into that file. So the container is preferred when it is
+# there and the file is the fallback, which also covers the host runtime.
+cmd_logs() {
+  local lines="${2:-50}"
+  if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    docker logs --tail "$lines" "$CONTAINER" 2>&1
+  else
+    tail -n "$lines" "$STATE_DIR/sequencer.log"
+  fi
+}
 
 usage() {
   cat >&2 <<'USAGE'
@@ -407,13 +605,23 @@ usage: scripts/lez-sequencer.sh <command>
   stop    stop both and delete the run state
   logs    tail the sequencer log
 
+Both `build` and `fetch` leave a LEZ checkout behind, and `start` needs one
+either way: bedrock's compose file is read from it on the host.
+
 environment:
   KANON_LEZ_CACHE         checkout and build cache (default ~/.cache/kanon-lez)
   KANON_SEQUENCER_STATE   run state (default target/lez-sequencer)
   KANON_SEQUENCER_PORT    sequencer RPC port (default 3055)
   KANON_SEQUENCER_TIMEOUT readiness timeout in seconds (default 180)
-  KANON_SEQUENCER_IMAGE   prebuilt image for `fetch`
+  KANON_SEQUENCER_IMAGE   prebuilt image for `fetch` and for the container
                           (default ghcr.io/equilibriumco/kanon-lez-sequencer)
+  KANON_SEQUENCER_RUNTIME container (default) runs the sequencer in a container
+                          from that image, with --network host; host runs the
+                          binary as a host process, which is what to use where
+                          the image's glibc will not run (NixOS, non-x86_64,
+                          anything but linux). See adr/0034.
+  KANON_SEQUENCER_CONTAINER
+                          container name (default kanon-lez-sequencer)
 USAGE
   exit 64
 }

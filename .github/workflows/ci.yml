@@ -331,12 +331,18 @@ jobs:
       # Fails with a message naming the publish workflow when no image exists
       # for the revision the product resolves, which is what a pin bump looks
       # like. Better than silently starting an hour-long build.
+      #
+      # Still wanted now that `start` runs the image rather than a binary out of
+      # it: Bedrock's compose file is LEZ's own and `docker compose` reads it from
+      # the host, so a checkout has to exist either way.
       - name: Fetch the prebuilt sequencer
         run: scripts/lez-sequencer.sh fetch
 
-      # Bedrock runs from the image LEZ's own compose file names, so this is
-      # LEZ's stack rather than an approximation of it. `lgs test-node` is not
-      # used and cannot be: see the header of the script, and adr/0012.
+      # Both services are containers: Bedrock from the image LEZ's own compose
+      # file names, the sequencer from the image published for this revision
+      # (adr/0034). So this is LEZ's stack rather than an approximation of it.
+      # `lgs test-node` is not used and cannot be: see the header of the script,
+      # and adr/0012.
       - name: Start bedrock and the sequencer
         run: scripts/lez-sequencer.sh start
 

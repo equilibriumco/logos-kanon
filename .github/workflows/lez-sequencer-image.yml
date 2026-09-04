@@ -17,10 +17,19 @@
 # What it contains
 # ----------------
 # The built binary plus the two things `scripts/lez-sequencer.sh` needs from the
-# LEZ checkout: the debug sequencer config, and Bedrock's compose file. It is a
-# transport format for build output, not a runnable service image -- the script
-# extracts it into the same cache layout `build` would have produced, so
-# `start`, `smoke` and `stop` cannot tell the difference.
+# LEZ checkout: the debug sequencer config, and Bedrock's compose file.
+#
+# It is now both a runnable service image and the transport format it started
+# as, and one copy of the payload serves both. `start` runs the sequencer from
+# this image beside the Bedrock node that was already a container; `fetch` still
+# copies `/lez` out into the cache layout `build` would have produced, for the
+# hosts where a glibc binary cannot run at all. ADR 34 records the change; ADR 12
+# is where the transport-only decision was made.
+#
+# The base is `ubuntu:24.04` and not `scratch` because of that first use: the
+# binary is dynamically linked, and the packages installed below are what `ldd`
+# reports for it beyond the base image's own set. It is built here too, so the
+# ABI it links against is this runner's.
 #
 # When to run it
 # --------------
@@ -86,16 +95,34 @@ jobs:
 
       # Rebuilding an existing revision produces the same bytes and costs an
       # hour, so it is skipped unless asked for.
-      - name: Is this revision already published?
+      #
+      # "Already published" is not the same question as "already published in the
+      # shape the script now runs". Every revision published before ADR 34 is a
+      # `FROM scratch` transport image with no entrypoint: `fetch` still works
+      # against one, `start` cannot, and a tag check alone would report it as
+      # current and leave CI pulling something it cannot run. So the image is
+      # pulled and its entrypoint inspected, and an old-shaped one is rebuilt
+      # without anyone having to remember to pass `force`.
+      #
+      # A pull rather than `docker manifest inspect` because the config is what is
+      # being read, and the layers are wanted anyway on every path that goes on to
+      # build.
+      - name: Is this revision already published, in the shape `start` runs?
         id: exists
         run: |
+          set -euo pipefail
+          rev="${{ steps.lez.outputs.rev }}"
+
           if [ "${{ inputs.force }}" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif docker manifest inspect "$IMAGE:${{ steps.lez.outputs.rev }}" >/dev/null 2>&1; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::$IMAGE:${{ steps.lez.outputs.rev }} already exists; nothing to do"
-          else
+          elif ! docker pull --quiet "$IMAGE:$rev" >/dev/null 2>&1; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "$(docker image inspect -f '{{len .Config.Entrypoint}}' "$IMAGE:$rev")" = 0 ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE:$rev exists but carries no entrypoint, so it predates adr/0034; rebuilding"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE:$rev already exists; nothing to do"
           fi
 
       - name: Build the sequencer from the pinned revision
@@ -127,15 +154,62 @@ jobs:
         run: |
           set -euo pipefail
           cat > "${{ steps.stage.outputs.payload }}/Dockerfile" <<'DOCKERFILE'
-          # A transport format, not a service image. `scripts/lez-sequencer.sh
-          # fetch` copies the contents out; nothing runs in here.
-          FROM scratch
+          # Both a service image and a transport format. `scripts/lez-sequencer.sh
+          # start` runs the entrypoint; `fetch` copies `/lez` out and runs nothing.
+          FROM ubuntu:24.04
+
+          # What `ldd sequencer_service` needs and the base image does not already
+          # carry. Pinning versions here would pin them to this runner's archive
+          # snapshot and break the next rebuild for no benefit: the image is
+          # rebuilt only when the LEZ revision moves, and the binary inside it is
+          # linked against whatever this same runner provided.
+          RUN apt-get update \
+           && apt-get install -y --no-install-recommends \
+                ca-certificates \
+                libssl3t64 \
+                libstdc++6 \
+                zlib1g \
+                libzstd1 \
+                libbrotli1 \
+           && rm -rf /var/lib/apt/lists/*
+
+          # One copy, two uses: `fetch` extracts this tree, and the entrypoint
+          # below runs the binary out of it in place.
           COPY target/release/sequencer_service /lez/target/release/sequencer_service
           COPY lez /lez/lez
           COPY bedrock /lez/bedrock
+
+          # The run state, bind-mounted by `start`. It is the working directory
+          # because the debug config's `home` is `.`, which is how a LEZ build
+          # with no `--home` flag still writes its RocksDB somewhere the host can
+          # delete.
+          #
+          # World-writable because `start` runs the container as the developer's
+          # own uid -- so that the state it writes into the bind mount is theirs
+          # to delete -- and that uid is not known here. When the mount is present
+          # the host directory's ownership governs and this mode is not consulted;
+          # it is what makes the image usable without one.
+          RUN mkdir -p /var/lib/lez && chmod 0777 /var/lib/lez
+          WORKDIR /var/lib/lez
+
+          # No CMD: `start` supplies the config path and the flags it
+          # feature-detected, and a default set of arguments here would be a
+          # second place for them to be wrong.
+          ENTRYPOINT ["/lez/target/release/sequencer_service"]
           DOCKERFILE
           docker build -t "$IMAGE:${{ steps.lez.outputs.rev }}" \
             "${{ steps.stage.outputs.payload }}"
+
+      # The image is now something that runs, so this asserts that it does before
+      # it is published. `--help` is the cheapest call that exercises the whole
+      # chain -- the loader finds its libraries, the binary starts, the entrypoint
+      # is right -- and it is the same call `start` makes to feature-detect, so a
+      # failure here is exactly the failure a developer would hit.
+      - name: The image runs
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm "$IMAGE:${{ steps.lez.outputs.rev }}" --help
 
       - name: Push
         if: steps.exists.outputs.skip != 'true'
