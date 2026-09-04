@@ -17,6 +17,11 @@ license.workspace = true
 
 [build-dependencies]
 risc0-build.workspace = true
+# To read `[package.metadata.risc0]` below, so the guests configured for a container
+# build are the guests `risc0-build` builds rather than a second list beside it. Already
+# in the graph under `risc0-build`, so this is an edge and not a package: the count stays
+# at 384.
+toml = "0.8.23"
 
 # For `tests/cost.rs`, which executes the guests it builds. Nothing here is a
 # runtime dependency: the crate's job is still to hand out ELFs and image ids.

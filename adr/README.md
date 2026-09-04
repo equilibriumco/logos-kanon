@@ -59,6 +59,7 @@ they describe the design being proposed for acceptance.
 | [M3-06:01](unnumbered-M3-06-where-a-pull-consumers-program-lives.md) | Where a pull consumer's program lives | accepted, unnumbered |
 | [M3-06:02](unnumbered-M3-06-where-a-pull-consumers-trust-comes-from.md) | Where a pull consumer's trust comes from | accepted, unnumbered |
 | [M3-08:01](unnumbered-M3-08-what-a-read-costs-is-two-figures-per-mode.md) | What a read costs is two figures per mode | accepted, unnumbered |
+| [M3-08:02](unnumbered-M3-08-the-guests-are-compiled-in-a-container.md) | The guests are compiled in a container, so a program id is a property of the source | accepted, unnumbered |
 
 ## How they fit together
 
