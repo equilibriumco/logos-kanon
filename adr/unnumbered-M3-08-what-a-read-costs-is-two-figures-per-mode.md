@@ -152,16 +152,36 @@ unit LEZ charges in and not comparable with anything else in `COSTS.md`.
   1,200-byte capture is roughly 136,000 cycles before `settle` is entered. A push
   settlement carries a feed id. ADR 26 bounds it; `COSTS.md` names it so a per-read
   comparison is not read as complete without it.
-- **Nothing enforces this, and that is deliberate for now.** No test pins
-  `PULL_CONSUMER_ID` or `AGGREGATOR_READ_CONSUMER_ID`, so the rule below is a rule for
-  people rather than for CI: **a change to either consumer's guest manifest requires the
-  three product image ids to be re-measured before it lands**, because a dependency edge
-  added there is a dependency edge added to a deployed program. Pinning the ids the way
-  cycle figures are pinned would catch it, at the price of a re-publish on every
-  legitimate change to a consumer that is still being written; pinning each guest
-  lockfile's package set would catch the edge specifically and is the cheaper of the two.
-  Neither is worth its churn while M3 and M4 are still moving these crates, and both
-  become worth it once they stop.
+- **Nothing enforces this, so the rule is a rule for people.** No test pins
+  `PULL_CONSUMER_ID` or `AGGREGATOR_READ_CONSUMER_ID`: **a change to either consumer's
+  guest manifest requires the three product image ids to be re-measured before it
+  lands**, because a dependency edge added there is a dependency edge added to a deployed
+  program. Two conditions make that re-measurement mean anything, and neither is obvious:
+
+  **Wipe `target/riscv-guest` first.** `cargo build -p kanon-methods` after a branch
+  switch does not necessarily rebuild the guests. It can finish in seconds and leave a
+  `.bin` in place from the *other* branch — including one whose source file does not
+  exist at the commit being measured. A pass obtained that way is worth nothing and looks
+  exactly like a real one.
+
+  **Compare within one build directory.** A guest's image id depends on the absolute path
+  the repository is checked out at: cargo derives `-C metadata` from the package id, whose
+  source id for a path dependency is that absolute path, and the hash reaches the ELF
+  through every crate-disambiguated symbol name. Two checkouts of one commit at two paths
+  produce three different product ids on one machine, at one toolchain, with `--locked`.
+  So "the ids did not move" is a statement about one directory and says nothing about
+  anybody else's. That is a property of the build rather than of this task, and it is
+  being taken up separately; it is recorded here because it is the condition under which
+  this rule is true.
+
+- **The two guards were weighed separately, and only one is expensive.** Pinning the ids
+  the way cycle figures are pinned would catch an edge, at the price of a re-publish on
+  every legitimate change to a consumer that is still being written — and, given the
+  paragraph above, a pin that only holds in the directory it was recorded in. That one
+  waits. Pinning each guest lockfile's package set is the cheaper guard and does not
+  share those costs: a lockfile moves when a *dependency* moves, which is the event the
+  rule exists to catch, and not when source changes. It is worth adding as soon as
+  something depends on the rule holding without somebody remembering it.
 - **P3 now has both baselines it needs.** A precompile removes recovery, which is 96% of
   a pull read and none of a push read, so the delta is per-mode for a structural reason
   rather than a presentational one.
