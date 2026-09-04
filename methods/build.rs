@@ -35,6 +35,16 @@ const TAG_OVERRIDE: &str = "RISC0_DOCKER_CONTAINER_TAG";
 /// and `read_cost.rs` pass identically under both.
 const ESCAPE_HATCH: &str = "KANON_GUEST_BUILD";
 
+/// How the guests in this build were compiled, handed to the crate so something other
+/// than a log line can tell.
+///
+/// `cargo:warning` is what the escape hatch had to announce itself with, and a warning is
+/// lost in a CI log and easier to lose locally -- while what it announces is that the
+/// program ids in this build have a directory in them again. `the_guests_were_built_in_a_container`
+/// asserts this instead, which costs nothing when the guests legitimately change and
+/// fails only in the one case that matters.
+const BUILD_MODE: &str = "KANON_GUEST_BUILD_MODE";
+
 fn main() {
     println!("cargo:rerun-if-env-changed={ESCAPE_HATCH}");
     println!("cargo:rerun-if-env-changed={TAG_OVERRIDE}");
@@ -43,9 +53,11 @@ fn main() {
             "cargo:warning={ESCAPE_HATCH}=host: guest image ids will depend on this \
              checkout's path and must not be published"
         );
+        println!("cargo:rustc-env={BUILD_MODE}=host");
         risc0_build::embed_methods();
         return;
     }
+    println!("cargo:rustc-env={BUILD_MODE}=container");
 
     if let Ok(tag) = env::var(TAG_OVERRIDE) {
         assert_eq!(

@@ -23,10 +23,12 @@ The mechanism is ordinary once seen. Cargo derives `-C metadata` from a hash of 
 package id, and a package id's source id is location-independent for registry and git
 sources but *is the absolute manifest path* for a path dependency. That hash becomes
 rustc's `StableCrateId`, which appears in every v0 mangled symbol name, which changes the
-ELF, which changes the image id. Diffing two such ELFs shows it exactly: same size to the
-byte, and the only differences are 178 symbol names whose crate disambiguators moved —
-for `aggregator`, `aggregator_program`, `kanon_clock` and `verifier_core`, our four path
-crates, and for nothing else. Every registry crate is stable, and so are the git
+ELF, which changes the image id. Diffing two such ELFs shows it exactly: the only
+differences are 178 symbol names whose crate disambiguators moved — for `aggregator`,
+`aggregator_program`, `kanon_clock` and `verifier_core`, our four path crates, and for
+nothing else. The two happened to be the same size, which is not a property of the
+mechanism and should not be read as one: symbol name lengths shift when the index digits
+in `.Lanon.<hash>.N` do, and another reviewer's pair differed by eight bytes. Every registry crate is stable, and so are the git
 dependencies. The path never appears in the binary, only its hash, which is why grepping
 for it finds nothing.
 
@@ -78,8 +80,19 @@ is now two edits, and a mismatch between them is a re-measurement nobody asked f
 
 The builder image is x86_64 linux, so without an escape a developer on another
 architecture could not build at all. ADR 34 kept `KANON_SEQUENCER_RUNTIME=host` for the
-same reason, and this follows it. The build script warns when the escape is used, because
-what a host build must not be used for is anything published.
+same reason, and this follows it. What a host build must not be used for is anything
+published, and `the_guests_were_built_in_a_container` is what says so, because the build
+warning this started with is lost in a CI log and easier to lose locally.
+
+**The two escapes are aimed at the same machines, and together they are a position worth
+stating once.** ADR 34's exists because the published sequencer image is x86_64 glibc and
+will not run on NixOS or a non-x86_64 host; this one exists because the guest builder
+image is x86_64 linux. So for a developer on such a machine the combined answer is:
+Docker is required to build a guest reproducibly, the published sequencer image is not
+usable, and both escapes are theirs to take — a host guest build whose ids are their
+own, and a host sequencer. Neither is a degraded mode for CI, which is x86_64 and takes
+neither. Written down here rather than left to be discovered by whoever is next on one
+of those machines.
 
 Cycle figures are unaffected either way: they are a property of the instructions, and the
 difference between the two routes is confined to symbol names.
