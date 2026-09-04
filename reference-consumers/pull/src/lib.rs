@@ -131,6 +131,18 @@ pub use instruction::Instruction;
 pub use order::{open_order, settle, OpenError, OrderAccount, SettleError, ORDER_ACCOUNT_SEED};
 pub use trust::{FeedTrust, TrustError, TRUST_ACCOUNT_SEED};
 
+/// The library this consumer's verification is: `verify_price`, the error types
+/// it answers with, and the clock account it will accept.
+///
+/// Re-exported for the reason `pull-lib` itself re-exports `verifier_core`: a
+/// consumer built from this crate as a template needs the mode's own types, and
+/// reaching them through a second dependency invites pinning two versions of one
+/// verification. `[M3-08:01]` records the other caller -- the cost measurement,
+/// which prices `verify_price` directly, and could not reach it from this
+/// consumer's guest workspace without adding an edge there that moved
+/// `PULL_CONSUMER_ID`, and with it every account a deployed consumer owns.
+pub use pull_lib;
+
 use pull_lib::{BackendError, ConfigError, DecodeError, TimeError, VerifyError};
 
 /// Right-pads a name to the 32 bytes both a feed id and an asset id travel in.

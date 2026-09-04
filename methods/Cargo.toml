@@ -40,6 +40,16 @@ aggregator-program.workspace = true
 kanon-clock.workspace = true
 borsh = { workspace = true, features = ["derive"] }
 
+# For the per-read measurement (M3-08), on the same terms: each consumer's
+# account types, so the host builds the bytes its guest will be given rather
+# than a hand-laid approximation of them. Both are already workspace members.
+reference-consumer-pull.workspace = true
+reference-consumer-aggregator-read.workspace = true
+# For the one type the consumers take but do not re-export: a `ProgramId`, which
+# is what a registration names its aggregator by. Already in this graph through
+# `aggregator-program`, so this is an edge rather than a package.
+lee_core.workspace = true
+
 # All three product guests: the aggregator and the two reference consumers. Each
 # is its own workspace with its own lockfile and its own `[patch.crates-io]`,
 # which is what risc0-build expects and, for the pull consumer, what F9 requires

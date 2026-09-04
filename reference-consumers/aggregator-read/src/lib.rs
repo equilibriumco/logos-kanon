@@ -68,6 +68,28 @@ pub mod order;
 pub mod read;
 pub mod source;
 
+/// The clock this consumer reads its freshness from, and the account it will
+/// accept one from.
+///
+/// Re-exported because [`read::read_price`] takes a `&LezClock` in its public
+/// signature: without this a caller cannot name the type it has to pass, which
+/// makes the public API unusable from anywhere but this crate. `pull-lib`
+/// re-exports `verifier_core` for the same reason.
+pub use kanon_clock;
+
+/// The account the push aggregator publishes, and the six fields this consumer
+/// reads out of it.
+///
+/// Re-exported for the same reason: what a push-mode read *is* is a decode of
+/// this type, so a consumer built from this crate as a template needs it, and
+/// reaching it through a second dependency invites pinning two versions of one
+/// account layout. `[M3-08:01]` records the other caller -- the cost
+/// measurement, which prices the decode directly and could not reach it from
+/// this consumer's guest workspace without adding an edge there that would move
+/// `AGGREGATOR_READ_CONSUMER_ID`, and with it every account a deployed consumer
+/// owns.
+pub use kanon_idl;
+
 use kanon_clock::TimeError;
 
 /// One number per clock fault, in the 1900 block.

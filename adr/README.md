@@ -58,6 +58,7 @@ they describe the design being proposed for acceptance.
 | [M3-05:01](unnumbered-M3-05-where-a-reading-consumers-trust-comes-from.md) | Where a reading consumer's trust comes from | accepted, unnumbered |
 | [M3-06:01](unnumbered-M3-06-where-a-pull-consumers-program-lives.md) | Where a pull consumer's program lives | accepted, unnumbered |
 | [M3-06:02](unnumbered-M3-06-where-a-pull-consumers-trust-comes-from.md) | Where a pull consumer's trust comes from | accepted, unnumbered |
+| [M3-08:01](unnumbered-M3-08-what-a-read-costs-is-two-figures-per-mode.md) | What a read costs is two figures per mode | accepted, unnumbered |
 
 ## How they fit together
 
@@ -205,6 +206,19 @@ the failure itself. Following the rebuild would mean rebuilding the consumer, an
 moves the consumer's own accounts — so an aggregator fix would cost the order book. The
 trigger differs, the mechanism is the one ADR 33 describes, and the answer is the same
 account-behind-a-gate on both sides.
+
+[M3-08:01] is the same image-id argument arriving from a direction nobody was
+watching. [M3-05:01] and [M3-06:02] both turn on what happens when a program id
+moves, and both reason about it as a *deployment* risk: a rebuilt aggregator, a
+rotated roster. What M3-08 found is that a measurement can move one by accident.
+Adding two dependency edges to the pull consumer's guest manifest — for a cost
+binary that ships nowhere — moved `PULL_CONSUMER_ID`, which would have abandoned
+every account a deployed consumer owns. The fix is that the crates re-export what
+their guests need, so nothing is added to a workspace whose ELF is a program id;
+and the re-exports turn out to be owed anyway, because `read_price` takes a
+`LezClock` a caller previously could not name. The lesson worth carrying is that
+the closure of a guest workspace is part of the deployed artefact, and only a
+measurement says whether an edge is free.
 
 ADR 29 closes a range that only had one end. ADR 18 gave staleness a two-sided window and
 left `maxAge` to the feed; registration refused zero and nothing else. But `freshness`
