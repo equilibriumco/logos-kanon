@@ -87,6 +87,28 @@ letting `docker run` fail as though the script were broken.
   is still serving. This was found by doing it: `stop` from a shell with no docker
   socket unlinked the database of a sequencer that went on producing blocks off the
   open inodes.
+- **The sequencer only listens for SIGINT, so both runtimes send it.**
+  `listen_for_shutdown_signal` awaits `tokio::signal::ctrl_c()` and installs no
+  SIGTERM handler, so docker's default stop signal is ignored until the SIGKILL that
+  follows it ten seconds later. The image carries `STOPSIGNAL SIGINT` and `stop` passes
+  `--signal SIGINT` as well; the host path sent SIGTERM under a comment claiming it was
+  the clean path, which means every `stop` since the script was written has waited out
+  its timeout and then killed the process. A sequencer killed rather than shut down can
+  leave its RocksDB home locked.
+- **The image carries a format label, because the tag cannot answer the question.**
+  The tag is the LEZ revision, so two images built from one revision by different
+  Dockerfiles are indistinguishable by it — and `ensure_image` uses a local image as-is,
+  so a developer holding the older one never pulls the replacement. The entrypoint check
+  only ever catches the single transition it was written for. `scripts/lez-sequencer.sh
+  format` owns the number, the workflow stamps what the script asks for rather than
+  keeping a second copy, and both the publish decision and `start` compare against it.
+- **A container is addressed by the id `start` recorded, not by its name.**
+  `KANON_SEQUENCER_CONTAINER` is a caller's variable: a `start` under a custom name
+  followed by a plain `stop` would look up the default, find nothing, conclude nothing
+  was running, and delete the state directory out from under the real container. The id
+  goes in the state directory and every later operation uses it; the name is used only
+  where docker requires one, and a name collision with a container this script did not
+  label is refused rather than removed.
 - **The image is larger**, an ubuntu base plus the payload rather than the payload
   alone. It is pulled once per LEZ revision and cached; against the hour of build time
   it absorbs, this is not a trade worth tuning.

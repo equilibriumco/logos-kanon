@@ -82,9 +82,15 @@ jobs:
       # would pin the wrong thing.
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Resolve the LEZ revision
+      # Both come from the script, which owns them: the revision it resolves from
+      # the lockfiles, and the image format it requires. Stamping a format this
+      # workflow decided for itself would be a second copy to keep in step, and
+      # the failure of a copy that drifts is an image `start` refuses.
+      - name: Resolve the LEZ revision and the image format
         id: lez
-        run: echo "rev=$(scripts/lez-sequencer.sh pin)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "rev=$(scripts/lez-sequencer.sh pin)" >> "$GITHUB_OUTPUT"
+          echo "format=$(scripts/lez-sequencer.sh format)" >> "$GITHUB_OUTPUT"
 
       - name: Log in to ghcr
         uses: docker/login-action@v3
@@ -120,6 +126,13 @@ jobs:
           elif [ "$(docker image inspect -f '{{len .Config.Entrypoint}}' "$IMAGE:$rev")" = 0 ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "::notice::$IMAGE:$rev exists but carries no entrypoint, so it predates adr/0034; rebuilding"
+          elif [ "$(docker image inspect -f '{{index .Config.Labels "co.equilibrium.kanon.image-format"}}' "$IMAGE:$rev")" != "${{ steps.lez.outputs.format }}" ]; then
+            # The tag is the LEZ revision, so it cannot distinguish two images
+            # built from one revision by different Dockerfiles. Without this, a
+            # package added to the apt list or a path moved inside the payload
+            # republishes nothing and every consumer keeps the stale image.
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE:$rev is not image format ${{ steps.lez.outputs.format }}; rebuilding"
           else
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::$IMAGE:$rev already exists; nothing to do"
@@ -163,6 +176,19 @@ jobs:
           # Both a service image and a transport format. `scripts/lez-sequencer.sh
           # start` runs the entrypoint; `fetch` copies `/lez` out and runs nothing.
           FROM ubuntu:24.04
+
+          # What shape of image this is, independent of the LEZ revision in the
+          # tag. `scripts/lez-sequencer.sh format` is where the number comes from
+          # and `assert_image_runnable` is what refuses an image that does not
+          # carry it.
+          LABEL co.equilibrium.kanon.image-format="${{ steps.lez.outputs.format }}"
+
+          # The sequencer installs exactly one signal handler --
+          # `tokio::signal::ctrl_c()`, which is SIGINT -- so docker's default
+          # SIGTERM is ignored and the container dies to the SIGKILL that follows
+          # ten seconds later, every time. A sequencer killed rather than shut
+          # down can leave its RocksDB home locked.
+          STOPSIGNAL SIGINT
 
           # What `ldd sequencer_service` needs and the base image does not already
           # carry. Pinning versions here would pin them to this runner's archive
