@@ -55,8 +55,8 @@ way, produce all three product ids byte-identical.
 
 `risc0-build` defaults to `r0.1.88.0`. Taking the default would swap the guest compiler
 under every figure in `COSTS.md`, all measured on guest rustc 1.97.0, and turn a change
-about *where* a guest is compiled into a change about *what* compiles it. Pinned to
-`r0.1.97.0` — the tag carrying that compiler — all 31 cost assertions pass unchanged.
+about *where* a guest is compiled into a change about *what* compiles it. Built on
+the image carrying that compiler, `r0.1.97.0`, all 31 cost assertions pass unchanged.
 
 **A tag is not a pin.** It is a mutable pointer, so two builds of this commit far enough
 apart could resolve one to different image contents and produce different program ids —
@@ -119,6 +119,9 @@ concluded and what made that guard the expensive one.
   is a false pass whatever compiles it.
 - **Docker becomes a requirement for building this repository**, as it already is for the
   sequencer harness (ADR 34). The escape hatch exists and is signposted.
+- **Both lockfiles move.** `e2e/` resolves `kanon-methods` in its own workspace (ADR 7,
+  `[M2-19:01]`), so the `toml` edge lands in `e2e/Cargo.lock` as well, and a `--locked`
+  build fails on whichever of the two is forgotten.
 - **CI needs no new step, and one that looks redundant is not.** The guest jobs already
   install the rzup guest toolchain, and it is still required: `risc0-build` reads the
   installed toolchain version to compute the guest rustflags, on the docker path as much
@@ -138,9 +141,12 @@ concluded and what made that guard the expensive one.
   inside itself, on top of whatever the job already needs. The first CI run failed twice
   on that one cause and only one of them said so: `no space left on device` unpacking the
   image in one job, and `ld terminated with signal 7 [Bus error]` in another, which is
-  what a truncated mmap looks like when the disk fills under a linker. The three jobs that
-  build `kanon-methods` now reclaim the runner's preinstalled SDKs first. Anybody adding a
-  fourth such job needs that step, and will otherwise be debugging a linker crash.
+  what a truncated mmap looks like when the disk fills under a linker. Every job that
+  builds `kanon-methods` now reclaims the runner's preinstalled SDKs first — the guest
+  build, the end-to-end suite and the cost table in `ci.yml` and `guardrails.yml`, and
+  `lgs build`, which reaches the same image through a release build of `methods/`.
+  Anybody adding another needs that step, and will otherwise be debugging a linker
+  crash.
 - **What this does not settle is the cross-machine question.** Both causes found here were
   measured on one machine, and a container plausibly closes both, but `m0/versions.md`
   question 6 asked about two machines and this evidence does not answer that. It is now a
