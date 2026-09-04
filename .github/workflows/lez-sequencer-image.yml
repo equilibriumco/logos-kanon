@@ -151,6 +151,12 @@ jobs:
 
       - name: Build the image
         if: steps.exists.outputs.skip != 'true'
+        # A ceiling, because this step has no business taking long: an apt
+        # install and a 42 MB copy over an already-pulled base. The job's own
+        # 350-minute budget exists for the LEZ compile, and inheriting it here
+        # meant a hung build sat for hours instead of failing. Measured at 15+
+        # minutes and still going when it was cancelled.
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           cat > "${{ steps.stage.outputs.payload }}/Dockerfile" <<'DOCKERFILE'
@@ -163,8 +169,23 @@ jobs:
           # snapshot and break the next rebuild for no benefit: the image is
           # rebuilt only when the LEZ revision moves, and the binary inside it is
           # linked against whatever this same runner provided.
-          RUN apt-get update \
-           && apt-get install -y --no-install-recommends \
+          # `DEBIAN_FRONTEND=noninteractive` because the alternative to a package
+          # that wants to ask something is a build that waits for an answer
+          # nobody can give. None of the six below prompts today; the point is
+          # that a build which hangs for ever is a much worse failure than one
+          # that errors, and this rules out that whole class for the price of one
+          # assignment.
+          # IPv4, and this is the fix rather than a precaution. The first build of
+          # this image spent 998 seconds in this one instruction: the log is
+          # `Ign:` against archive.ubuntu.com about every 60 seconds, the same six
+          # packages retried ten times over, because the build container resolves
+          # the archive to an IPv6 address it cannot route and waits out the
+          # timeout before falling back. Six packages, sixteen and a half minutes,
+          # and it did eventually succeed -- which is what makes it worth pinning
+          # down rather than re-running until it looks fine.
+          RUN printf 'Acquire::ForceIPv4 "true";\n' > /etc/apt/apt.conf.d/99force-ipv4 \
+           && DEBIAN_FRONTEND=noninteractive apt-get update \
+           && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                 ca-certificates \
                 libssl3t64 \
                 libstdc++6 \
