@@ -118,6 +118,16 @@ fn main() {
 /// checked and visible only to whoever builds outside it, which is the first thing that
 /// happened when somebody did.
 fn require_buildx() {
+    // Nothing will invoke docker when the guest build is skipped, so requiring the
+    // plugin there would enforce a dependency for work that does not happen -- and
+    // `RISC0_SKIP_BUILD=1 cargo build -p kanon-methods` is a combination this crate's
+    // own manifest leans on to explain why `ci.yml` excludes it from `build-test`.
+    // Non-empty rather than any particular value, which is how `risc0-build` reads it.
+    println!("cargo:rerun-if-env-changed=RISC0_SKIP_BUILD");
+    if !env::var("RISC0_SKIP_BUILD").unwrap_or_default().is_empty() {
+        return;
+    }
+
     let available = Command::new("docker")
         .args(["buildx", "version"])
         .stdout(Stdio::null())
