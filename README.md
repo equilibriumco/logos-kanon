@@ -7,7 +7,8 @@ RedStone price update costs inside a LEZ program, how that was measured, what we
 recommend, and the decisions we need from Logos.
 
 The headline: a 3-of-N single-feed update costs **1,906,737 cycles**, 5.68% of LEZ's
-32M per-transaction budget, and secp256k1 recovery is 95% of it.
+32M per-transaction budget, and secp256k1 recovery and signature parsing are 88.97%
+of it.
 
 ## Layout
 
