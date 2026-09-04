@@ -38,7 +38,7 @@ something with the price.
 *Rejected: measure only the library call.* It is the portable number, but a figure with
 no program around it invites the reply that a real consumer pays more, and there would be
 nothing published to answer with. The residual between the two is small on both sides
-(7,275 and 6,479 cycles) and that smallness is itself worth publishing: it says the
+(7,228 and 6,601 cycles) and that smallness is itself worth publishing: it says the
 domain is not where a read's cost goes.
 
 *Rejected: measure only `settle`.* Publishes our limit order as the mode's price.
@@ -61,7 +61,7 @@ registration decode about 1,800, roughly a fifth of the whole push figure.
 Both decodes therefore moved above the branch. A setup runs identically in every stage,
 so it cancels out of every difference, and what remains in stage 1 is the roster rebuild
 and `verify_price` on one side, the clock decode and `read_price` on the other — which is
-what Decision 1 says a read is. Corrected, the residuals are 7,275 and 6,479 rather than
+what Decision 1 says a read is. Corrected, the residuals are 7,228 and 6,601 rather than
 2,025 and 5,163: close together, which is the result the argument predicted and the first
 draft's numbers contradicted.
 
@@ -117,25 +117,31 @@ unit LEZ charges in and not comparable with anything else in `COSTS.md`.
 
 ## Consequences
 
-- **The headline figure is a ratio, and it is asserted.** A pull read is 3,041,427
+- **The headline figure is a ratio, and it is asserted.** A pull read is 3,041,385
   cycles against a push read's 6,803 — 447×, and
   `a_pull_read_costs_hundreds_of_times_more_than_a_push_read` pins it.
   `the_gap_between_the_modes_is_signature_recovery` pins the explanation: five-signer
   recovery is 96% of the difference, so the gap is one component rather than a pile of
   small ones. It is 96% and not all of it, and both this file and `COSTS.md` say so:
   the remaining 4% is the rest of verification.
-- **`verify_price` agrees with the component table to within 739 cycles**, which is the
+- **`verify_price` agrees with the component table to within 722 cycles**, which is the
   cross-check that the pull read really is an update's verification rather than something
-  adjacent to it. Those 739 are one clock decode and the library call.
+  adjacent to it. Those 722 are one clock decode and the library call.
 - **Push mode's read is mostly hashing, and an earlier draft said it hashed nothing.**
   `read_price` checks the account's address first, which derives two PDAs, each a SHA-256
-  over its seeds: 3,654 cycles, 54% of the read and more than twice the account's decode.
+  over its seeds: 3,656 cycles, 54% of the read and more than twice the account's decode.
   It is now its own measured stage rather than part of a remainder attributed to "the
   checks". What push mode avoids is signature recovery, not cryptography — which is also
   why the consumer's guest manifest pins `sha2` to the accelerator.
+- **The same double-attribution was found once more, in the write.** Stage 6 decoded
+  the order before filling and encoding it, so a row published as "filling the order and
+  encoding it" carried the decode row's cost as well: 2,917 and 2,838 rather than 1,024
+  and 1,022. It is the identical error to the one Decision 2 exists for, one table lower
+  down and found later, which is the argument for stating the rule as a rule — a stage
+  measures what it is named after, and anything it needs beforehand belongs in the setup.
 - **Two observation holes were found, and the second was the expensive kind.** The
   published decode reported 45 cycles for 136 bytes because the stage returned one field;
-  `core::hint::black_box` over the whole value gives 1,575. The whole-`settle` stages had
+  `core::hint::black_box` over the whole value gives 1,551. The whole-`settle` stages had
   the same hole and hid it better, returning only `post_states.len()` so that every field
   of every returned account was a value nothing read. That one produced a *plausible*
   figure, in the stage that dominates the table, which is what makes it the more

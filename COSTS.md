@@ -186,12 +186,12 @@ variations on one design (M3-08).
 
 | | pull | push |
 | --- | ---: | ---: |
-| **the mode's read** | **3,041,427** | **6,803** |
-| settling, beyond the read | 7,275 | 6,479 |
-| the whole `settle` body | 3,048,702 | 13,282 |
-| _harness floor, subtracted out_ | 147,494 | 70,584 |
+| **the mode's read** | **3,041,385** | **6,803** |
+| settling, beyond the read | 7,228 | 6,601 |
+| the whole `settle` body | 3,048,613 | 13,404 |
+| _harness floor, subtracted out_ | 147,529 | 73,332 |
 | _the read, against LEZ's per-transaction budget_ | _9.06%_ | _0.0203%_ |
-| _the `settle` body, against the same budget_ | _9.09%_ | _0.0396%_ |
+| _the `settle` body, against the same budget_ | _9.09%_ | _0.0399%_ |
 
 **A pull read costs 447 times a push read.** Not a tuning difference — the pull
 consumer has nothing published to fetch, so its read *is* a verification, and it
@@ -200,7 +200,7 @@ already verified once, and recovers no signatures.
 
 96% of the gap is signature recovery, and nothing else in it comes close.
 `cost.rs` measures five-signer recovery at 2,922,890 against a difference of
-3,034,624, and `the_gap_between_the_modes_is_signature_recovery` asserts that
+3,034,582, and `the_gap_between_the_modes_is_signature_recovery` asserts that
 share rather than leaving it as a claim. The other 4% is the rest of
 verification — the package walk, the hashing, the membership lookups — so the
 claim is that the gap is one component and not that it is only one component.
@@ -218,22 +218,36 @@ than they are. `[M3-08:01]` records the correction.
 
 ### What each read is made of
 
-| pull | cycles |
+| pull, as prefixes | cycles |
 | --- | ---: |
-| rebuilding the registered roster | 898 |
-| `verify_price` over five packages at a threshold of three | 3,040,529 |
+| rebuilding the registered roster | 873 |
+| `verify_price` over five packages at a threshold of three | 3,040,512 |
 
-| push | cycles |
+These two are exact, and add to the read, because the roster rebuild is a
+genuine prefix of the read: one stage runs it and stops, the next runs it and
+carries on, so the difference is the verification and nothing else.
+
+The push side has no such split — `read_price` is one call — so its parts are
+measured on their own, and **isolated figures do not decompose anything**:
+
+| push, each measured on its own | cycles |
 | --- | ---: |
-| deriving the price account's address | 3,654 |
-| `OraclePriceAccount::try_from_slice` | 1,575 |
-| `LezClock::from_account` | 267 |
-| the four remaining checks | the remainder, 1,307 |
+| deriving the price account's address | 3,656 |
+| `OraclePriceAccount::try_from_slice` | 1,551 |
+| `LezClock::from_account` | 265 |
 
-The pull side's `verify_price` figure is within 739 cycles of the 3,039,790 the
+They come to 5,472 of the 6,803, and the 1,331 left over is *not* a row: it is
+the four remaining checks plus whatever an inlined call costs less than an
+isolated one. Naming it "the four checks" would be the mistake this file warns
+about two paragraphs below and the ADR records removing elsewhere. What the
+three figures support is the weaker claim they are here for, which is that the
+address derivation dominates and no arrangement of the checks would matter next
+to it.
+
+The pull side's `verify_price` figure is within 722 cycles of the 3,039,790 the
 component table gives for the same five-signer payload, and that agreement is
 worth stating: it means the pull read is an update's verification and not
-something adjacent to it. The 739 is one clock decode and the library call
+something adjacent to it. The 722 is one clock decode and the library call
 around it.
 
 **The largest item in a push read is hashing**, which is worth saying plainly
@@ -241,7 +255,7 @@ because an earlier draft of this file said the mode hashed nothing. `read_price`
 opens by checking that the account it was handed is the one this feed publishes
 to, and computing that address means `compute_pda` twice — once for the feed
 account, once for the price account derived from it — each a SHA-256 over its
-seeds. At 3,654 cycles that is 54% of the read, more than twice the account's
+seeds. At 3,656 cycles that is 54% of the read, more than twice the account's
 decode, and it is why the consumer's guest manifest pins `sha2` to the risc0
 accelerator. What push mode avoids is signature *recovery*, not cryptography.
 
@@ -260,15 +274,22 @@ component.
 | measured in isolation | pull | push |
 | --- | ---: | ---: |
 | the consumer's own registration (`trust::read` / `source::read`) | 3,385 | 1,839 |
-| the order's decode | 2,034 | 2,021 |
-| filling the order and encoding it | 2,917 | 2,838 |
+| the order's decode | 2,031 | 2,025 |
+| filling the order and encoding it | 1,024 | 1,022 |
 
 **These do not sum to the residual, and are not meant to**, for the reason M2-18
 recorded: isolated calls do not cost what inlined ones do. The pull residual is
-7,275 cycles and the three figures above it total 8,336, which is not a
-contradiction — `settle` inlines what a separate call cannot.
+7,228 cycles and the three figures above it total 6,440, which is not a
+contradiction in either direction — inlining can cost less than a call, and
+`settle` also does things none of these three rows measures.
 
-Two of the three rows agreeing across modes to within about ten cycles is the
+The write row is the write only. It was 2,917 and 2,838 in an earlier draft
+because the stage decoded the order before filling it, so a row published as the
+write also contained the row above it — the same double-attribution the read
+stages were corrected for, one table further up. Both now fill and encode an
+order the setup already decoded.
+
+Two of the three rows agreeing across modes to within a handful of cycles is the
 expected result rather than a coincidence, though not because the type is shared:
 the two consumers own separate `OrderAccount` types, and the pull one carries a
 `decimals` the push one does not, because a pull consumer has to know the scale
@@ -286,8 +307,8 @@ The published account's decode first measured **45 cycles**, which is not a
 plausible price for reading 136 bytes — the component table gives 1,442 for the
 same decode. The stage returned one field of the decoded value, so the optimiser
 elided every other field. Observing the whole value through
-`core::hint::black_box` gives 1,575. The order decodes moved the same way, from
-1,879 to 2,034.
+`core::hint::black_box` gives 1,551. The order decodes moved the same way, from
+1,879 to 2,031.
 
 The whole-`settle` stages had the same hole and it went unnoticed longer, because
 the figure it produced was not implausible. Those stages returned only

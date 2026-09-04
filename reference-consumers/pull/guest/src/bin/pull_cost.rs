@@ -147,10 +147,18 @@ fn main() {
         }
     };
 
-    // Re-opaqued after the decodes above have been taken, so that stage 4's
-    // isolated decode of the same bytes cannot be folded into the setup's. A
-    // `black_box` before the first decode would not do it: two pure decodes of
-    // one opaque value are still common subexpressions.
+    // The decoded values are pinned here so the decode is charged to the setup
+    // in every stage rather than sunk into the arms that read them: both are
+    // pure functions of data the arms can see, and an optimiser is otherwise
+    // free to move them. The floor rising by roughly the two decodes when they
+    // moved up here is the evidence that it does not.
+    let registered = core::hint::black_box(registered);
+    let stored = core::hint::black_box(stored);
+
+    // The accounts are re-opaqued *after* the decodes above have been taken, so
+    // that stage 4's isolated decode of the same bytes cannot be folded into the
+    // setup's. A `black_box` before the first decode would not do it: two pure
+    // decodes of one opaque value are still common subexpressions.
     let order = core::hint::black_box(order);
     let trust = core::hint::black_box(trust);
 
@@ -241,7 +249,7 @@ fn run(stage: u8, payload_bytes: &[u8], prepared: Prepared) -> Report {
             Err(_) => (0, 0, 0),
         },
 
-        6 => write(&prepared.order),
+        6 => write(prepared.stored),
 
         _ => (0, 0, 0),
     }
@@ -290,10 +298,12 @@ fn read(stage: u8, payload_bytes: &[u8], prepared: &Prepared) -> Report {
 /// that measures this honestly. M2-18 learned that the hard way: a fold over the
 /// encoded bytes charged about 1,360 cycles of its own to the figure it was
 /// taking, so `black_box` is the tool rather than a checksum.
-fn write(order: &AccountWithMetadata) -> Report {
-    let Ok(mut stored) = OrderAccount::try_from_slice(order.account.data.as_ref()) else {
-        return (0, 0, 0);
-    };
+///
+/// Over the order the setup decoded, not one decoded here. An earlier draft
+/// decoded inside this stage, which made a row published as "filling the order
+/// and encoding it" a row that also contained stage 4's decode — the same
+/// double-attribution the read stages were corrected for.
+fn write(mut stored: OrderAccount) -> Report {
     stored.filled = true;
     let mut encoded = Vec::new();
     if stored.serialize(&mut encoded).is_err() {

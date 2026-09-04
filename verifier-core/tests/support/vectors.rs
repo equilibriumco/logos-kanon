@@ -1,7 +1,8 @@
 //! The committed RedStone capture, read once.
 //!
-//! Three test targets in three packages read this file: `redstone_conformance`
-//! here, `cost` in `kanon-methods`, and `settle` in `reference-consumer-pull`.
+//! Four test targets in three packages read this file: `redstone_conformance`
+//! here, `cost` and `read_cost` in `kanon-methods`, and `settle` in
+//! `reference-consumer-pull`.
 //! Included by path rather than shared through a crate, because a fixture reader
 //! has no business in the published surface of a crate consumer programs link --
 //! the reason ADR 21 already gives for keeping `test_support` behind `cfg(test)`.

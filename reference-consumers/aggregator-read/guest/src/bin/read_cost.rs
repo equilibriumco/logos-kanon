@@ -163,14 +163,28 @@ fn main() {
     );
     let feed = <[u8; 32]>::try_from(feed_id.as_slice()).unwrap_or([0; 32]);
 
-    let Ok(registered) = PriceSource::try_from_slice(source.account.data.as_ref()) else {
-        env::commit(&(0u32, 0u64, 0u32));
-        return;
+    let (registered, stored) = match (
+        PriceSource::try_from_slice(source.account.data.as_ref()),
+        OrderAccount::try_from_slice(order.account.data.as_ref()),
+    ) {
+        (Ok(registered), Ok(stored)) => (registered, stored),
+        _ => {
+            env::commit(&(0u32, 0u64, 0u32));
+            return;
+        }
     };
 
-    // Re-opaqued after the decode above has been taken, so stage 3's `source::read`
-    // cannot have its inner decode folded into the setup's.
+    // Pinned here so the decodes are charged to the setup in every stage rather
+    // than sunk into the arms that read them: both are pure functions of data
+    // the arms can see, and an optimiser is otherwise free to move them.
+    let registered = core::hint::black_box(registered);
+    let stored = core::hint::black_box(stored);
+
+    // The accounts are re-opaqued *after* the decodes above have been taken, so
+    // stage 3's `source::read` and stage 4's isolated decode cannot have their
+    // inner decodes folded into the setup's.
     let source = core::hint::black_box(source);
+    let order = core::hint::black_box(order);
 
     let prepared = Prepared {
         order,
@@ -180,6 +194,7 @@ fn main() {
         feed_id: feed,
         ours,
         registered,
+        stored,
     };
     let report = run(stage, prepared);
     env::commit(&report);
@@ -195,6 +210,7 @@ struct Prepared {
     feed_id: [u8; 32],
     ours: ProgramId,
     registered: PriceSource,
+    stored: OrderAccount,
 }
 
 fn account_owned_by(owner: ProgramId, data: Vec<u8>, id: [u8; 32]) -> AccountWithMetadata {
@@ -283,7 +299,7 @@ fn run(stage: u8, prepared: Prepared) -> Report {
             Err(_) => (0, 0, 0),
         },
 
-        6 => write(&prepared.order),
+        6 => write(prepared.stored),
 
         // The clock decode inside stage 1, priced on its own. The same decode is
         // inside the pull side's read, where it cannot be separated.
@@ -300,7 +316,13 @@ fn run(stage: u8, prepared: Prepared) -> Report {
         // feed account's address, so a consumer holding only a feed id computes
         // both -- two `compute_pda` calls, each a SHA-256 over its seeds.
         8 => {
-            let derived = price_account_address(&prepared.registered.aggregator, &prepared.feed_id);
+            // From the registration's own fields, which is where `read_price`
+            // takes both: deriving from the instruction's feed id instead would
+            // agree only for as long as a caller passes the two the same.
+            let derived = price_account_address(
+                &prepared.registered.aggregator,
+                &prepared.registered.feed_id,
+            );
             core::hint::black_box(&derived);
             (1, u64::from(derived.value()[0]), 0)
         }
@@ -316,10 +338,10 @@ fn run(stage: u8, prepared: Prepared) -> Report {
 /// `black_box` because an observation that generates work of its own charges that
 /// work to the figure it is taking. M2-18 found that a fold over the encoded
 /// bytes cost about 1,360 cycles more than the thing being measured.
-fn write(order: &AccountWithMetadata) -> Report {
-    let Ok(mut stored) = OrderAccount::try_from_slice(order.account.data.as_ref()) else {
-        return (0, 0, 0);
-    };
+///
+/// Over the order the setup decoded, not one decoded here, so that a row
+/// published as the write is the write rather than the write plus stage 4.
+fn write(mut stored: OrderAccount) -> Report {
     stored.filled = true;
     let mut encoded = Vec::new();
     if stored.serialize(&mut encoded).is_err() {

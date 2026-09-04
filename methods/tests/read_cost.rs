@@ -128,31 +128,31 @@ mod stage {
 mod pull {
     /// The mode's read: rebuild the registered roster, then verify the payload
     /// against it. Five packages at a threshold of three.
-    pub const READ: u64 = 3_041_427;
+    pub const READ: u64 = 3_041_385;
     /// What that read is of LEZ's per-transaction budget, as `COSTS.md` prints it.
     pub const BUDGET_SHARE: &str = "9.06%";
     /// `verify_price` without the roster rebuild that precedes it.
     ///
-    /// Within 739 cycles of `cost.rs`'s 3,039,790 for the same five-signer
+    /// Within 722 cycles of `cost.rs`'s 3,039,790 for the same five-signer
     /// payload, and that agreement is the point: a pull read *is* an update's
     /// verification, plus one clock decode and the library call around it.
-    pub const VERIFY: u64 = 3_040_529;
+    pub const VERIFY: u64 = 3_040_512;
     /// The whole `settle` body.
-    pub const SETTLE: u64 = 3_048_702;
+    pub const SETTLE: u64 = 3_048_613;
     /// What that body is of the per-transaction budget, as `COSTS.md` prints it.
     pub const SETTLE_BUDGET_SHARE: &str = "9.09%";
     /// What settling costs on top of reading.
-    pub const BEYOND_READ: u64 = 7_275;
-    pub const FLOOR: u64 = 147_494;
+    pub const BEYOND_READ: u64 = 7_228;
+    pub const FLOOR: u64 = 147_529;
     pub const REGISTRATION: u64 = 3_385;
-    pub const ORDER_DECODE: u64 = 2_034;
+    pub const ORDER_DECODE: u64 = 2_031;
     /// `signer_addresses` and `config`, over a `FeedTrust` the setup decoded.
     ///
     /// Small because it is only the rebuild: an earlier draft measured 6,263 here
     /// and most of that was the trust account's decode and the order's, which
     /// have since moved into the setup that cancels.
-    pub const ROSTER: u64 = 898;
-    pub const ORDER_WRITE: u64 = 2_917;
+    pub const ROSTER: u64 = 873;
+    pub const ORDER_WRITE: u64 = 1_024;
 }
 
 /// The other mode, on the same terms. Also published in `COSTS.md`.
@@ -163,24 +163,24 @@ mod push {
     /// What that read is of LEZ's per-transaction budget, as `COSTS.md` prints it.
     pub const BUDGET_SHARE: &str = "0.0203%";
     /// The whole `settle` body.
-    pub const SETTLE: u64 = 13_282;
+    pub const SETTLE: u64 = 13_404;
     /// What that body is of the per-transaction budget, as `COSTS.md` prints it.
-    pub const SETTLE_BUDGET_SHARE: &str = "0.0396%";
+    pub const SETTLE_BUDGET_SHARE: &str = "0.0399%";
     /// What settling costs on top of reading.
-    pub const BEYOND_READ: u64 = 6_479;
-    pub const FLOOR: u64 = 70_584;
+    pub const BEYOND_READ: u64 = 6_601;
+    pub const FLOOR: u64 = 73_332;
     pub const REGISTRATION: u64 = 1_839;
-    pub const ORDER_DECODE: u64 = 2_021;
+    pub const ORDER_DECODE: u64 = 2_025;
     /// `OraclePriceAccount::try_from_slice`. `cost.rs` measures the same decode
     /// inside `submit_price` at 1,442; the gap is the `black_box` this stage
     /// needs and the difference between an isolated call and an inlined one.
-    pub const PUBLISHED_DECODE: u64 = 1_575;
-    pub const CLOCK: u64 = 267;
+    pub const PUBLISHED_DECODE: u64 = 1_551;
+    pub const CLOCK: u64 = 265;
     /// `price_account_address`: two `compute_pda` calls, each a SHA-256 over its
     /// seeds. The single largest item in a push read, and the reason the claim
     /// that this mode "hashes nothing" was wrong.
-    pub const ADDRESS: u64 = 3_654;
-    pub const ORDER_WRITE: u64 = 2_838;
+    pub const ADDRESS: u64 = 3_656;
+    pub const ORDER_WRITE: u64 = 1_022;
 
     /// How many times a pull read costs what a push read costs.
     ///
@@ -211,8 +211,14 @@ fn vector() -> Vector {
 }
 
 fn feed_id(vector: &Vector) -> [u8; 32] {
-    let mut id = [0u8; 32];
     let bytes = vector.feed_id.as_bytes();
+    assert!(
+        bytes.len() <= 32,
+        "the capture's feed id {:?} is {} bytes, and a feed id is 32",
+        vector.feed_id,
+        bytes.len()
+    );
+    let mut id = [0u8; 32];
     id[..bytes.len()].copy_from_slice(bytes);
     id
 }
@@ -317,10 +323,7 @@ fn clock(now_ms: u64) -> Vec<u8> {
     out
 }
 
-/// Cycles for one stage, and what the guest reported about its own run.
-///
-/// Memoised for the reason `cost.rs` memoises: a zkVM execution is a
-/// deterministic function of the ELF and its input, so a repeat is not a check.
+/// Which consumer is under measurement.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Mode {
     Pull,
@@ -341,6 +344,10 @@ impl Mode {
     }
 }
 
+/// Cycles for one stage, and what the guest reported about its own run.
+///
+/// Memoised for the reason `cost.rs` memoises: a zkVM execution is a
+/// deterministic function of the ELF and its input, so a repeat is not a check.
 fn run(mode: Mode, stage: u8) -> (u64, (u32, u64, u32)) {
     type Slot = Arc<OnceLock<(u64, (u32, u64, u32))>>;
     static MEASURED: OnceLock<Mutex<HashMap<(Mode, u8), Slot>>> = OnceLock::new();
@@ -705,15 +712,19 @@ fn the_gap_between_the_modes_is_signature_recovery() {
     let push_read = cycles(Mode::Push, stage::READ) - cycles(Mode::Push, stage::FLOOR);
     // Copied from `cost.rs`'s `expected::COMPONENTS` row for five signers, which
     // is a separate test binary and so a separate crate: there is nothing to
-    // import. `recovery_cycles_are_unchanged` there pins the original, and this
-    // assertion fails the moment the two disagree, which is what keeps the copy
-    // from going stale on its own.
+    // import. The copy is not self-checking -- if that row moves, this constant
+    // does not follow and nothing here notices, so the two have to be changed
+    // together. `recovery_cycles_are_unchanged` is what stops the original
+    // moving unobserved; this only stops the *share* moving.
     const FIVE_SIGNER_RECOVERY: u64 = 2_922_890;
     let gap = pull_read - push_read;
-    let share = FIVE_SIGNER_RECOVERY * 100 / gap;
+    // In thousandths rather than whole percent. Integer-flooring a percentage
+    // let the gap drift by up to about 1% -- some 30,000 cycles -- without the
+    // assertion noticing, which is a wide enough band to hide a real change.
+    let share = FIVE_SIGNER_RECOVERY * 1_000 / gap;
     assert_eq!(
-        share, 96,
-        "recovery is {share}% of the {gap}-cycle gap between the modes, not 96%; either \
-         `cost.rs`'s recovery row moved or something else grew"
+        share, 963,
+        "recovery is {share} thousandths of the {gap}-cycle gap between the modes, not \
+         963; either `cost.rs`'s recovery row moved or something else grew"
     );
 }
