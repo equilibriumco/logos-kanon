@@ -11,10 +11,14 @@
 //! # What a read is, in this mode
 //!
 //! The aggregator verified once, at submission, and published six fields. A
-//! consumer's read is a **decode and four checks**: that the account is the one
+//! consumer's read is a **decode and five checks**: that the account is the one
 //! this feed's price is published to, that the aggregator owns it, that the
 //! source is RedStone, that the pair is the one the consumer registered, and
 //! that the timestamp is inside the window — in both directions.
+//!
+//! The first of those five is not a comparison but a derivation, and stage 8
+//! prices it separately for that reason. The other four are what the read's
+//! remainder contains.
 //!
 //! No signature is recovered, which is the whole asymmetry M3-08 exists to
 //! price: the pull side's read is `verify_price` and costs about three million

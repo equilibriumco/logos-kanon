@@ -191,6 +191,7 @@ variations on one design (M3-08).
 | the whole `settle` body | 3,048,702 | 13,282 |
 | _harness floor, subtracted out_ | 147,494 | 70,584 |
 | _the read, against LEZ's per-transaction budget_ | _9.06%_ | _0.0203%_ |
+| _the `settle` body, against the same budget_ | _9.09%_ | _0.0396%_ |
 
 **A pull read costs 447 times a push read.** Not a tuning difference — the pull
 consumer has nothing published to fetch, so its read *is* a verification, and it

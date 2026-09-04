@@ -139,6 +139,8 @@ mod pull {
     pub const VERIFY: u64 = 3_040_529;
     /// The whole `settle` body.
     pub const SETTLE: u64 = 3_048_702;
+    /// What that body is of the per-transaction budget, as `COSTS.md` prints it.
+    pub const SETTLE_BUDGET_SHARE: &str = "9.09%";
     /// What settling costs on top of reading.
     pub const BEYOND_READ: u64 = 7_275;
     pub const FLOOR: u64 = 147_494;
@@ -162,6 +164,8 @@ mod push {
     pub const BUDGET_SHARE: &str = "0.0203%";
     /// The whole `settle` body.
     pub const SETTLE: u64 = 13_282;
+    /// What that body is of the per-transaction budget, as `COSTS.md` prints it.
+    pub const SETTLE_BUDGET_SHARE: &str = "0.0396%";
     /// What settling costs on top of reading.
     pub const BEYOND_READ: u64 = 6_479;
     pub const FLOOR: u64 = 70_584;
@@ -455,6 +459,11 @@ fn settling_costs_what_is_published_on_top_of_reading() {
     );
     assert_eq!(settle - floor, pull::SETTLE, "the `settle` body moved");
     assert_eq!(
+        budget_share(settle - floor),
+        pull::SETTLE_BUDGET_SHARE,
+        "a pull settlement's share of the per-transaction budget moved"
+    );
+    assert_eq!(
         settle - read,
         pull::BEYOND_READ,
         "what settling adds over reading moved"
@@ -577,8 +586,16 @@ fn the_read_table_is_reproducible() {
             budget_share(cycles(Mode::Pull, stage::READ) - floor),
         ),
         (
+            "pull: the settle body, against LEZ's budget",
+            budget_share(cycles(Mode::Pull, stage::SETTLE) - floor),
+        ),
+        (
             "push: the read, against LEZ's budget",
             budget_share(cycles(Mode::Push, stage::READ) - floor_push),
+        ),
+        (
+            "push: the settle body, against LEZ's budget",
+            budget_share(cycles(Mode::Push, stage::SETTLE) - floor_push),
         ),
     ] {
         println!("| {name:42} | {share:>11} |");
@@ -629,6 +646,11 @@ fn settling_on_the_push_side_costs_what_is_published_on_top_of_reading() {
         cycles(Mode::Push, stage::SETTLE),
     );
     assert_eq!(settle - floor, push::SETTLE, "the `settle` body moved");
+    assert_eq!(
+        budget_share(settle - floor),
+        push::SETTLE_BUDGET_SHARE,
+        "a push settlement's share of the per-transaction budget moved"
+    );
     assert_eq!(
         settle - read,
         push::BEYOND_READ,

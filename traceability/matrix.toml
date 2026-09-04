@@ -448,7 +448,7 @@ note = "Fault injection and restart, not just a retry loop: the requirement is a
 [[row]]
 id = "P1"
 status = "partial"
-tasks = ["M2-02", "M2-19", "M3-06", "M3-08"]
+tasks = ["M2-02", "M2-19", "M3-06", "M3-08", "M3-10"]
 implemented_in = ["m0/lez-probe", "reference-consumers/pull/src/lib.rs"]
 verified_by = [
   "test:the_post_states_pass_lez",
@@ -516,10 +516,15 @@ note = "\"Reproducible from the test suite\" is satisfied the strict way: every 
 [[row]]
 id = "P3"
 status = "partial"
-tasks = ["M3-09", "M5-07"]
-implemented_in = ["m0/cost-baseline"]
-verified_by = ["doc:m0/M0-report.pdf"]
-note = "M0 delivered the first delta sketch against per-chain reference points. M3-09 splits it per mode, which is the form the requirement asks for, because a per-read pull path and a per-update push path amortise a precompile differently."
+tasks = ["M3-08", "M3-09", "M5-07"]
+implemented_in = ["m0/cost-baseline", "methods/tests/read_cost.rs"]
+verified_by = [
+  "test:a_pull_read_costs_what_is_published",
+  "test:a_push_mode_read_costs_what_is_published",
+  "test:the_gap_between_the_modes_is_signature_recovery",
+  "doc:m0/M0-report.pdf",
+]
+note = "M0 delivered the first delta sketch against per-chain reference points. M3-09 splits it per mode, which is the form the requirement asks for, because a per-read pull path and a per-update push path amortise a precompile differently. M3-08 is what makes that split computable rather than assertable: a delta is a difference from a baseline, and until this task there was a baseline for verification and none for a read in either mode. There are now two, 3,041,427 cycles and 6,803, and the same task establishes why the delta cannot be one figure -- a precompile removes signature recovery, which is 96% of the gap between the modes, so it is 96% of what a pull consumer pays per read and none of what a push consumer pays. That asymmetry is structural rather than presentational, which is the argument M3-09 is built on. This row stays partial because the delta itself is M3-09's and the reference points it is taken against are M5-07's."
 
 # ------------------------------------------------------------------ Supportability
 

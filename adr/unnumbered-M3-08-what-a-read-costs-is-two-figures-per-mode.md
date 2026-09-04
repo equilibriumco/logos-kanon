@@ -2,7 +2,7 @@
 
 - **Status**: accepted
 - **Milestone**: M3 (`M3-08`)
-- **Requirements**: P2, P3
+- **Requirements**: P1, P2, P3
 - **Artefacts**: `reference-consumers/pull/guest/src/bin/pull_cost.rs`,
   `reference-consumers/aggregator-read/guest/src/bin/read_cost.rs`,
   `methods/tests/read_cost.rs`, `COSTS.md`
