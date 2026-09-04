@@ -138,9 +138,33 @@ jobs:
             echo "::notice::$IMAGE:$rev already exists; nothing to do"
           fi
 
-      - name: Build the sequencer from the pinned revision
+      # The expensive half is compiling LEZ, and most rebuilds do not need it.
+      # A format bump is a *Dockerfile* change -- a package added to the apt list,
+      # a path moved, a label or a STOPSIGNAL -- while the payload it wraps is a
+      # property of the LEZ revision, which the tag already pins. So when an image
+      # for this revision exists, its payload is extracted and reused: `fetch`
+      # copies `/lez` out into exactly the layout `build` leaves behind, which is
+      # the whole reason those two commands are interchangeable.
+      #
+      # Without this, stamping a label costs a 45-minute compile, and a mechanism
+      # that expensive is one nobody will use.
+      #
+      # `force` still compiles from source, because that is the only thing that
+      # re-establishes that the revision still builds. Reusing the payload
+      # otherwise means a published binary can perpetuate itself across
+      # Dockerfile changes without ever being rebuilt, which is the trade being
+      # made here and is why `force` exists.
+      - name: Obtain the sequencer for the pinned revision
         if: steps.exists.outputs.skip != 'true'
-        run: scripts/lez-sequencer.sh build
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.force }}" != "true" ] \
+            && docker image inspect "$IMAGE:${{ steps.lez.outputs.rev }}" >/dev/null 2>&1; then
+            echo "::notice::reusing the payload already published for ${{ steps.lez.outputs.rev }}"
+            scripts/lez-sequencer.sh fetch
+          else
+            scripts/lez-sequencer.sh build
+          fi
 
       # Everything `start` needs, and nothing else: the binary, the debug config
       # it is pointed at, and Bedrock's compose file.
