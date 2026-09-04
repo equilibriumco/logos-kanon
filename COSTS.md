@@ -144,7 +144,9 @@ check against, computing the new account, and producing the post-states LEZ
 applies.
 
 Not in these figures: what LEZ spends reading the instruction data before the
-program is entered, about 113 cycles a byte, which *is* material and is
+program is entered, about 113 cycles a serialized `u32` word — which is about a
+cycle count per *payload* byte, since serde writes one word per byte, and is not
+113 per byte of the encoded instruction. It *is* material and is
 `MAX_PAYLOAD_BYTES`'s subject (ADR 26).
 
 ### Registering a feed
@@ -328,11 +330,234 @@ is the same signal as a test that cannot fail — and a figure that is merely
 The same exclusions the write section lists — the generated validator, the
 dispatcher, the `SpelOutput` wrapping — and one that matters more on the pull
 side than anywhere else: **what LEZ spends reading the instruction data before
-the program is entered**, about 113 cycles a byte. A pull settlement carries the
-whole payload as instruction data, so a 1,200-byte capture is roughly 136,000
-cycles of reading before `settle` begins, against a push settlement's feed id.
+the program is entered**, about 113 cycles a serialized `u32` word — roughly a
+payload byte, since serde writes one word per byte, and not 113 per byte of the
+encoded instruction. A pull settlement carries the whole payload, and
+`a_settlement_carries_what_is_published` measures the captured one at 758 words,
+so about 85,700 cycles of reading before `settle` begins, against a push
+settlement's feed id.
 ADR 26 bounds it and `MAX_PAYLOAD_BYTES` is the limit; it is named here because
 a per-read comparison that omitted it would understate the pull side.
+
+## What a precompile would be worth, in each mode
+
+P3 asks for the delta between the in-program path and a hypothetical native
+ECDSA and keccak256 precompile, per mode. LEZ has no such primitive, so **the
+figures rest on three things about it that nobody can measure: what a call into it
+costs, what it hands back, and what it validates** (M3-09). What the third moves is
+the delta itself: the tables below assume the primitive absorbs the signature
+parsing and the malleability refusal that `recover_signer` does today, and if it
+does not then 3,010,270 is an upper bound on what is removable and whatever is
+retained is unmeasured. The other two move the band around the delta and how it
+splits between the primitives, and that split rests on an estimate of its own, named
+where it is used. What a
+precompile would remove is two rows of the component table above; what would
+remain is the difference; what it would add is a crossing into the precompile
+and back, once per call. That last figure does not exist to measure, so it is
+carried as `c` and every number below is given at both ends of `m0`'s
+1,000-to-10,000 band and at zero.
+
+Zero is not achievable and is not meant to be. It is the bound that holds
+whatever a real precompile costs, which is the useful thing to hand someone
+deciding whether to build one.
+
+### The saving is the same in both modes. The frequency is not
+
+A five-package verification does five keccak256 hashes and five recoveries, so a
+precompile removes **3,010,270 cycles and adds ten crossings**, wherever that
+verification happens.
+
+Those ten are charged one `c` each, which is an assumption and not a small one: five
+are keccak256 and five are recovery, and `m0` derived the band for a *recovery*
+syscall while leaving hashing in software. Written out, the addition is
+`5·c_keccak + 5·c_recovery`, and `10·c_keccak + 5·c_recovery` if the primitive hands
+back a public key. This section collapses that to `10·c` because two bands would
+publish twice as much invented precision, not because the two crossings are known to
+cost the same. That is the same arithmetic in both modes, and it is not
+where the modes differ.
+
+They differ in how often a consumer pays it:
+
+| a read | pull | push |
+| --- | ---: | ---: |
+| today | 3,041,385 | 6,803 |
+| removable | 3,010,270 | 0 |
+| with a precompile, `c = 0` | 31,115 (**97.7x**) | 6,803 (1x) |
+| with a precompile, `c = 1,000` | 41,115 (**74.0x**) | 6,803 (1x) |
+| with a precompile, `c = 10,000` | 131,115 (**23.2x**) | 6,803 (1x) |
+
+**A pull consumer pays the whole saving on every read. A push consumer gets
+nothing.** Not a small amount — nothing, because a push read performs no
+recovery at all: it is cheaper than a single one, which
+`a_precompile_is_worth_nothing_to_a_push_read` asserts rather than asserting an
+arithmetic identity.
+
+Push mode's saving is real, but it lands on the aggregator's update:
+
+| a push update | cycles |
+| --- | ---: |
+| today | 3,048,414 |
+| removable | 3,010,270 |
+| with a precompile, `c = 0` | 38,144 (**79.9x**) |
+| with a precompile, `c = 1,000` | 48,144 (**63.3x**) |
+| with a precompile, `c = 10,000` | 138,144 (**22.1x**) |
+
+So for a feed updated once and read `R` times before its next update, a
+precompile is worth `3,010,270 - 10c` per read in pull mode and the same figure
+divided by `R` in push mode. **It is worth `R` times more to a pull consumer**,
+and that is P3's per-mode answer: one number, two frequencies.
+
+With the cryptography gone, a pull settlement leaves 38,343 and a push update
+38,144. Read that as "about the same size" and no further:
+`the_precompile_read_table_is_reproducible` prints both so they can be checked, but
+the 199 between them is smaller than the 722 cycles those guests disagree by on
+identical verification, and the two are different operations besides — a settlement
+against a submission. What it supports is that neither mode's remaining work is
+large, not that the modes converge or why. What is
+left in both cases is the framework and each program's own domain.
+
+### These are bodies, and a settlement is bigger than its body
+
+Every figure above is a program body, and what LEZ spends reading instruction data
+before the body is entered is outside all of them — the exclusion the read section
+names at about 113 cycles a word — equivalently a payload byte, since serde writes
+one word per byte — warning that omitting it "would understate the pull side". It understates it here too, by more than the residual it is left out
+of.
+
+What a settler submits is a `Settle`, and the wire is `risc0_zkvm::serde` rather
+than Borsh: it writes `u32` words and packs neither the feed id nor the payload into
+them. `a_settlement_carries_what_is_published` measures it at **758 words**, against
+the 761 bytes a Borsh reading would give.
+
+Words are the unit the ~113 is in, which is worth being careful about because the
+two readings differ by four. ADR 26 derives it from one measurement — a
+127,814-byte payload whose read cost 14.5M cycles — and that payload is about
+127,814 words once serde has finished with it. Multiplying the 3,032 *physical*
+bytes instead would count each word four times, and predict 57.8M for ADR 26's own
+experiment against the 14.5M it measured.
+
+So the read in front of `settle` is about **85,700 cycles**, and the figure to add
+it to is the whole `settle` body rather than the read inside it:
+
+| a pull settlement, body plus its instruction read | cycles | reduction |
+| --- | ---: | ---: |
+| today | ~3,134,000 | |
+| with a precompile, `c = 0` | ~124,000 | **~25x** |
+| with a precompile, `c = 1,000` | ~134,000 | ~23x |
+| with a precompile, `c = 10,000` | ~224,000 | ~14x |
+
+The read is 69% of what remains at `c = 0` and still 38% at the top of the band, so
+it dominates the residual without closing the band the way the body figures'
+threefold swing did.
+
+**That is still not a transaction**, and the gap is the same one the top of this
+file describes: the generated validator, the dispatcher and the `SpelOutput`
+wrapping are outside every figure here, because reaching them needs the macro's
+entry point rather than a function call. What this table is, exactly, is a
+settlement body plus an estimate of the instruction read in front of it.
+
+Even so it moves the headline a long way: **about 14x to 25x**, against the 23x to
+98x the bodies alone suggest.
+
+Approximate twice over — the 113 is approximate and the surrounding pipeline is
+unmeasured — where the body figures either side are exact and asserted, and the 758
+words now are too.
+
+A push consumer's *read* carries a feed id rather than a payload, so its
+instruction-data term is negligible and it still gains nothing from a precompile
+either way.
+
+### If only one of the two is built, build ECDSA
+
+Of the 3,010,270 a precompile removes, the **recovery row is 97.10% and the
+keccak256 row 2.90%**, at one, three and five signers alike — so it does not depend
+on how many packages a payload carries.
+
+It does depend on what is *in* them. Verification hashes each package's whole
+signable span, so a package carrying more data points hashes more without recovering
+more, and the keccak share rises with it. Every captured package carries exactly one
+data point and a 77-byte span, and that is the shape this split is for. A feed
+publishing several points per package would move it toward keccak, and nothing here
+measures by how much.
+
+**Those are rows, and rows are not primitives.** The recovery row is everything
+`recover_signer` does: parsing the 65-byte signature, refusing a malleable one, the
+recovery itself, encoding the point, and then a *second* keccak256 — `address_of`
+hashes the 64-byte uncompressed point to get an Ethereum address. So the keccak row
+is not all of the hashing.
+
+**How much more is an estimate, and it is the one figure in this section that is not
+measured.** Nothing isolates the address hash. Taking it at 17,476 borrows the
+measured cost of the 77-byte message hash, on the reasoning that both fit inside one
+136-byte keccak block. On that estimate the removable 3,010,270 is roughly **174,760
+of keccak256 and 2,835,510 of ECDSA proper, about 5.8% against 94.2%**, rather than
+the 2.90/97.10 the rows give. Measuring that hash on its own would settle it, and
+nothing here does.
+
+Underneath it sits a third assumption about the interface, beside the two above:
+what the primitive validates. The row being removed includes signature parsing and the
+malleability check, and one that skipped either would not remove all of it.
+
+The recommendation survives the *estimate* — ECDSA is the larger half whether the
+address hash is counted with it or against it. It does not survive an arbitrary
+package shape: hashing grows with the signable span and recovery does not, so a feed
+publishing enough data points per package would move the balance, and nothing here
+establishes where. Read "build ECDSA first" as scoped to packages the shape of the
+captured ones, which is the shape RedStone's primary feeds publish today.
+
+The hashing side is weaker still than even 5.8% suggests, because most of it is
+already available without LEZ changing anything. `the_keccak_accelerator_is_still_declined`
+records that this build declines risc0's keccak coprocessor, which would divide that
+row by about seven (ADR 6) — worth roughly 150,000 cycles on the primitive split
+rather than the 75,000 the row split implies. A keccak256 precompile would be
+competing with a configuration change.
+
+### What is measured and what is not
+
+Measured: what a precompile removes, and what remains — on the assumption that the
+primitive absorbs the parsing and the malleability refusal inside the row being
+removed. Both are rows this file already publishes, and the tests that pin them are
+the same tests. The one new measurement is the size of the instruction a settlement
+carries, which `wire.rs` pins.
+
+Two caveats on how precisely, because both residuals are ~38K left after
+subtracting two figures near 3M. The removable rows are measured in `verify_cost`
+and subtracted from `submit_cost` on the push side and from `pull_cost` on the
+pull side, so each residual inherits whatever those guests disagree by. That is
+42 cycles between `verify_cost` and `submit_cost`, which
+`both_harnesses_agree_about_what_verification_costs` pins, and 722 between
+`verify_cost` and `pull_cost` for the same payload. Both residuals are therefore
+good to a few tens or hundreds of cycles rather than to one — enough for a
+reduction factor, and not enough to read the 199 cycles between the two residuals
+as more than "about the same size".
+
+Assumed: `c`, and one thing about the precompile's shape. Ten calls assumes it
+returns an **address**, as the EVM's `ecrecover` does. One returning a public key
+leaves the caller to keccak the point — which is what `address_of` does today — and
+costs three crossings a package rather than two, putting a pull read at 181,115
+rather than 131,115 at the top of the band, 16.8x rather than 23.2x. That is the
+reader's assumption to overturn, since they are the ones choosing the interface.
+
+And what it validates, which is the one that moves the delta rather than the band:
+the tables assume the primitive absorbs the parsing and the malleability refusal
+inside the row being removed, and 3,010,270 is an upper bound if it does not.
+
+Beyond those three: nothing. `c` matters more than an assumption usually would,
+because the answer moves by a factor of three across the band — 23.2x to 74.0x
+on a pull read — which is why no single number is published here. `[M3-09:01]`
+records that choice. `m0`'s report is not directly comparable and it is worth
+saying why, because all three of its terms differ: its 89% is *recovery alone*
+against the whole 3-of-N program, with keccak a separate 2.72% left in software,
+over 3 packages and so 3 calls. The figures here are recovery **and** keccak
+against verification only, over 5 packages and so 10 calls. Its 8x to 9x and this
+section's 23x to 74x are answers to different questions, and the gap between them
+is mostly the framework floor and the per-package instruction handling that a
+crypto precompile does not touch — but not only that.
+
+Not covered: what a precompile would do to proof size or proving time, and the
+per-chain reference points the delta is compared against, which are M5-07's. What
+*is* covered but only approximately is the instruction-data read, which the
+transaction table above adds back.
 
 ## How it is measured
 
@@ -502,9 +727,12 @@ workload, calling `k256` and `tiny-keccak` directly. This measures them inside
 The 77 bytes are not a coincidence: a RedStone package carrying one data point
 signs `1 * (32 + 32) + 4 + 6 + 3` bytes, and every captured package carries one.
 
-The recovery gap is 19,725 cycles, and it is the address derivation the M0
-harness did not include: one keccak256 over 64 bytes accounts for 17,476 of it,
-leaving 2,249 for parsing and normalising the 65-byte signature.
+The recovery gap is 19,725 cycles, and it is what the M0 harness did not include:
+`recover_signer` parses the 65-byte signature, refuses a malleable one, and hashes
+the recovered point to an address. Nothing here isolates those, so how the 19,725
+divides between them is not established — the address hash is a keccak256 over 64
+bytes, and the message hash over 77 measures 17,476, which is the nearest thing to
+a figure for it and is a stand-in rather than a measurement.
 
 ## Reproducing
 
@@ -524,6 +752,9 @@ cargo test --release -p kanon-methods -- --nocapture the_cost_table        # the
 cargo test --release -p kanon-methods -- --nocapture the_push_write_cost   # the second
 cargo test --release -p kanon-methods --test read_cost \
     -- --nocapture the_read_table                                          # the third
+cargo test --release -p kanon-methods -- --nocapture the_precompile_table  # the update delta
+cargo test --release -p kanon-methods --test read_cost \
+    -- --nocapture the_precompile_read_table                               # the read delta
 ```
 
 Every table is printed by the code that asserts it, so a published figure and an

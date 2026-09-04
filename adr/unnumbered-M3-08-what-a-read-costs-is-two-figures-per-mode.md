@@ -148,9 +148,11 @@ unit LEZ charges in and not comparable with anything else in `COSTS.md`.
   instructive of the two: implausibility is a signal that a figure is elided, but
   plausibility is not evidence that it is not.
 - **What LEZ spends reading instruction data is outside every figure here**, and it falls
-  asymmetrically: a pull settlement carries the payload, at about 113 cycles a byte, so a
-  1,200-byte capture is roughly 136,000 cycles before `settle` is entered. A push
-  settlement carries a feed id. ADR 26 bounds it; `COSTS.md` names it so a per-read
+  asymmetrically: a pull settlement carries the payload, at about 113 cycles a serialized
+  word — roughly a payload byte, and not a byte of the encoded instruction. M3-09
+  measures the captured settlement at 758 words, so about 85,700 cycles before `settle`
+  is entered; an earlier draft of this bullet estimated 136,000 from a payload size
+  nothing had measured. A push settlement carries a feed id. ADR 26 bounds it; `COSTS.md` names it so a per-read
   comparison is not read as complete without it.
 - **Nothing enforces this, so the rule is a rule for people.** No test pins
   `PULL_CONSUMER_ID` or `AGGREGATOR_READ_CONSUMER_ID`: **a change to either consumer's
