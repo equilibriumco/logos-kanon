@@ -532,21 +532,47 @@ cmd_smoke() {
   log "smoke passed: the sequencer serves RPC and has produced at least one block"
 }
 
+# Stops everything `start` started, and deletes the run state only if it did.
+#
+# That condition is the whole shape of this function, and it is here because the
+# obvious version destroyed a running chain. Deleting the state directory is the
+# one irreversible thing here -- it is the sequencer's RocksDB -- and every step
+# that stops something is a `docker` call that can fail for reasons that have
+# nothing to do with this script. Measured, on a shell with no docker socket:
+# `docker inspect` failed, which is indistinguishable from "no such container",
+# so the container was never stopped; `docker compose down -v` failed into its
+# `|| true`; and the home directory was then removed under a sequencer that was
+# still serving RPC, which kept running off the unlinked inodes and would have
+# lost the chain at its next restart.
+#
+# So a stop that could not stop something leaves the state alone and says so.
+# The previous version could not hit this: the sequencer was a host process
+# killed by pid, so it was always genuinely dead before its home was removed.
 cmd_stop() {
-  # Unconditionally, and not only in container mode: a `stop` run with a
-  # different `KANON_SEQUENCER_RUNTIME` than the `start` that preceded it should
-  # still clean up, and removing a container that does not exist costs nothing.
+  local stopped_everything=1
+
+  # Both halves need docker -- bedrock always, the sequencer in the container
+  # runtime -- so a daemon that cannot be reached means nothing here ran.
+  if ! docker info >/dev/null 2>&1; then
+    log "docker is not reachable, so nothing it is running was stopped"
+    stopped_everything=0
+  fi
+
+  # Attempted regardless of the selected runtime: a `stop` run with a different
+  # `KANON_SEQUENCER_RUNTIME` than the `start` before it should still clean up,
+  # and removing a container that does not exist costs nothing.
   #
   # The last log is copied out first, because `docker rm` takes docker's copy
   # with it and a sequencer that misbehaved is exactly when the log is wanted.
-  if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  if [ "$stopped_everything" = 1 ] && docker inspect "$CONTAINER" >/dev/null 2>&1; then
     log "stopping sequencer container $CONTAINER"
     docker logs "$CONTAINER" >"$STATE_DIR/sequencer.log" 2>&1 || true
     # SIGTERM first, for the reason the host path gives below: the service shuts
     # its store down cleanly on it. `docker stop` sends one and escalates to
     # SIGKILL after its own timeout.
     docker stop "$CONTAINER" >/dev/null 2>&1 || true
-    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 \
+      || { log "could not remove $CONTAINER"; stopped_everything=0; }
   fi
 
   if [ -f "$STATE_DIR/pid" ]; then
@@ -569,9 +595,23 @@ cmd_stop() {
 
   local dir
   dir="$(checkout_dir)/bedrock"
-  if [ -d "$dir" ]; then
+  if [ "$stopped_everything" = 1 ] && [ -d "$dir" ]; then
     log "stopping bedrock"
-    ( cd "$dir" && docker compose down -v ) || true
+    ( cd "$dir" && docker compose down -v ) \
+      || { log "could not bring bedrock down"; stopped_everything=0; }
+  fi
+
+  # The last word, and it asks the question directly rather than trusting the
+  # bookkeeping above: something still answering here is something whose database
+  # must not be deleted.
+  if sequencer_running; then
+    log "a sequencer is still running"
+    stopped_everything=0
+  fi
+
+  if [ "$stopped_everything" = 0 ]; then
+    log "run state left at $STATE_DIR; deleting it under a running sequencer takes its database away"
+    die "stop did not stop everything, so it deleted nothing"
   fi
 
   remove_state_subpath home

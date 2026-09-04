@@ -69,6 +69,15 @@ letting `docker run` fail as though the script were broken.
   compose project, and `docker compose` reads that file from the host. So `fetch` (or
   `build`) still runs first, in both runtimes, and `bedrock_up` now says so when the
   directory is missing.
+- **`stop` deletes the run state only when it stopped everything.** A host process is
+  killed by pid and is therefore reliably dead before its home is removed; a container
+  is stopped through a daemon that can be unreachable, and a `docker` call that fails
+  is indistinguishable from one that had nothing to do. Removing the state directory is
+  irreversible — it is the sequencer's RocksDB — so it is now conditional on every stop
+  having succeeded, and `stop` fails loudly rather than tidying up around a chain that
+  is still serving. This was found by doing it: `stop` from a shell with no docker
+  socket unlinked the database of a sequencer that went on producing blocks off the
+  open inodes.
 - **The image is larger**, an ubuntu base plus the payload rather than the payload
   alone. It is pulled once per LEZ revision and cached; against the hour of build time
   it absorbs, this is not a trade worth tuning.
