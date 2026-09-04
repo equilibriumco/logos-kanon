@@ -75,10 +75,13 @@ letting `docker run` fail as though the script were broken.
   compose project, and `docker compose` reads that file from the host. So `fetch` (or
   `build`) still runs first, in both runtimes, and `bedrock_up` now says so when the
   directory is missing.
-- **`stop` deletes the run state only when it stopped everything.** A host process is
-  killed by pid and is therefore reliably dead before its home is removed; a container
-  is stopped through a daemon that can be unreachable, and a `docker` call that fails
-  is indistinguishable from one that had nothing to do. Removing the state directory is
+- **`stop` deletes the run state only when it stopped everything.** A container is
+  stopped through a daemon that can be unreachable, and a `docker` call that fails is
+  indistinguishable from one that had nothing to do. The host path turned out to have
+  the same hole for a different reason and it is closed too: `kill -9` returns when the
+  signal is queued rather than when the process is gone, and the pid file was removed
+  regardless — so a sequencer that outlived SIGKILL left nothing for the check to find.
+  Both are now waited on, and the pid file survives a process that does. Removing the state directory is
   irreversible — it is the sequencer's RocksDB — so it is now conditional on every stop
   having succeeded, and `stop` fails loudly rather than tidying up around a chain that
   is still serving. This was found by doing it: `stop` from a shell with no docker

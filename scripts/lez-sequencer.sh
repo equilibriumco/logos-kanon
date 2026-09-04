@@ -242,9 +242,16 @@ ensure_image() {
 # failure is `docker run` complaining about a missing executable, which reads
 # like a broken script rather than like an image that needs republishing.
 assert_image_runnable() {
-  local ref
+  local ref entrypoint
   ref="$(image_ref)"
-  [ "$(docker image inspect -f '{{len .Config.Entrypoint}}' "$ref")" = 0 ] || return 0
+  # An inspect that fails is not an image that passes. Without this the
+  # substitution yields the empty string, `[ "" = 0 ]` is false, and the
+  # function reports "runnable" for an image it could not read at all -- so a
+  # pruned image or a daemon hiccup would come back as the `docker run` error
+  # this check exists to translate.
+  entrypoint="$(docker image inspect -f '{{len .Config.Entrypoint}}' "$ref" 2>&1)" \
+    || die "could not inspect $ref: $entrypoint"
+  [ "$entrypoint" = 0 ] || return 0
   die "$ref carries no entrypoint, so it predates adr/0034 and cannot be run."$'\n'"Re-run the 'LEZ sequencer image' workflow to republish it, or: KANON_SEQUENCER_RUNTIME=host $0 start"
 }
 
@@ -568,7 +575,17 @@ cmd_stop() {
   # with it and a sequencer that misbehaved is exactly when the log is wanted.
   if [ "$stopped_everything" = 1 ] && docker inspect "$CONTAINER" >/dev/null 2>&1; then
     log "stopping sequencer container $CONTAINER"
-    docker logs "$CONTAINER" >"$STATE_DIR/sequencer.log" 2>&1 || true
+    # Only in the container runtime, and the distinction is not pedantic. The
+    # removal above is deliberately attempted whatever the runtime, so a stray
+    # container gets cleaned up either way -- but a *stray* one is by definition
+    # not what produced the log this file holds. A developer whose container
+    # died at startup and who switched to `KANON_SEQUENCER_RUNTIME=host` to get
+    # a working sequencer would otherwise have `stop` overwrite the host run's
+    # log with the dead container's, losing the diagnostics for the run they
+    # just stopped.
+    if [ "$RUNTIME" = container ]; then
+      docker logs "$CONTAINER" >"$STATE_DIR/sequencer.log" 2>&1 || true
+    fi
     # SIGTERM first, for the reason the host path gives below: the service shuts
     # its store down cleanly on it. `docker stop` sends one and escalates to
     # SIGKILL after its own timeout.
@@ -590,9 +607,27 @@ cmd_stop() {
         waited=$((waited + 1))
         sleep 1
       done
+      # `kill -9` returns as soon as the signal is queued, not when the process
+      # is gone, and a sequencer in an uninterruptible wait can outlive it for a
+      # while. So it is waited on too, and the pid file is removed only once the
+      # process really has gone: it is the only record that there was one, and
+      # deleting it while the process lives makes `sequencer_running` answer
+      # "nothing here" and lets the RocksDB be unlinked underneath it. That is
+      # the same failure this function was rewritten to prevent on the container
+      # side, and leaving it open here would have kept it alive on the other.
       kill -9 "$pid" 2>/dev/null || true
+      waited=0
+      while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 30 ]; do
+        waited=$((waited + 1))
+        sleep 1
+      done
     fi
-    rm -f "$STATE_DIR/pid"
+    if kill -0 "$pid" 2>/dev/null; then
+      log "sequencer $pid survived SIGKILL"
+      stopped_everything=0
+    else
+      rm -f "$STATE_DIR/pid"
+    fi
   fi
 
   local dir
@@ -628,7 +663,11 @@ cmd_stop() {
 # there and the file is the fallback, which also covers the host runtime.
 cmd_logs() {
   local lines="${2:-50}"
-  if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  # Gated on the runtime and not merely on a container existing. A container
+  # left behind by an earlier run is still findable by name, and preferring it
+  # would print a dead container's output while a host sequencer is live, with
+  # nothing to say which one the reader is looking at.
+  if [ "$RUNTIME" = container ] && docker inspect "$CONTAINER" >/dev/null 2>&1; then
     docker logs --tail "$lines" "$CONTAINER" 2>&1
   else
     tail -n "$lines" "$STATE_DIR/sequencer.log"
