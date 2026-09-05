@@ -370,37 +370,62 @@ bedrock_up() {
   log "bedrock up on :$BEDROCK_PORT"
 }
 
-# Might anything this state directory started still be alive?
+# What is the sequencer this state directory started doing?
 #
-# One question, one function, and every caller that would otherwise act on a
-# guess asks this one: the readiness loop, `start`'s refusal to run beside an
-# existing sequencer, and the gate on deleting the run state. It is phrased so
-# that **uncertainty answers yes** -- a daemon that will not talk, an inspect
-# that failed for a reason of its own, a container that exists but is not
-# running. Only a positive confirmation of absence returns false.
+# `running`, `stopped`, `gone`, or `unknown`. One place computes it; the two
+# predicates below are the only ways to ask about it, because the two questions
+# callers actually have are different and collapsing them broke both:
 #
-# The phrasing is the point. Three rounds of review found seven ways to arrive at
-# "nothing is running" by mistake, in five different callers, and every one of
-# them was a caller asking its own version of the question and getting a
-# fail-open answer from a `docker` command that had not actually said no. There
-# is nowhere left to ask it differently.
+#   * *may something still be alive?*  — `start`'s refusal, the readiness loop.
+#     Uncertainty is a yes.
+#   * *is it safe to delete the run state?* — `stop`'s gate. Only a confirmed
+#     `gone` is, because a stopped container still holds the bind mount.
 #
-# Both shapes are checked whichever runtime is selected: a host sequencer left
-# from an earlier run holds `$PORT`, and a container started against it would
-# fail to bind with an error a reader has to go into the log to find.
-sequencer_running() {
-  local id
+# Answering the second question for the first is what made `start` refuse to run
+# beside its own stopped container instead of reclaiming it, and made an exited
+# container wait out the readiness timeout rather than reporting a death. Three
+# rounds of review found seven ways to fail *open* on this; the round that fixed
+# them introduced one that failed closed. The states are named now so that neither
+# can recur by a caller inventing its own answer.
+sequencer_state() {
+  local id state running
   id="$(started_container)" || true
-  if [ -n "$id" ]; then
-    case "$(container_state "$id")" in
-      # Anything but a confirmed absence counts as alive. A stopped container
-      # still owns the bind mount, and an inspect that failed for a reason of
-      # its own tells us nothing at all.
-      present|unknown) return 0 ;;
-    esac
+  state=absent
+  [ -n "$id" ] && state="$(container_state "$id")"
+
+  # A live host process outranks whatever the container is doing: `stop` has to
+  # keep the database for it either way.
+  if [ -f "$STATE_DIR/pid" ] && kill -0 "$(cat "$STATE_DIR/pid")" 2>/dev/null; then
+    printf 'running'
+    return
   fi
-  [ -f "$STATE_DIR/pid" ] && kill -0 "$(cat "$STATE_DIR/pid")" 2>/dev/null
+
+  case "$state" in
+    unknown) printf 'unknown' ;;
+    present)
+      running="$(docker inspect -f '{{.State.Running}}' "$id" 2>/dev/null)" || running=""
+      case "$running" in
+        true) printf 'running' ;;
+        false) printf 'stopped' ;;
+        # Present, and its state could not be read. Not a licence to guess.
+        *) printf 'unknown' ;;
+      esac
+      ;;
+    *) printf 'gone' ;;
+  esac
 }
+
+# May something still be alive? Uncertainty answers yes; a stopped container is
+# not alive, and is `start`'s to reclaim.
+sequencer_alive() {
+  case "$(sequencer_state)" in
+    running|unknown) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Is it safe to delete the run state? Only a confirmed absence is.
+sequencer_gone() { [ "$(sequencer_state)" = gone ]; }
 
 # Brings `$STATE_DIR/sequencer.log` up to date.
 #
@@ -532,9 +557,13 @@ cmd_start() {
   # paths differ by a prefix and not by content.
   HOST_CONFIG="$dir/lez/sequencer/service/configs/debug/sequencer_config.json"
 
-  if sequencer_running; then
-    die "a sequencer is already running; run: $0 stop"
-  fi
+  case "$(sequencer_state)" in
+    running) die "a sequencer is already running; run: $0 stop" ;;
+    unknown) die "a sequencer may still be running and docker would not say; run: $0 stop" ;;
+    # `stopped` deliberately falls through: a container this checkout left behind
+    # is exactly what the reclaim below exists to clear, and refusing here is what
+    # made that path unreachable.
+  esac
   # A stopped container of the same name still owns the name, so `docker run`
   # below would refuse. Removing one that is not running is what makes `start`
   # after a crash work without a manual `stop` -- but only if it is one of ours.
@@ -626,7 +655,7 @@ cmd_start() {
   local waited=0
   refresh_log
   until grep -q "RPC server started" "$STATE_DIR/sequencer.log" 2>/dev/null; do
-    if ! sequencer_running; then
+    if ! sequencer_alive; then
       log "sequencer exited during startup; last lines:"
       refresh_log
       tail -30 "$STATE_DIR/sequencer.log" >&2 || true
@@ -764,7 +793,7 @@ cmd_stop() {
       # is gone, and a sequencer in an uninterruptible wait can outlive it for a
       # while. So it is waited on too, and the pid file is removed only once the
       # process really has gone: it is the only record that there was one, and
-      # deleting it while the process lives makes `sequencer_running` answer
+      # deleting it while the process lives makes `sequencer_state` answer
       # "nothing here" and lets the RocksDB be unlinked underneath it. That is
       # the same failure this function was rewritten to prevent on the container
       # side, and leaving it open here would have kept it alive on the other.
@@ -796,9 +825,9 @@ cmd_stop() {
   # cannot prove the sequencer is gone deletes nothing, whatever the attempts
   # above happened to report -- and `stopped_everything` is now only about what
   # to tell the reader, not about what is safe.
-  if sequencer_running; then
-    log "run state left at $STATE_DIR; deleting it under a running sequencer takes its database away"
-    die "stop cannot confirm the sequencer is gone, so it deleted nothing"
+  if ! sequencer_gone; then
+    log "run state left at $STATE_DIR; deleting it under a sequencer that is still there takes its database away"
+    die "stop cannot confirm the sequencer is gone ($(sequencer_state)), so it deleted nothing"
   fi
   [ "$stopped_everything" = 1 ] || log "something did not stop cleanly; the sequencer is gone all the same"
 

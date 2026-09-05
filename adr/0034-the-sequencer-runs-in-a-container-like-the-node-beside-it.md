@@ -75,17 +75,23 @@ letting `docker run` fail as though the script were broken.
   compose project, and `docker compose` reads that file from the host. So `fetch` (or
   `build`) still runs first, in both runtimes, and `bedrock_up` now says so when the
   directory is missing.
-- **One function decides whether anything might still be running, and every caller asks
-  it.** Deleting the run state is the one irreversible act here — it is the sequencer's
-  RocksDB — and three rounds of review found *seven* ways to reach "nothing is running"
-  by mistake, in five different callers: a daemon that could not be reached, a `docker
-  rm` that failed, an id file dropped anyway, a label that proved the wrong thing, an
-  inspect error read as an absence, twice. Every one was a caller asking its own version
-  of the question and getting a fail-open answer from a command that had not said no.
-  The fix that stuck was not another check but a single `sequencer_running`, phrased so
-  that **uncertainty answers yes**, used by the readiness loop, by `start`'s refusal and
-  by the gate on deletion alike. `stop` now attempts, then asks once; the attempts report
-  to the reader and decide nothing.
+- **One place computes the sequencer's state, and two predicates ask about it.** Deleting
+  the run state is the one irreversible act here — it is the sequencer's RocksDB — and
+  three rounds of review found *seven* ways to reach "nothing is running" by mistake, in
+  five callers: an unreachable daemon, a failed `docker rm`, an id file dropped anyway, a
+  label that proved the wrong thing, and an inspect error read as an absence, twice.
+  Every one was a caller asking its own version of the question and getting a fail-open
+  answer from a command that had not said no.
+
+  Collapsing them into a single "might anything be alive?" fixed all seven and introduced
+  an eighth in the other direction: a *stopped* container answered yes, so `start`
+  refused to run beside its own leftover instead of reclaiming it, and an exited
+  container waited out the readiness timeout rather than reporting a death. The two
+  questions are genuinely different — *may something still be alive* (uncertainty says
+  yes) and *is it safe to delete the run state* (only a confirmed absence is) — and a
+  stopped container answers them differently. So `sequencer_state` names all four states
+  in one place, `sequencer_alive` and `sequencer_gone` are the only ways to ask, and no
+  caller invents its own answer.
 - **The sequencer only listens for SIGINT, so both runtimes send it.**
   `listen_for_shutdown_signal` awaits `tokio::signal::ctrl_c()` and installs no
   SIGTERM handler, so docker's default stop signal is ignored until the SIGKILL that
