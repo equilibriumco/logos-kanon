@@ -543,7 +543,7 @@ start_host() {
 }
 
 cmd_start() {
-  local dir home guest_home previous actual running
+  local dir home guest_home previous
 
   case "$RUNTIME" in
     container|host) ;;
@@ -564,40 +564,44 @@ cmd_start() {
     # is exactly what the reclaim below exists to clear, and refusing here is what
     # made that path unreachable.
   esac
-  # A stopped container of the same name still owns the name, so `docker run`
-  # below would refuse. Removing one that is not running is what makes `start`
-  # after a crash work without a manual `stop` -- but only if it is one of ours.
-  # `KANON_SEQUENCER_CONTAINER` is a caller's variable and could name anything on
-  # the machine, so the label decides, and a collision with something else is
-  # reported rather than deleted.
+  # Two separate concerns, and conflating them deleted a database. This one is
+  # *our own previous container*, addressed by the id this state directory saved
+  # -- whatever it was named. `reset_state_dir` below wipes that directory, which
+  # is where that container's RocksDB lives, so it has to be gone first.
+  #
+  # Looking the previous container up by the *current* `$CONTAINER` name is the
+  # bug: a run under `KANON_SEQUENCER_CONTAINER=foo` followed by a default `start`
+  # finds nothing at the default name, reclaims nothing, and then resets the state
+  # directory out from under `foo`, which is still sitting there holding it.
+  #
+  # Not gated on the runtime either, for the same reason in a different shape: a
+  # container-mode run followed by `KANON_SEQUENCER_RUNTIME=host start` would
+  # otherwise skip this entirely and reset the directory just the same.
+  previous="$(started_container)" || true
+  if [ -n "$previous" ]; then
+    case "$(container_state "$previous")" in
+      absent) ;;
+      unknown) die "this checkout's previous container $previous may still exist and docker would not say; run: $0 stop" ;;
+      present)
+        log "removing this checkout's previous container $previous"
+        docker rm -f "$previous" >/dev/null 2>&1 || true
+        # Confirmed before the state directory is reset, because the reset is what
+        # takes its database away.
+        [ "$(container_state "$previous")" = absent ] \
+          || die "could not remove this checkout's previous container $previous; run: $0 stop"
+        ;;
+    esac
+    rm -f "$STATE_DIR/container"
+  fi
+
+  # And this one is the *name* the run about to happen needs. `docker run --name`
+  # refuses an occupied one, and anything still holding it after the reclaim above
+  # is by definition not ours -- so it is reported, never removed.
   if [ "$RUNTIME" = container ]; then
     case "$(container_state "$CONTAINER")" in
       absent) ;;
-      unknown) die "a container named $CONTAINER may exist but docker would not say; not removing anything" ;;
-      present)
-        # The id recorded by *this* state directory, and nothing weaker. A label
-        # only proves some checkout of this script started it, and that is not
-        # the same claim: two checkouts share the default name, so checkout B
-        # starting up would find A's running container carrying the shared label
-        # and remove it. A name collision that is not this directory's own
-        # previous container is reported instead.
-        previous="$(started_container)" || true
-        actual="$(docker inspect -f '{{.Id}}' "$CONTAINER" 2>/dev/null)" || actual=""
-        # Positively stopped, not merely "did not say running": an inspect that
-        # errors returns the empty string, and `!= true` would have read that as
-        # stopped and removed a container nobody could see the state of.
-        running="$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" || running=""
-        if [ -n "$previous" ] && [ "$actual" = "$previous" ] && [ "$running" = false ]; then
-          docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-          # And the removal is confirmed before the id file goes, for the reason
-          # `stop` confirms it: the file is the only record there was one.
-          [ "$(container_state "$CONTAINER")" = absent ] \
-            || die "could not remove this checkout's stopped container $CONTAINER"
-          rm -f "$STATE_DIR/container"
-        else
-          die "a container named $CONTAINER is in the way and is not this checkout's own stopped one; rename with KANON_SEQUENCER_CONTAINER, or stop it where it was started"
-        fi
-        ;;
+      unknown) die "a container named $CONTAINER may exist and docker would not say; not removing anything" ;;
+      present) die "a container named $CONTAINER is in the way and is not this checkout's; rename with KANON_SEQUENCER_CONTAINER, or remove it where it was started" ;;
     esac
     ensure_image
     assert_image_runnable
