@@ -17,10 +17,19 @@
 # What it contains
 # ----------------
 # The built binary plus the two things `scripts/lez-sequencer.sh` needs from the
-# LEZ checkout: the debug sequencer config, and Bedrock's compose file. It is a
-# transport format for build output, not a runnable service image -- the script
-# extracts it into the same cache layout `build` would have produced, so
-# `start`, `smoke` and `stop` cannot tell the difference.
+# LEZ checkout: the debug sequencer config, and Bedrock's compose file.
+#
+# It is now both a runnable service image and the transport format it started
+# as, and one copy of the payload serves both. `start` runs the sequencer from
+# this image beside the Bedrock node that was already a container; `fetch` still
+# copies `/lez` out into the cache layout `build` would have produced, for the
+# hosts where a glibc binary cannot run at all. ADR 34 records the change; ADR 12
+# is where the transport-only decision was made.
+#
+# The base is `ubuntu:24.04` and not `scratch` because of that first use: the
+# binary is dynamically linked, and the packages installed below are what `ldd`
+# reports for it beyond the base image's own set. It is built here too, so the
+# ABI it links against is this runner's.
 #
 # When to run it
 # --------------
@@ -73,9 +82,15 @@ jobs:
       # would pin the wrong thing.
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Resolve the LEZ revision
+      # Both come from the script, which owns them: the revision it resolves from
+      # the lockfiles, and the image format it requires. Stamping a format this
+      # workflow decided for itself would be a second copy to keep in step, and
+      # the failure of a copy that drifts is an image `start` refuses.
+      - name: Resolve the LEZ revision and the image format
         id: lez
-        run: echo "rev=$(scripts/lez-sequencer.sh pin)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "rev=$(scripts/lez-sequencer.sh pin)" >> "$GITHUB_OUTPUT"
+          echo "format=$(scripts/lez-sequencer.sh format)" >> "$GITHUB_OUTPUT"
 
       - name: Log in to ghcr
         uses: docker/login-action@v3
@@ -86,21 +101,70 @@ jobs:
 
       # Rebuilding an existing revision produces the same bytes and costs an
       # hour, so it is skipped unless asked for.
-      - name: Is this revision already published?
+      #
+      # "Already published" is not the same question as "already published in the
+      # shape the script now runs". Every revision published before ADR 34 is a
+      # `FROM scratch` transport image with no entrypoint: `fetch` still works
+      # against one, `start` cannot, and a tag check alone would report it as
+      # current and leave CI pulling something it cannot run. So the image is
+      # pulled and its entrypoint inspected, and an old-shaped one is rebuilt
+      # without anyone having to remember to pass `force`.
+      #
+      # A pull rather than `docker manifest inspect` because the config is what is
+      # being read, and the layers are wanted anyway on every path that goes on to
+      # build.
+      - name: Is this revision already published, in the shape `start` runs?
         id: exists
         run: |
+          set -euo pipefail
+          rev="${{ steps.lez.outputs.rev }}"
+
           if [ "${{ inputs.force }}" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif docker manifest inspect "$IMAGE:${{ steps.lez.outputs.rev }}" >/dev/null 2>&1; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::$IMAGE:${{ steps.lez.outputs.rev }} already exists; nothing to do"
-          else
+          elif ! docker pull --quiet "$IMAGE:$rev" >/dev/null 2>&1; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "$(docker image inspect -f '{{len .Config.Entrypoint}}' "$IMAGE:$rev")" = 0 ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE:$rev exists but carries no entrypoint, so it predates adr/0034; rebuilding"
+          elif [ "$(docker image inspect -f '{{index .Config.Labels "co.equilibrium.kanon.image-format"}}' "$IMAGE:$rev")" != "${{ steps.lez.outputs.format }}" ]; then
+            # The tag is the LEZ revision, so it cannot distinguish two images
+            # built from one revision by different Dockerfiles. Without this, a
+            # package added to the apt list or a path moved inside the payload
+            # republishes nothing and every consumer keeps the stale image.
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE:$rev is not image format ${{ steps.lez.outputs.format }}; rebuilding"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE:$rev already exists; nothing to do"
           fi
 
-      - name: Build the sequencer from the pinned revision
+      # The expensive half is compiling LEZ, and most rebuilds do not need it.
+      # A format bump is a *Dockerfile* change -- a package added to the apt list,
+      # a path moved, a label or a STOPSIGNAL -- while the payload it wraps is a
+      # property of the LEZ revision, which the tag already pins. So when an image
+      # for this revision exists, its payload is extracted and reused: `fetch`
+      # copies `/lez` out into exactly the layout `build` leaves behind, which is
+      # the whole reason those two commands are interchangeable.
+      #
+      # Without this, stamping a label costs a 45-minute compile, and a mechanism
+      # that expensive is one nobody will use.
+      #
+      # `force` still compiles from source, because that is the only thing that
+      # re-establishes that the revision still builds. Reusing the payload
+      # otherwise means a published binary can perpetuate itself across
+      # Dockerfile changes without ever being rebuilt, which is the trade being
+      # made here and is why `force` exists.
+      - name: Obtain the sequencer for the pinned revision
         if: steps.exists.outputs.skip != 'true'
-        run: scripts/lez-sequencer.sh build
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.force }}" != "true" ] \
+            && docker image inspect "$IMAGE:${{ steps.lez.outputs.rev }}" >/dev/null 2>&1; then
+            echo "::notice::reusing the payload already published for ${{ steps.lez.outputs.rev }}"
+            scripts/lez-sequencer.sh fetch
+          else
+            scripts/lez-sequencer.sh build
+          fi
 
       # Everything `start` needs, and nothing else: the binary, the debug config
       # it is pointed at, and Bedrock's compose file.
@@ -124,18 +188,99 @@ jobs:
 
       - name: Build the image
         if: steps.exists.outputs.skip != 'true'
+        # A ceiling, because this step has no business taking long: an apt
+        # install and a 42 MB copy over an already-pulled base. The job's own
+        # 350-minute budget exists for the LEZ compile, and inheriting it here
+        # meant a hung build sat for hours instead of failing. Measured at 15+
+        # minutes and still going when it was cancelled.
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           cat > "${{ steps.stage.outputs.payload }}/Dockerfile" <<'DOCKERFILE'
-          # A transport format, not a service image. `scripts/lez-sequencer.sh
-          # fetch` copies the contents out; nothing runs in here.
-          FROM scratch
+          # Both a service image and a transport format. `scripts/lez-sequencer.sh
+          # start` runs the entrypoint; `fetch` copies `/lez` out and runs nothing.
+          FROM ubuntu:24.04
+
+          # What shape of image this is, independent of the LEZ revision in the
+          # tag. `scripts/lez-sequencer.sh format` is where the number comes from
+          # and `assert_image_runnable` is what refuses an image that does not
+          # carry it.
+          LABEL co.equilibrium.kanon.image-format="${{ steps.lez.outputs.format }}"
+
+          # The sequencer installs exactly one signal handler --
+          # `tokio::signal::ctrl_c()`, which is SIGINT -- so docker's default
+          # SIGTERM is ignored and the container dies to the SIGKILL that follows
+          # ten seconds later, every time. A sequencer killed rather than shut
+          # down can leave its RocksDB home locked.
+          STOPSIGNAL SIGINT
+
+          # What `ldd sequencer_service` needs and the base image does not already
+          # carry. Pinning versions here would pin them to this runner's archive
+          # snapshot and break the next rebuild for no benefit: the image is
+          # rebuilt only when the LEZ revision moves, and the binary inside it is
+          # linked against whatever this same runner provided.
+          # `DEBIAN_FRONTEND=noninteractive` because the alternative to a package
+          # that wants to ask something is a build that waits for an answer
+          # nobody can give. None of the six below prompts today; the point is
+          # that a build which hangs for ever is a much worse failure than one
+          # that errors, and this rules out that whole class for the price of one
+          # assignment.
+          # IPv4, and this is the fix rather than a precaution. The first build of
+          # this image spent 998 seconds in this one instruction: the log is
+          # `Ign:` against archive.ubuntu.com about every 60 seconds, the same six
+          # packages retried ten times over, because the build container resolves
+          # the archive to an IPv6 address it cannot route and waits out the
+          # timeout before falling back. Six packages, sixteen and a half minutes,
+          # and it did eventually succeed -- which is what makes it worth pinning
+          # down rather than re-running until it looks fine.
+          RUN printf 'Acquire::ForceIPv4 "true";\n' > /etc/apt/apt.conf.d/99force-ipv4 \
+           && DEBIAN_FRONTEND=noninteractive apt-get update \
+           && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                ca-certificates \
+                libssl3t64 \
+                libstdc++6 \
+                zlib1g \
+                libzstd1 \
+                libbrotli1 \
+           && rm -rf /var/lib/apt/lists/*
+
+          # One copy, two uses: `fetch` extracts this tree, and the entrypoint
+          # below runs the binary out of it in place.
           COPY target/release/sequencer_service /lez/target/release/sequencer_service
           COPY lez /lez/lez
           COPY bedrock /lez/bedrock
+
+          # The run state, bind-mounted by `start`. It is the working directory
+          # because the debug config's `home` is `.`, which is how a LEZ build
+          # with no `--home` flag still writes its RocksDB somewhere the host can
+          # delete.
+          #
+          # World-writable because `start` runs the container as the developer's
+          # own uid -- so that the state it writes into the bind mount is theirs
+          # to delete -- and that uid is not known here. When the mount is present
+          # the host directory's ownership governs and this mode is not consulted;
+          # it is what makes the image usable without one.
+          RUN mkdir -p /var/lib/lez && chmod 0777 /var/lib/lez
+          WORKDIR /var/lib/lez
+
+          # No CMD: `start` supplies the config path and the flags it
+          # feature-detected, and a default set of arguments here would be a
+          # second place for them to be wrong.
+          ENTRYPOINT ["/lez/target/release/sequencer_service"]
           DOCKERFILE
           docker build -t "$IMAGE:${{ steps.lez.outputs.rev }}" \
             "${{ steps.stage.outputs.payload }}"
+
+      # The image is now something that runs, so this asserts that it does before
+      # it is published. `--help` is the cheapest call that exercises the whole
+      # chain -- the loader finds its libraries, the binary starts, the entrypoint
+      # is right -- and it is the same call `start` makes to feature-detect, so a
+      # failure here is exactly the failure a developer would hit.
+      - name: The image runs
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm "$IMAGE:${{ steps.lez.outputs.rev }}" --help
 
       - name: Push
         if: steps.exists.outputs.skip != 'true'

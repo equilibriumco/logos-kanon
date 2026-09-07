@@ -200,13 +200,29 @@ standalone mode, in CI. `scripts/lez-sequencer.sh` is that sequencer:
 scripts/lez-sequencer.sh pin      # the LEZ revision the product resolves
 scripts/lez-sequencer.sh build    # clone it and build sequencer_service (minutes, cached)
 scripts/lez-sequencer.sh fetch    # or pull a prebuilt one, which is what CI does
-scripts/lez-sequencer.sh start    # bedrock in docker, then the sequencer; prints the RPC URL
+scripts/lez-sequencer.sh start    # bedrock and the sequencer, both in docker; prints the RPC URL
 scripts/lez-sequencer.sh smoke    # assert it serves RPC and is producing blocks
 scripts/lez-sequencer.sh stop
 ```
 
 Needs a docker daemon with the compose plugin, plus git and curl; `nix-shell` covers
-everything but docker itself.
+everything but docker itself. `start` needs a checkout either way, because Bedrock's
+compose file is LEZ's own and is read from the host — so `fetch` or `build` comes first.
+
+Both services run as containers (ADR 34). The sequencer's uses `--network host`, which
+is what lets LEZ's committed debug config be used exactly as it ships: its
+`bedrock_config.node_url` is `http://localhost:18080`, and on a bridge network
+`localhost` would be the container itself. That is free on linux. On Docker Desktop it
+needs 4.34 or later with host networking switched on in *Settings → Resources →
+Network*, which is off by default — supported, but untested here.
+
+On a host the published image cannot serve at all — NixOS, a non-x86_64 machine — run
+the binary directly instead:
+
+```sh
+scripts/lez-sequencer.sh build
+KANON_SEQUENCER_RUNTIME=host scripts/lez-sequencer.sh start
+```
 
 The tests that use it live in `e2e/`, which is a workspace of its own (see
 *Workspaces*). With a sequencer running:
@@ -236,9 +252,10 @@ because a timeout cancels the job before `actions/cache` saves, the cache could 
 warm up: every run was cold and every run was killed. So the sequencer is treated the
 way Bedrock already is, as an image to pull. `lez-sequencer-image.yml` builds it once
 per LEZ revision and publishes
-`ghcr.io/equilibriumco/kanon-lez-sequencer:<rev>`; `fetch` unpacks that into the layout
-`build` would have produced. **Run that workflow after a pin bump** — CI fails naming
-it rather than starting an hour-long build.
+`ghcr.io/equilibriumco/kanon-lez-sequencer:<rev>`; `start` runs that image, and `fetch`
+unpacks it into the layout `build` would have produced for the host runtime. **Run that
+workflow after a pin bump** — CI fails naming it rather than starting an hour-long
+build.
 
 The revision is read from the product lockfiles, so the sequencer is always built from
 the same LEZ commit the product's `lee_core` resolves to. `m0/` is skipped on purpose:
