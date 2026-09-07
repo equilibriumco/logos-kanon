@@ -328,16 +328,12 @@ is the same signal as a test that cannot fail — and a figure that is merely
 ### What is not in these figures
 
 The same exclusions the write section lists — the generated validator, the
-dispatcher, the `SpelOutput` wrapping — and one that matters more on the pull
-side than anywhere else: **what LEZ spends reading the instruction data before
-the program is entered**, about 113 cycles a serialized `u32` word — roughly a
-payload byte, since serde writes one word per byte, and not 113 per byte of the
-encoded instruction. A pull settlement carries the whole payload, and
-`a_settlement_carries_what_is_published` measures the captured one at 758 words,
-so about 85,700 cycles of reading before `settle` begins, against a push
-settlement's feed id.
-ADR 26 bounds it and `MAX_PAYLOAD_BYTES` is the limit; it is named here because
-a per-read comparison that omitted it would understate the pull side.
+dispatcher, the `SpelOutput` wrapping — and **what LEZ spends reading the inputs
+before the program is entered**. Both are measured, in *What a transaction costs,
+whole* below, and together they are most of a push read's transaction and 13% of
+a pull settlement's. They are named here because a per-read comparison that
+omitted them would understate the pull side, and because the figures above are
+bodies: what a mode's code costs, not what a transaction costs.
 
 ## What a precompile would be worth, in each mode
 
@@ -416,56 +412,38 @@ against a submission. What it supports is that neither mode's remaining work is
 large, not that the modes converge or why. What is
 left in both cases is the framework and each program's own domain.
 
-### These are bodies, and a settlement is bigger than its body
+### These are bodies, and a settlement is several times its body
 
-Every figure above is a program body, and what LEZ spends reading instruction data
-before the body is entered is outside all of them — the exclusion the read section
-names at about 113 cycles a word — equivalently a payload byte, since serde writes
-one word per byte — warning that omitting it "would understate the pull side". It understates it here too, by more than the residual it is left out
-of.
+A settlement is not a `settle` body. M3-10 measures the whole transaction by
+running the product ELF over the inputs LEZ would hand it: **3,513,718 cycles**,
+against the 3,048,613 the body costs. The difference is what LEZ spends reading
+the inputs and what the dispatcher, the generated validator and the `SpelOutput`
+wrapping spend around the body — and a precompile touches none of it.
 
-What a settler submits is a `Settle`, and the wire is `risc0_zkvm::serde` rather
-than Borsh: it writes `u32` words and packs neither the feed id nor the payload into
-them. `a_settlement_carries_what_is_published` measures it at **758 words**, against
-the 761 bytes a Borsh reading would give.
+So the reduction a precompile buys on a settlement is much smaller than the body
+figures suggest:
 
-Words are the unit the ~113 is in, which is worth being careful about because the
-two readings differ by four. ADR 26 derives it from one measurement — a
-127,814-byte payload whose read cost 14.5M cycles — and that payload is about
-127,814 words once serde has finished with it. Multiplying the 3,032 *physical*
-bytes instead would count each word four times, and predict 57.8M for ADR 26's own
-experiment against the 14.5M it measured.
-
-So the read in front of `settle` is about **85,700 cycles**, and the figure to add
-it to is the whole `settle` body rather than the read inside it:
-
-| a pull settlement, body plus its instruction read | cycles | reduction |
+| a pull settlement, whole | cycles | reduction |
 | --- | ---: | ---: |
-| today | ~3,134,000 | |
-| with a precompile, `c = 0` | ~124,000 | **~25x** |
-| with a precompile, `c = 1,000` | ~134,000 | ~23x |
-| with a precompile, `c = 10,000` | ~224,000 | ~14x |
+| today | 3,513,718 | |
+| with a precompile, `c = 0` | 503,448 | **7.0x** |
+| with a precompile, `c = 1,000` | 513,448 | 6.8x |
+| with a precompile, `c = 10,000` | 603,448 | 5.8x |
 
-The read is 69% of what remains at `c = 0` and still 38% at the top of the band, so
-it dominates the residual without closing the band the way the body figures'
-threefold swing did.
+**About 6x to 7x on a transaction, against 22x to 80x on the body.** An earlier
+draft of this section put it at 14x to 25x by adding an estimate of the
+instruction read to the body; that estimate was low and it omitted everything but
+the instruction. The figures above rest on a measurement instead, and
+`a_precompile_is_worth_less_against_a_transaction_than_against_a_body` asserts and
+prints them.
 
-**That is still not a transaction**, and the gap is the same one the top of this
-file describes: the generated validator, the dispatcher and the `SpelOutput`
-wrapping are outside every figure here, because reaching them needs the macro's
-entry point rather than a function call. What this table is, exactly, is a
-settlement body plus an estimate of the instruction read in front of it.
+Like every difference between a transaction and a body here, this subtracts a
+figure measured in `verify_cost` out of one measured in the product ELF, so it
+carries their disagreement as well — 42 to 722 cycles where this file has measured
+it, against a residual of half a million.
 
-Even so it moves the headline a long way: **about 14x to 25x**, against the 23x to
-98x the bodies alone suggest.
-
-Approximate twice over — the 113 is approximate and the surrounding pipeline is
-unmeasured — where the body figures either side are exact and asserted, and the 758
-words now are too.
-
-A push consumer's *read* carries a feed id rather than a payload, so its
-instruction-data term is negligible and it still gains nothing from a precompile
-either way.
+The band all but closes at transaction level, because the term that varies with
+`c` is small beside the terms that do not.
 
 ### If only one of the two is built, build ECDSA
 
@@ -555,9 +533,117 @@ is mostly the framework floor and the per-package instruction handling that a
 crypto precompile does not touch — but not only that.
 
 Not covered: what a precompile would do to proof size or proving time, and the
-per-chain reference points the delta is compared against, which are M5-07's. What
-*is* covered but only approximately is the instruction-data read, which the
-transaction table above adds back.
+per-chain reference points the delta is compared against, which are M5-07's.
+
+The input read *is* covered, and exactly: M3-10 measures it rather than estimating
+it, at 113 cycles a word to the cycle. What remains approximate is the split
+between a transaction and its body, because that subtraction crosses two ELFs and
+so carries their disagreement — tens to hundreds of cycles against residuals in
+the hundreds of thousands.
+
+## What a transaction costs, whole
+
+Every other figure in this file is a program **body**, and a body is a fraction of
+a transaction. LEZ reads the inputs before any body is entered — `read_lee_inputs`
+takes the program's own id, the caller's, the pre-state accounts, then the
+instruction words — then the dispatcher decodes the instruction into the program's
+own enum, the generated validator checks the accounts, the body runs, and
+`SpelOutput` wraps the result. None of that is reachable by calling a function.
+
+It is reachable by running the program, which is what M3-10 does: the product ELFs
+over the inputs LEZ would hand them, with the accounts at their real derived
+addresses.
+
+| | to be read | body | the rest | **transaction** | of budget |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| pull settlement | 184,456 | 3,048,613 | 280,649 | **3,513,718** | 10.47% |
+| push update | 175,826 | 3,048,414 | 259,469 | **3,483,709** | 10.38% |
+| push read | 122,783 | 13,404 | 188,480 | **324,667** | 0.97% |
+
+Every body here is a `settle` or `submit_price` body, because every transaction
+here executes one. The push read's is 13,404 — the whole settlement, not the 6,803
+read inside it, which is what `read_cost.rs` compares against a pull read.
+
+"The rest" is taken as the difference, so it is the dispatcher, the validator, the
+instruction's decode and the wrapping **plus whatever the three harnesses disagree
+by**: the transaction comes from the product program, the body from a cost guest
+and the read from `input_cost`, and this file already records two of those
+differing by 42 and 722 cycles on identical verification. At 188,480 to 280,649
+that variance is a rounding error inside it, and the column is still a difference
+between measurements rather than a measurement of its own. Only a product ELF that
+bracketed its own body would make it one.
+
+The reads and the transactions are measured by `bytes.rs`. The pull and push-read
+bodies are executed there too, against the same guests and stages `read_cost.rs`
+pins, so the two files cannot disagree silently. The push update's body is
+`cost.rs`'s: its guest brackets that body differently and `bytes.rs` does not
+re-execute it, so that one row is a figure carried between files rather than
+checked across them.
+
+### This changes the per-mode headline rather than qualifying it
+
+A pull settlement's body is **227 times** a push settlement's. As executed
+transactions the two are **ten times apart**. A push settlement is 13,404 cycles
+of body inside a 324,667-cycle transaction — **four percent of it** — because
+everything else is being read and being dispatched, and neither scales with what
+the body does.
+
+Both sides here are settlements. The 448 the read tables publish is a read against
+a read, which answers what the two modes' *reads* cost and does not belong beside
+a ratio of transactions.
+
+Both figures are published because they answer different questions. What a mode's
+*code* costs is the read tables above, and it is what a consumer author comparing
+implementations wants. What a *transaction* costs is this, and it is what somebody
+sizing a chain wants. Quoting the first as though it were the second is the error
+this section exists to prevent, and an earlier draft of the precompile section
+made it.
+
+### Where the reading goes
+
+The read half is measured separately, because it is the half a program can bound
+and the rest is the framework's:
+
+| | |
+| --- | ---: |
+| a read of four empty inputs | **4,426** |
+| an instruction word | **113** |
+| a byte of an account's data | **113** |
+| an account, on top of its data | **~16,156** |
+
+The first row is a run of the read guest, so it carries what any guest run costs —
+zkVM startup and the journal commit — as does every per-mode read figure above.
+That floor cancels when two of them are compared and does not when one is quoted
+alone; what it bounds is a transaction carrying nothing. The marginal rates below
+it are unaffected, because differencing two input sizes cancels the whole term.
+
+The 113 is exact and linear to the cycle from 1,024 words to 16,384, which
+confirms ADR 26's "about 113" and settles its unit: it is a **word**, so
+multiplying a serialised size in bytes counts each word four times.
+
+The other two rows are why the transaction figures are measured rather than
+assembled. Four framed reads cost something with nothing in them, and an account
+costs far more than its width — deserialising an `AccountWithMetadata` builds a
+`Data`, an `AccountId` and a `ProgramId` rather than copying a span. A word count
+times a rate understates every mode, and the push read by nearly half.
+
+| | account words | instruction words |
+| --- | ---: | ---: |
+| pull settlement | 496 | 758 |
+| push update | 454 | 726 |
+| push read | 562 | 33 |
+
+### What is still outside
+
+Proving. Everything above is execution, which is what LEZ's per-transaction
+budget is denominated in.
+
+And the push consumer's instruction is counted from a rule rather than encoded,
+because its enum is generated inside its guest and there is no host-side type to
+serialise (`[M3-06:01]`): one word for the variant tag and thirty-two for its
+`feed_id`. The rule is checked against the pull consumer's real `Settle`, which is
+a tag, a feed id and a length-prefixed payload and comes to exactly
+`1 + 32 + 1 + 724`.
 
 ## How it is measured
 
@@ -755,6 +841,8 @@ cargo test --release -p kanon-methods --test read_cost \
 cargo test --release -p kanon-methods -- --nocapture the_precompile_table  # the update delta
 cargo test --release -p kanon-methods --test read_cost \
     -- --nocapture the_precompile_read_table                               # the read delta
+cargo test --release -p kanon-methods --test bytes \
+    -- --nocapture the_boundary_table                                      # what a transaction reads
 ```
 
 Every table is printed by the code that asserts it, so a published figure and an

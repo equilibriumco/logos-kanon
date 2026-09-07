@@ -61,6 +61,7 @@ they describe the design being proposed for acceptance.
 | [M3-08:01](unnumbered-M3-08-what-a-read-costs-is-two-figures-per-mode.md) | What a read costs is two figures per mode | accepted, unnumbered |
 | [M3-08:02](unnumbered-M3-08-the-guests-are-compiled-in-a-container.md) | The guests are compiled in a container, so a program id is a property of the source | accepted, unnumbered |
 | [M3-09:01](unnumbered-M3-09-the-precompile-delta-is-a-function-not-a-figure.md) | The precompile delta is a function, not a figure | accepted, unnumbered |
+| [M3-10:01](unnumbered-M3-10-a-transaction-is-not-its-body.md) | A transaction is not its body, and the difference is measured | accepted, unnumbered |
 
 ## How they fit together
 

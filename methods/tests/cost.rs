@@ -73,6 +73,9 @@ use verifier_core::feed::MAX_RECOVERIES;
 #[path = "../../verifier-core/tests/support/vectors.rs"]
 mod vectors;
 
+#[path = "support/lez.rs"]
+mod lez;
+
 use vectors::Vector;
 
 /// RedStone's scale for `redstone-primary-prod`.
@@ -132,7 +135,7 @@ mod expected {
     /// `MAX_NUM_CYCLES_PUBLIC_EXECUTION`, the cycles a LEZ public transaction
     /// gets. Recorded in `m0/lez-probe/README.md` and the figure P1 is measured
     /// against.
-    pub const LEZ_CYCLE_BUDGET: u64 = 33_554_432;
+    pub use super::lez::CYCLE_BUDGET as LEZ_CYCLE_BUDGET;
 
     /// What the same rows would read if the wrong `[patch.crates-io]` were in
     /// force, from `m0`'s software and accelerated measurements: one software
@@ -1299,6 +1302,24 @@ mod precompile {
     /// rather than floored, for the reason `read_cost.rs` gives where it pins the
     /// pull side's.
     pub const PUSH_UPDATE_REDUCTION_TENTHS: [u64; 3] = [799, 633, 221];
+}
+
+/// The figures `support/lez.rs` shares are the ones this file measures.
+///
+/// The shared module exists so three test binaries stop retyping the same
+/// constants, and a copy is only worth having if something holds it against its
+/// source. This is that: the component table is the measurement, and these are
+/// the rows other files take from it.
+#[test]
+fn the_shared_figures_match_the_component_table() {
+    let vector = vector();
+    let [_decode, keccak, recovery, _membership, _rest] = components(&vector, SIGNER_COUNTS[2]);
+    assert_eq!(
+        (keccak, recovery),
+        (lez::FIVE_SIGNER_KECCAK, lez::FIVE_SIGNER_RECOVERY),
+        "the shared copies of the removable rows no longer match what this file measures, \
+         so `read_cost.rs` and `bytes.rs` are working from stale figures"
+    );
 }
 
 /// A reduction factor in tenths, rounded to the nearest rather than truncated.

@@ -33,6 +33,10 @@ toml = "0.8.23"
 risc0-zkvm.workspace = true
 verifier-core.workspace = true
 serde_json = "1.0.151"
+# For `tests/bytes.rs`, which encodes an instruction the way the wire does to
+# count what crosses. Already in the graph; an edge, not a package.
+serde_crate = { package = "serde", version = "1" }
+spel-framework.workspace = true
 hex = "0.4"
 
 # For the push-write measurement (M2-18), which has to hand the guest the same
