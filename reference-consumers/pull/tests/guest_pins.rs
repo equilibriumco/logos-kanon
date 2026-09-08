@@ -51,3 +51,47 @@ fn both_verifying_guests_pin_the_same_accelerators() {
          neither."
     );
 }
+
+/// What the shared reader does with a `#`, in each place TOML lets one appear.
+///
+/// The reason this is a test rather than a careful function: the two gates that
+/// share the reader compare whole lines, so a `#` handled wrongly does not fail
+/// loudly. It silently shortens one line, and two pins that differ after the cut
+/// point compare equal. `'release#1'` and `'release#2'` are that case exactly.
+#[test]
+fn a_hash_ends_a_line_only_where_toml_says_it_does() {
+    let section = |body: &str| format!("[patch.crates-io]\n{body}\n[other]\n");
+
+    assert_eq!(
+        pins(&section(r#"sha2 = { tag = "v1" } # why"#)),
+        [r#"sha2 = { tag = "v1" }"#],
+        "a trailing comment is not part of the pin"
+    );
+    assert_eq!(
+        pins(&section("# sha2 = { tag = \"v1\" }")),
+        Vec::<String>::new(),
+        "a whole-line comment is not a pin"
+    );
+    assert_eq!(
+        pins(&section(r#"sha2 = { tag = "v#1" } # why"#)),
+        [r#"sha2 = { tag = "v#1" }"#],
+        "a hash inside a basic string belongs to the pin"
+    );
+
+    // The case that motivated this: two literal strings differing only after the
+    // hash. Truncating at the first `#` maps both to `sha2 = { tag = 'release`.
+    let first = pins(&section("sha2 = { tag = 'release#1' }"));
+    let second = pins(&section("sha2 = { tag = 'release#2' }"));
+    assert_eq!(first, ["sha2 = { tag = 'release#1' }"]);
+    assert_ne!(
+        first, second,
+        "two pins differing only after a hash in a literal string have to differ here, \
+         or the cross-guest gate compares them equal"
+    );
+
+    assert_eq!(
+        pins(&section(r##"sha2 = { tag = "a\"# b" } # why"##)),
+        [r##"sha2 = { tag = "a\"# b" }"##],
+        "an escaped quote does not end a basic string, so the hash after it is inside one"
+    );
+}

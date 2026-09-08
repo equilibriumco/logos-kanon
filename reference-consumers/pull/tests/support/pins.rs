@@ -57,18 +57,45 @@ pub fn pin_for(manifest: &str, crate_name: &str) -> Option<String> {
         .find(|line| line.starts_with(crate_name))
 }
 
-/// Everything before the first `#` outside a quoted string, trimmed.
+/// Everything before the first `#` outside a TOML string, trimmed.
 ///
-/// A whole-line comment comes back empty and is dropped by the caller. Quotes
-/// are tracked because a pin's value can carry a `#` of its own, and cutting
-/// there would shorten the line one gate compares while leaving the other's
-/// intact.
+/// A whole-line comment comes back empty and is dropped by the caller. Strings
+/// are skipped rather than scanned because a pin's value can carry a `#` of its
+/// own, and cutting there would shorten the line one gate compares while
+/// leaving the other's intact.
+///
+/// Both of TOML's single-line string forms, because they escape differently and
+/// getting one wrong is the same defect twice: a basic string honours
+/// backslashes, so `"a\"# b"` is one string and not a comment, while a literal
+/// string has no escapes at all and `'release#1'` ends only at its closing
+/// quote. Multi-line strings are not handled and cannot be: this whole reader
+/// is line-based, and a pin has never been written across lines.
 fn without_comment(line: &str) -> String {
-    let mut quoted = false;
-    for (at, ch) in line.char_indices() {
+    let mut chars = line.char_indices();
+    while let Some((at, ch)) = chars.next() {
         match ch {
-            '"' => quoted = !quoted,
-            '#' if !quoted => return line[..at].trim().to_owned(),
+            '#' => return line[..at].trim().to_owned(),
+            // Basic string: a backslash consumes whatever follows it, so an
+            // escaped quote does not end the string.
+            '"' => {
+                while let Some((_, inner)) = chars.next() {
+                    match inner {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '"' => break,
+                        _ => {}
+                    }
+                }
+            }
+            // Literal string: no escapes, so it ends at the next quote.
+            '\'' => {
+                for (_, inner) in chars.by_ref() {
+                    if inner == '\'' {
+                        break;
+                    }
+                }
+            }
             _ => {}
         }
     }
