@@ -1851,7 +1851,9 @@ dependencies = [
  "reference-consumer-pull",
  "risc0-build",
  "risc0-zkvm",
+ "serde",
  "serde_json",
+ "spel-framework",
  "toml",
  "verifier-core",
 ]

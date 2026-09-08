@@ -49,21 +49,18 @@ Zero is included and labelled unachievable, because it is the one bound that sur
 whatever a real precompile costs: below 31,115 cycles a pull read's *body* cannot go,
 however free the crossing.
 
-That is a bound on a body, and a body is not the whole of what a settlement pays. LEZ
-charges about 113 cycles a word for instruction data before a body is entered, and a
-`Settle` on the wire is 758 `u32` words — `risc0_zkvm::serde` writes words and packs
-neither the feed id nor the payload into them, and `a_settlement_carries_what_is_published`
-measures it. A word is the unit that 113 is in, since ADR 26 derives it from a
-127,814-byte payload that serialises to about as many words; multiplying the 3,032
-physical bytes instead counts each word four times. So the read is about 85,700 cycles,
-a little over twice the residual it sits outside.
+That is a bound on a body, and a body is a fraction of a transaction. M3-10 measures the
+whole thing by running the product ELF over the inputs LEZ would hand it: a pull
+settlement is 3,513,718 cycles against a 3,048,613-cycle body, the difference being what
+LEZ spends reading the inputs and what the dispatcher, the generated validator and the
+`SpelOutput` wrapping spend around it. A precompile touches none of that.
 
-So the figure a reader scoping the work needs is nearer **14x to 25x for a settlement**
-than the 23x to 98x these bodies give, and `COSTS.md` publishes both with the arithmetic
-between them. Neither figure is a whole transaction: the generated
-validator, the dispatcher and the `SpelOutput` wrapping are outside everything this
-repository measures. The bodies are exact and asserted; what surrounds them is an
-estimate.
+So the reduction a reader scoping the work should have in mind is **about 6x to 7x on a
+settlement**, against the 22x to 80x these bodies give. `COSTS.md` publishes both with
+the arithmetic between them, and `[M3-10:01]` has the measurement. An earlier draft of
+this ADR put the transaction figure at 14x to 25x by adding an estimate of the
+instruction read to the body; the estimate was low and it omitted everything except the
+instruction.
 
 `m0`'s band is reused rather than re-derived so the two reports can be read together. It
 was an assumption there and it is an assumption here — and one band is charged to both

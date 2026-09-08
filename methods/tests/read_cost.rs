@@ -65,6 +65,9 @@ use risc0_zkvm::{default_executor, ExecutorEnv};
 
 #[path = "../../verifier-core/tests/support/vectors.rs"]
 mod vectors;
+
+#[path = "support/lez.rs"]
+mod lez;
 use vectors::Vector;
 
 /// The feed every figure here is measured over, so the pull read is comparable
@@ -189,8 +192,7 @@ mod push {
     pub const PULL_IS_THIS_MANY_TIMES_DEARER: u64 = 447;
 }
 
-/// LEZ's per-transaction cycle budget, the same constant `cost.rs` divides by.
-const BUDGET: u64 = 33_554_432;
+use lez::CYCLE_BUDGET as BUDGET;
 
 /// A read's share of that budget, formatted the way `COSTS.md` prints it.
 ///
@@ -749,11 +751,7 @@ mod precompile {
     /// part in four thousand. The residuals below inherit that, which is fine for
     /// a reduction factor and not fine for reading small differences between
     /// them.
-    pub const FIVE_SIGNER_KECCAK: u64 = 87_380;
-    pub const FIVE_SIGNER_RECOVERY: u64 = 2_922_890;
-
-    /// What a precompile takes out of a five-package verification.
-    pub const REMOVABLE: u64 = FIVE_SIGNER_KECCAK + FIVE_SIGNER_RECOVERY;
+    pub use super::lez::{FIVE_SIGNER_RECOVERY, REMOVABLE};
 
     /// One keccak256 and one recovery per package, five packages.
     pub const CALLS: u64 = 10;

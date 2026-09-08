@@ -280,3 +280,11 @@ Bump it, run both guardrail suites, and update the constants, the affected repor
 tables and this file in the same commit. A guardrail failure is a prompt to re-measure,
 not necessarily a defect, but a published figure must never move without the table that
 quotes it.
+
+Moving the LEZ pin has one step the suites cannot perform: re-read
+`MAX_NUM_CYCLES_PUBLIC_EXECUTION` out of the new revision and hold it against
+`methods/tests/support/lez.rs`. The constant is private, so no test imports it and no
+failure would follow from its moving; the number has held at `1024 * 1024 * 32` across
+v0.2.0 and v0.2.1 while the file holding it moved, which is exactly the shape of a change
+that goes unnoticed. Every headroom figure in the cost reports is a ratio against it, and
+P1 claims a transaction fits the budget in force at delivery.
