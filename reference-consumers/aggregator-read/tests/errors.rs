@@ -44,6 +44,7 @@ fn every_source_cause() -> Vec<SourceError> {
         SourceError::AggregatorIsZero,
         SourceError::WindowIsZero,
         SourceError::WindowTooWide,
+        SourceError::SourceTooLarge,
     ]
 }
 

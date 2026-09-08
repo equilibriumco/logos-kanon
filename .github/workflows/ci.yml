@@ -341,17 +341,7 @@ jobs:
           rzup install r0vm 3.0.5
           rzup install rust 1.97.0
 
-      # The guests build in a container (`[M3-08:02]`), and the builder image plus
-      # the dependency trees it resolves inside itself do not fit beside the
-      # runner's preinstalled SDKs. The first run of this failed twice on one
-      # cause: `no space left on device` unpacking the image here, and a linker
-      # bus error in the job below, which is what ENOSPC looks like from `ld`.
-      # None of what is removed is used by this repository.
-      - name: free disk space for the guest builder image
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
+      - uses: ./.github/actions/free-disk-space
 
       # Cross-compiles all three product guests, which is what `kanon-methods`
       # builds: the aggregator and both reference consumers. Since `[M3-08:02]` they
@@ -519,17 +509,7 @@ jobs:
 
       # Before the sequencer starts, so a compile error is not reported as a
       # chain that would not come up.
-      # The guests build in a container (`[M3-08:02]`), and the builder image plus
-      # the dependency trees it resolves inside itself do not fit beside the
-      # runner's preinstalled SDKs. The first run of this failed twice on one
-      # cause: `no space left on device` unpacking the image here, and a linker
-      # bus error in the job below, which is what ENOSPC looks like from `ld`.
-      # None of what is removed is used by this repository.
-      - name: free disk space for the guest builder image
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
+      - uses: ./.github/actions/free-disk-space
 
       - name: Build the end-to-end test
         run: cargo test --manifest-path e2e/Cargo.toml --locked --no-run

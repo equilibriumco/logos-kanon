@@ -75,6 +75,18 @@ mod expected {
     /// this whole term.
     pub const FIXED: u64 = 4_426;
 
+    /// What 496 bytes of accounts cost to read, and what the same width of
+    /// instruction costs, each measured end to end.
+    ///
+    /// The two counts rather than the ratio between them, because a ratio is a
+    /// division and a division has a floor. Pinned at permille, every account
+    /// figure from 98,741 to 98,796 answers 1,682 and passes; pinned as a bare
+    /// quotient, as this was first written, everything from parity to just under
+    /// twice the width answers 1. Neither is a pin. The ratio these give is about
+    /// 1.68x, which is a figure to read rather than one to assert.
+    pub const PULL_ACCOUNTS_READ: u64 = 98_777;
+    pub const SAME_WIDTH_AS_INSTRUCTION: u64 = 60_499;
+
     /// What each recurring transaction carries: pre-state accounts, then the
     /// instruction. Both cross the same boundary, because `read_lee_inputs` reads
     /// the accounts before the instruction.
@@ -260,11 +272,11 @@ fn the_rate_does_not_bend_with_the_input_size() {
     }
 }
 
-/// Accounts cost the same as instruction words, which is why both are counted.
+/// An account costs more than the same width of instruction, and by how much.
 ///
-/// They arrive through a different `env::read()` and could in principle be priced
-/// differently. Measuring an account-carrying input against a bare one of the same
-/// total width is what says they are not.
+/// The two arrive through a different `env::read()` and could in principle be priced
+/// anywhere apart, so the tables below counting both into one width are only honest
+/// while the gap is a known figure. This is where that figure comes from.
 #[test]
 fn an_account_costs_more_than_its_width() {
     let f = fixtures();
@@ -278,10 +290,13 @@ fn an_account_costs_more_than_its_width() {
          its bytes and the per-mode figures below could be counted rather than measured"
     );
     assert_eq!(
-        (as_accounts - expected::FIXED) / (as_instruction - expected::FIXED),
-        1,
-        "an account is now more than twice its width, which is a change in what \
-         deserialising one does rather than in how much of it there is"
+        (as_accounts, as_instruction),
+        (
+            expected::PULL_ACCOUNTS_READ,
+            expected::SAME_WIDTH_AS_INSTRUCTION
+        ),
+        "reading {width} words moved, as accounts or as instruction or both, which is a \
+         change in what deserialising one does rather than in how much of it there is"
     );
 }
 

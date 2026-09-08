@@ -127,6 +127,17 @@ pub enum SourceError {
     WindowIsZero,
     /// The staleness window is wider than [`MAX_MAX_AGE_MS`].
     WindowTooWide,
+    /// The serialised source does not fit an account's data.
+    ///
+    /// Separate from [`Self::Undecodable`], which is about bytes already stored:
+    /// an operator told the account's contents are not a source would go looking
+    /// at a registration that was never written.
+    ///
+    /// Unreachable while [`PriceSource`] is fixed at its 136 bytes and LEZ's
+    /// `DATA_MAX_LENGTH` is 100 KiB. It is here because the write path is what
+    /// a variable-length field would make reachable, and because the sibling
+    /// consumer's `TrustError::TrustTooLarge` names the same cause.
+    SourceTooLarge,
 }
 
 impl SourceError {
@@ -148,6 +159,7 @@ impl SourceError {
             Self::AggregatorIsZero => 2008,
             Self::WindowIsZero => 2009,
             Self::WindowTooWide => 2010,
+            Self::SourceTooLarge => 2011,
         }
     }
 }
@@ -158,6 +170,7 @@ impl fmt::Display for SourceError {
             Self::Authority(err) => write!(f, "{err}"),
             Self::NotOurs => f.write_str("the account offered as a price source is not ours"),
             Self::Undecodable => f.write_str("the account's bytes are not a price source"),
+            Self::SourceTooLarge => f.write_str("the price source does not fit the account"),
             Self::FeedMismatch => f.write_str("that account is not the one the named feed derives"),
             Self::AlreadyRegistered => f.write_str("this feed already has a price source"),
             Self::AccountUnusable => {
@@ -356,11 +369,11 @@ fn write_source(
     stored: Option<&PriceSource>,
 ) -> Result<AccountPostState, SourceError> {
     let bytes = match stored {
-        Some(source) => borsh::to_vec(source).map_err(|_| SourceError::Undecodable)?,
+        Some(source) => borsh::to_vec(source).map_err(|_| SourceError::SourceTooLarge)?,
         None => Vec::new(),
     };
     let mut account = account;
-    account.data = Data::try_from(bytes).map_err(|_| SourceError::Undecodable)?;
+    account.data = Data::try_from(bytes).map_err(|_| SourceError::SourceTooLarge)?;
 
     Ok(if first {
         AutoClaim::pda_from_seeds(&[feed_id, &seed_from_str(SOURCE_ACCOUNT_SEED)])
@@ -877,6 +890,7 @@ mod tests {
             SourceError::AggregatorIsZero,
             SourceError::WindowIsZero,
             SourceError::WindowTooWide,
+            SourceError::SourceTooLarge,
         ];
 
         let mut numbers: Vec<u32> = causes.iter().map(SourceError::code).collect();

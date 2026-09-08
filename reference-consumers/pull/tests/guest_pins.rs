@@ -24,32 +24,15 @@
 //! second copy, and because these tests run in the ordinary workspace job;
 //! `kanon-methods` builds all three guests but its tests are excluded from it.
 
-use std::path::Path;
+#[path = "support/pins.rs"]
+mod pins;
 
-/// The `[patch.crates-io]` entries of a manifest, as normalised lines.
-///
-/// Text rather than a TOML parse: the section is three lines of a fixed shape,
-/// and a parser would be a dependency for both guest workspaces to no end. What
-/// matters is that a changed tag, an added pin or a removed one all move a line.
-fn patches(manifest: &str) -> Vec<String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("{} is readable: {err}", path.display()));
-
-    text.lines()
-        .skip_while(|line| line.trim() != "[patch.crates-io]")
-        .skip(1)
-        .take_while(|line| !line.trim_start().starts_with('['))
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_owned)
-        .collect()
-}
+use pins::{manifest, pins};
 
 #[test]
 fn both_verifying_guests_pin_the_same_accelerators() {
-    let aggregator = patches("../../methods/guest/Cargo.toml");
-    let consumer = patches("guest/Cargo.toml");
+    let aggregator = pins(&manifest("methods/guest/Cargo.toml"));
+    let consumer = pins(&manifest("reference-consumers/pull/guest/Cargo.toml"));
 
     // The section is found at all, in both. A rename or a deletion would
     // otherwise leave two empty lists comparing equal.
@@ -66,5 +49,49 @@ fn both_verifying_guests_pin_the_same_accelerators() {
          here means push and pull run different implementations of the same audit \
          (ADR 2), and their cycle figures stop being comparable. Bump both or \
          neither."
+    );
+}
+
+/// What the shared reader does with a `#`, in each place TOML lets one appear.
+///
+/// The reason this is a test rather than a careful function: the two gates that
+/// share the reader compare whole lines, so a `#` handled wrongly does not fail
+/// loudly. It silently shortens one line, and two pins that differ after the cut
+/// point compare equal. `'release#1'` and `'release#2'` are that case exactly.
+#[test]
+fn a_hash_ends_a_line_only_where_toml_says_it_does() {
+    let section = |body: &str| format!("[patch.crates-io]\n{body}\n[other]\n");
+
+    assert_eq!(
+        pins(&section(r#"sha2 = { tag = "v1" } # why"#)),
+        [r#"sha2 = { tag = "v1" }"#],
+        "a trailing comment is not part of the pin"
+    );
+    assert_eq!(
+        pins(&section("# sha2 = { tag = \"v1\" }")),
+        Vec::<String>::new(),
+        "a whole-line comment is not a pin"
+    );
+    assert_eq!(
+        pins(&section(r#"sha2 = { tag = "v#1" } # why"#)),
+        [r#"sha2 = { tag = "v#1" }"#],
+        "a hash inside a basic string belongs to the pin"
+    );
+
+    // The case that motivated this: two literal strings differing only after the
+    // hash. Truncating at the first `#` maps both to `sha2 = { tag = 'release`.
+    let first = pins(&section("sha2 = { tag = 'release#1' }"));
+    let second = pins(&section("sha2 = { tag = 'release#2' }"));
+    assert_eq!(first, ["sha2 = { tag = 'release#1' }"]);
+    assert_ne!(
+        first, second,
+        "two pins differing only after a hash in a literal string have to differ here, \
+         or the cross-guest gate compares them equal"
+    );
+
+    assert_eq!(
+        pins(&section(r##"sha2 = { tag = "a\"# b" } # why"##)),
+        [r##"sha2 = { tag = "a\"# b" }"##],
+        "an escaped quote does not end a basic string, so the hash after it is inside one"
     );
 }

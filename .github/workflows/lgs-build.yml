@@ -93,13 +93,8 @@ jobs:
           done
 
       # `lgs build` does a release build of `methods/`, so it pulls the same
-      # builder image as the jobs in `ci.yml` and needs the same headroom
-      # (`[M3-08:02]`). None of what is removed is used by this repository.
-      - name: free disk space for the guest builder image
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
+      # builder image as the jobs in `ci.yml` and needs the same headroom.
+      - uses: ./.github/actions/free-disk-space
 
       - name: lgs build
         run: lgs build

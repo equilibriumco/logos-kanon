@@ -53,16 +53,32 @@ const BUILD_MODE: &str = "KANON_GUEST_BUILD_MODE";
 fn main() {
     println!("cargo:rerun-if-env-changed={ESCAPE_HATCH}");
     println!("cargo:rerun-if-env-changed={TAG_OVERRIDE}");
+    // Non-empty rather than any particular value, which is how `risc0-build` reads it.
+    println!("cargo:rerun-if-env-changed=RISC0_SKIP_BUILD");
+
+    // `risc0-build` compiles no guest at all when this is set and stubs every ELF to
+    // empty, so the mode below cannot say `container`: it would be reporting the route
+    // a build would have taken rather than the one it took, and
+    // `the_guests_were_built_in_a_container` would pass against ELFs carrying no image
+    // ids -- which is a stronger version of the case it exists to catch.
+    let skipped = !env::var("RISC0_SKIP_BUILD").unwrap_or_default().is_empty();
+
     if env::var(ESCAPE_HATCH).as_deref() == Ok("host") {
         println!(
             "cargo:warning={ESCAPE_HATCH}=host: guest image ids will depend on this \
              checkout's path and must not be published"
         );
-        println!("cargo:rustc-env={BUILD_MODE}=host");
+        println!(
+            "cargo:rustc-env={BUILD_MODE}={}",
+            if skipped { "skipped" } else { "host" }
+        );
         risc0_build::embed_methods();
         return;
     }
-    println!("cargo:rustc-env={BUILD_MODE}=container");
+    println!(
+        "cargo:rustc-env={BUILD_MODE}={}",
+        if skipped { "skipped" } else { "container" }
+    );
 
     if let Ok(tag) = env::var(TAG_OVERRIDE) {
         assert_eq!(
@@ -74,7 +90,7 @@ fn main() {
         );
     }
 
-    require_buildx();
+    require_buildx(skipped);
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo sets this"));
     let root = manifest_dir
@@ -87,7 +103,7 @@ fn main() {
     let docker = DockerOptionsBuilder::default()
         // A container inherits nothing from the host, so the build-time configuration
         // the guests read has to be handed over explicitly.
-        .env(forwarded_env(&guests))
+        .env(forwarded_env(&root))
         // The whole repository, because a guest workspace depends on crates above it --
         // `verifier-core` and `kanon-idl` among them -- and the container sees only what
         // is copied into it.
@@ -117,14 +133,12 @@ fn main() {
 /// GitHub's runners ship buildx -- so the requirement is invisible exactly where it is
 /// checked and visible only to whoever builds outside it, which is the first thing that
 /// happened when somebody did.
-fn require_buildx() {
+fn require_buildx(skipped: bool) {
     // Nothing will invoke docker when the guest build is skipped, so requiring the
     // plugin there would enforce a dependency for work that does not happen -- and
     // `RISC0_SKIP_BUILD=1 cargo build -p kanon-methods` is a combination this crate's
     // own manifest leans on to explain why `ci.yml` excludes it from `build-test`.
-    // Non-empty rather than any particular value, which is how `risc0-build` reads it.
-    println!("cargo:rerun-if-env-changed=RISC0_SKIP_BUILD");
-    if !env::var("RISC0_SKIP_BUILD").unwrap_or_default().is_empty() {
+    if skipped {
         return;
     }
 
@@ -157,11 +171,9 @@ fn require_buildx() {
 ///
 /// Only variables actually set are forwarded, so an unset one still takes `option_env!`'s
 /// `None` branch exactly as it does on the host.
-fn forwarded_env(guests: &[(String, PathBuf)]) -> Vec<(String, String)> {
+fn forwarded_env(root: &Path) -> Vec<(String, String)> {
     let mut names = BTreeSet::new();
-    for (_, dir) in guests {
-        read_option_env(&dir.join("src"), &mut names);
-    }
+    read_option_env(root, &mut names);
     names
         .into_iter()
         .filter_map(|name| {
@@ -171,22 +183,46 @@ fn forwarded_env(guests: &[(String, PathBuf)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Every name a `option_env!` under `dir` reads.
+/// Every name an `option_env!` under `dir` reads.
+///
+/// Walked from the repository root rather than from each guest's own `src/`, because
+/// the root is what `root_dir` copies into the container. A guest that reached its
+/// configuration through a workspace crate -- the shape `pull-lib` and `kanon-clock`
+/// already have -- would otherwise be forwarded nothing and hit the quiet failure the
+/// caller describes.
+///
+/// The macro is matched by name and the quote found after it, so the whitespace forms
+/// `option_env! ("X")` and `option_env!( "X")` are read too. A comment mentioning the
+/// macro contributes a name that is forwarded only if it happens to be set, which
+/// costs nothing; a name missed does not.
 fn read_option_env(dir: &Path, into: &mut BTreeSet<String>) {
-    const CALL: &str = "option_env!(\"";
+    const CALL: &str = "option_env!";
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            // Build output and history: neither reaches the container, and `target/`
+            // alone is large enough to make walking it a real cost.
+            let name = entry.file_name();
+            if name == "target" || name.to_string_lossy().starts_with('.') {
+                continue;
+            }
             read_option_env(&path, into);
         } else if path.extension().is_some_and(|kind| kind == "rs") {
             let Ok(text) = fs::read_to_string(&path) else {
                 continue;
             };
             for (at, _) in text.match_indices(CALL) {
-                let rest = &text[at + CALL.len()..];
+                let Some(rest) = text[at + CALL.len()..]
+                    .trim_start()
+                    .strip_prefix('(')
+                    .map(str::trim_start)
+                    .and_then(|rest| rest.strip_prefix('"'))
+                else {
+                    continue;
+                };
                 if let Some(end) = rest.find('"') {
                     into.insert(rest[..end].to_owned());
                 }

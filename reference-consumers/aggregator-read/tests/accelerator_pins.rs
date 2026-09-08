@@ -14,40 +14,10 @@
 //! land inside M3-09's per-mode precompile delta, which is supposed to be a
 //! comparison of modes rather than of manifests.
 
-use std::path::Path;
+#[path = "../../pull/tests/support/pins.rs"]
+mod pins;
 
-fn manifest(relative: &str) -> String {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("reference-consumers")
-        .parent()
-        .expect("the repository root");
-    std::fs::read_to_string(root.join(relative)).unwrap_or_else(|_| panic!("{relative} is on disk"))
-}
-
-/// The `[patch.crates-io]` entries of a manifest, as normalised lines.
-///
-/// Whole lines rather than crate names, so a tag is compared as well as a
-/// crate. The set alone would let this guest's `sha2` drift to another revision
-/// while still reading as `["sha2"]`, which is exactly the manifest difference
-/// the header says must not reach M3-09's per-mode delta.
-fn pins(manifest: &str) -> Vec<String> {
-    manifest
-        .lines()
-        .skip_while(|line| line.trim() != "[patch.crates-io]")
-        .skip(1)
-        .take_while(|line| !line.trim_start().starts_with('['))
-        .map(|line| line.split('#').next().unwrap_or("").trim().to_owned())
-        .filter(|line| !line.is_empty())
-        .collect()
-}
-
-/// The one entry naming `crate`, or `None`.
-fn pin_for(manifest: &str, crate_name: &str) -> Option<String> {
-    pins(manifest)
-        .into_iter()
-        .find(|line| line.starts_with(crate_name))
-}
+use pins::{manifest, pin_for, pins};
 
 #[test]
 fn the_reading_consumers_guest_pins_the_hash_it_computes() {
