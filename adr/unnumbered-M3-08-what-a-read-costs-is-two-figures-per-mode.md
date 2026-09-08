@@ -150,8 +150,8 @@ unit LEZ charges in and not comparable with anything else in `COSTS.md`.
 - **What LEZ spends reading instruction data is outside every figure here**, and it falls
   asymmetrically: a pull settlement carries the payload, at about 113 cycles a serialized
   word — roughly a payload byte, and not a byte of the encoded instruction. M3-09
-  measures the captured settlement's instruction at 758 words. M3-10 measures the rest
-  and the whole: a pull settlement is 3,513,718 cycles against a 3,048,613-cycle body,
+  measures the captured settlement's instruction at 790 words. M3-10 measures the rest
+  and the whole: a pull settlement is 3,525,809 cycles against a 3,048,613-cycle body,
   so what the figures in this ADR leave out is 15% of the transaction. A push settlement
   carries a feed id. ADR 26 bounds it; `COSTS.md` names it so a per-read
   comparison is not read as complete without it.

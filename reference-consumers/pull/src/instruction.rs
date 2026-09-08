@@ -106,6 +106,9 @@ pub enum Instruction {
     ///
     /// Accounts: `order`, `trust`, `clock`.
     Settle {
+        /// The id the order's address derives from, and the whole reason the
+        /// account offered as an order is the one `open_order` created.
+        order_id: [u8; 32],
         /// The feed the payload is verified against.
         feed_id: [u8; 32],
         /// The payload as RedStone serialises it, packages and envelope.

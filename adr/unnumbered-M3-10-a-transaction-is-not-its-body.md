@@ -55,7 +55,7 @@ the dispatcher, the generated validator and the `SpelOutput` wrapping need the m
 entry point rather than a function call. That is true and it is not a reason: the product
 ELFs are exported, and running one over the inputs LEZ would hand it exercises all of
 them. So each mode's figure is one execution of the real program, and the wrapping turns
-out to be 188,480 to 280,649 cycles depending on the mode — larger than the input read it
+out to be 188,480 to 289,124 cycles depending on the mode — larger than the input read it
 sits beside, and larger than the entire body of a push consumer's read.
 
 ## Consequences
@@ -82,15 +82,15 @@ sits beside, and larger than the entire body of a push consumer's read.
   decode and wrapping — is a transaction from the product ELF minus a body from a cost
   guest minus a read from `input_cost`, so it carries whatever those three disagree by;
   this repository has measured two of them at 42 and 722 cycles. Against 188,480 to
-  280,649 that is a rounding error, and it is still a subtraction across harnesses rather
+  289,124 that is a rounding error, and it is still a subtraction across harnesses rather
   than a figure anything brackets directly.
 - **The read figures carry the read guest's own floor.** A run of `input_cost` over four
   empty inputs is 4,426 cycles, and that includes zkVM startup and the journal commit
   rather than being four framed reads alone. The same floor is inside every per-mode read
   figure, so it cancels between them and does not when one is quoted by itself. The
   marginal rates are clean, because differencing two input sizes removes it.
-- **P1 can state what it was assuming.** A pull settlement is 3,513,718 cycles of the
-  33,554,432-cycle budget, **10.47%**, executed end to end, and
+- **P1 can state what it was assuming.** A pull settlement is 3,525,809 cycles of the
+  33,554,432-cycle budget, **10.51%**, executed end to end, and
   `every_transaction_fits_the_budget` asserts the share rather than leaving it to the
   reader's division.
 - **One instruction is counted from a rule rather than encoded.** The push consumer's

@@ -6,15 +6,15 @@
 //! there are two ways to get it wrong and this file has been caught by both.
 //!
 //! **The codec is `risc0_zkvm::serde`, not Borsh.** A reader assuming Borsh puts
-//! the instruction at 761 bytes: a variant tag, the feed id, a length prefix and
-//! the payload. Serde writes `u32` words and packs neither the `[u8; 32]` nor the
-//! `Vec<u8>` into them, so it is 758 words.
+//! the instruction at 793 bytes: a variant tag, the order id, the feed id, a
+//! length prefix and the payload. Serde writes `u32` words and packs neither the
+//! `[u8; 32]`s nor the `Vec<u8>` into them, so it is 790 words.
 //!
 //! **And the per-unit cost is per word, not per physical byte.** ADR 26 derives
 //! its ~113 from one measurement: a 127,814-byte payload whose read cost 14.5M
 //! cycles. That payload is about 127,814 *words* once serde has finished with it,
-//! so 113 is what a word costs, and multiplying the 3,032 physical bytes by it
-//! would count each word four times — 57.8M against a measured 14.5M, on ADR 26's
+//! so 113 is what a word costs, and multiplying the 3,160 physical bytes by it
+//! would count each word four times — 60.2M against a measured 14.5M, on ADR 26's
 //! own experiment.
 
 #[path = "../../../verifier-core/tests/support/vectors.rs"]
@@ -22,13 +22,17 @@ mod vectors;
 
 use reference_consumer_pull::instruction::Instruction;
 
-/// The captured payload, and the feed id it is verified against.
+/// The captured payload, the feed id it is verified against, and an order id.
+///
+/// The order id's own value does not matter to the size: it is a fixed 32 bytes
+/// whatever it holds.
 fn settle() -> Instruction {
     let vector = vectors::named("BTC");
     let mut feed_id = [0u8; 32];
     let bytes = vector.feed_id.as_bytes();
     feed_id[..bytes.len()].copy_from_slice(bytes);
     Instruction::Settle {
+        order_id: [0x0D; 32],
         feed_id,
         payload: vector.payload.clone(),
     }
@@ -44,12 +48,12 @@ fn a_settlement_carries_what_is_published() {
     let words = risc0_zkvm::serde::to_vec(&settle()).expect("the instruction encodes");
     assert_eq!(
         words.len(),
-        758,
+        790,
         "the encoded `Settle` moved, and with it what LEZ reads before `settle` begins"
     );
     assert_eq!(
         words.len() * 4,
-        3_032,
+        3_160,
         "a word is four bytes; this is what the instruction occupies, and is *not* what \
          the ~113 multiplies -- see the module comment"
     );

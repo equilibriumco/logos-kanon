@@ -558,6 +558,18 @@
         {
           "init": false,
           "name": "order",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "order_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_PULL_ORDER"
+              }
+            ]
+          },
           "signer": false,
           "writable": true
         },
@@ -587,6 +599,15 @@
         }
       ],
       "args": [
+        {
+          "name": "order_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
         {
           "name": "feed_id",
           "type": {

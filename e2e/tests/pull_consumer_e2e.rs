@@ -417,6 +417,7 @@ async fn the_pull_path_verifies_and_settles_across_a_real_sequencer() {
         &owner_key,
         owner_id,
         &Instruction::Settle {
+            order_id: first_id,
             feed_id: feed_id(),
             payload: signed_payload(FIRST_ROSTER, round, MARKET_VALUE),
         },
@@ -467,6 +468,7 @@ async fn the_pull_path_verifies_and_settles_across_a_real_sequencer() {
         &owner_key,
         owner_id,
         &Instruction::Settle {
+            order_id: second_id,
             feed_id: feed_id(),
             payload: signed_payload(SECOND_ROSTER, later, MARKET_VALUE),
         },

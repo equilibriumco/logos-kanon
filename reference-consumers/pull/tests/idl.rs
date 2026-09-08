@@ -64,10 +64,12 @@ fn nothing_in_settles_instruction_data_can_reach_the_signer_set() {
     assert_eq!(
         instruction("settle")["args"],
         serde_json::json!([
+            { "name": "order_id", "type": { "array": ["u8", 32] } },
             { "name": "feed_id", "type": { "array": ["u8", 32] } },
             { "name": "payload", "type": { "vec": "u8" } },
         ]),
-        "a settlement takes the bytes to verify and the feed to verify them for"
+        "a settlement takes the bytes to verify, the feed to verify them for, and the \
+         order to fill"
     );
 
     // And the accounts it reads for configuration are not writable by it, so a
@@ -171,6 +173,17 @@ fn the_idl_declares_every_derivation_a_client_has_to_reproduce() {
         serde_json::json!([
             { "kind": "arg", "path": "feed_id" },
             { "kind": "const", "value": reference_consumer_pull::TRUST_ACCOUNT_SEED },
+        ])
+    );
+    // And the order it fills to the id it names, which is what stops another
+    // account this program owns being decoded as one. `FeedTrust` is
+    // variable-length and reaches an `OrderAccount`'s width, so ownership plus a
+    // decode is not on its own an identification.
+    assert_eq!(
+        instruction("settle")["accounts"][0]["pda"]["seeds"],
+        serde_json::json!([
+            { "kind": "arg", "path": "order_id" },
+            { "kind": "const", "value": reference_consumer_pull::ORDER_ACCOUNT_SEED },
         ])
     );
 }

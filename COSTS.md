@@ -415,7 +415,7 @@ left in both cases is the framework and each program's own domain.
 ### These are bodies, and a settlement is several times its body
 
 A settlement is not a `settle` body. M3-10 measures the whole transaction by
-running the product ELF over the inputs LEZ would hand it: **3,513,718 cycles**,
+running the product ELF over the inputs LEZ would hand it: **3,525,809 cycles**,
 against the 3,048,613 the body costs. The difference is what LEZ spends reading
 the inputs and what the dispatcher, the generated validator and the `SpelOutput`
 wrapping spend around the body — and a precompile touches none of it.
@@ -425,10 +425,10 @@ figures suggest:
 
 | a pull settlement, whole | cycles | reduction |
 | --- | ---: | ---: |
-| today | 3,513,718 | |
-| with a precompile, `c = 0` | 503,448 | **7.0x** |
-| with a precompile, `c = 1,000` | 513,448 | 6.8x |
-| with a precompile, `c = 10,000` | 603,448 | 5.8x |
+| today | 3,525,809 | |
+| with a precompile, `c = 0` | 515,539 | **6.8x** |
+| with a precompile, `c = 1,000` | 525,539 | 6.7x |
+| with a precompile, `c = 10,000` | 615,539 | 5.7x |
 
 **About 6x to 7x on a transaction, against 22x to 80x on the body.** An earlier
 draft of this section put it at 14x to 25x by adding an estimate of the
@@ -556,7 +556,7 @@ addresses.
 
 | | to be read | body | the rest | **transaction** | of budget |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| pull settlement | 184,456 | 3,048,613 | 280,649 | **3,513,718** | 10.47% |
+| pull settlement | 188,072 | 3,048,613 | 289,124 | **3,525,809** | 10.51% |
 | push update | 175,826 | 3,048,414 | 259,469 | **3,483,709** | 10.38% |
 | push read | 122,783 | 13,404 | 188,480 | **324,667** | 0.97% |
 
@@ -568,7 +568,7 @@ read inside it, which is what `read_cost.rs` compares against a pull read.
 instruction's decode and the wrapping **plus whatever the three harnesses disagree
 by**: the transaction comes from the product program, the body from a cost guest
 and the read from `input_cost`, and this file already records two of those
-differing by 42 and 722 cycles on identical verification. At 188,480 to 280,649
+differing by 42 and 722 cycles on identical verification. At 188,480 to 289,124
 that variance is a rounding error inside it, and the column is still a difference
 between measurements rather than a measurement of its own. Only a product ELF that
 bracketed its own body would make it one.
@@ -629,7 +629,7 @@ times a rate understates every mode, and the push read by nearly half.
 
 | | account words | instruction words |
 | --- | ---: | ---: |
-| pull settlement | 496 | 758 |
+| pull settlement | 496 | 790 |
 | push update | 454 | 726 |
 | push read | 562 | 33 |
 
@@ -642,8 +642,10 @@ And the push consumer's instruction is counted from a rule rather than encoded,
 because its enum is generated inside its guest and there is no host-side type to
 serialise (`[M3-06:01]`): one word for the variant tag and thirty-two for its
 `feed_id`. The rule is checked against the pull consumer's real `Settle`, which is
-a tag, a feed id and a length-prefixed payload and comes to exactly
-`1 + 32 + 1 + 724`.
+a tag, an order id, a feed id and a length-prefixed payload and comes to exactly
+`1 + 32 + 32 + 1 + 724`. The pull consumer carries the order id because `settle`
+derives the order account's address from it; the push consumer's `settle` names no
+order, so the rule it is checked against is the shorter one.
 
 ## How it is measured
 
