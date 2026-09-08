@@ -24,32 +24,15 @@
 //! second copy, and because these tests run in the ordinary workspace job;
 //! `kanon-methods` builds all three guests but its tests are excluded from it.
 
-use std::path::Path;
+#[path = "support/pins.rs"]
+mod pins;
 
-/// The `[patch.crates-io]` entries of a manifest, as normalised lines.
-///
-/// Text rather than a TOML parse: the section is three lines of a fixed shape,
-/// and a parser would be a dependency for both guest workspaces to no end. What
-/// matters is that a changed tag, an added pin or a removed one all move a line.
-fn patches(manifest: &str) -> Vec<String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("{} is readable: {err}", path.display()));
-
-    text.lines()
-        .skip_while(|line| line.trim() != "[patch.crates-io]")
-        .skip(1)
-        .take_while(|line| !line.trim_start().starts_with('['))
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_owned)
-        .collect()
-}
+use pins::{manifest, pins};
 
 #[test]
 fn both_verifying_guests_pin_the_same_accelerators() {
-    let aggregator = patches("../../methods/guest/Cargo.toml");
-    let consumer = patches("guest/Cargo.toml");
+    let aggregator = pins(&manifest("methods/guest/Cargo.toml"));
+    let consumer = pins(&manifest("reference-consumers/pull/guest/Cargo.toml"));
 
     // The section is found at all, in both. A rename or a deletion would
     // otherwise leave two empty lists comparing equal.
