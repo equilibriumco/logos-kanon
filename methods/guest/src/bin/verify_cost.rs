@@ -70,17 +70,18 @@ impl TimeSource for FixedClock {
 /// suspiciously cheap component rather than as a failure.
 type Report = (u32, u64);
 
+/// What the host hands this guest: the stage to run, then everything a
+/// verification needs to run it.
+///
+/// Named because `env::read()` needs the whole shape written out at the call
+/// site, and eight fields spelled inline is what `clippy::type_complexity` is
+/// for. The order is the host's, and the two have to agree: `cost.rs` writes
+/// this tuple and nothing checks the pairing but the two spellings matching.
+type Input = (u8, Vec<u8>, Vec<u8>, Vec<u8>, u8, u8, u64, u64);
+
 fn main() {
-    let (stage, payload_bytes, feed_id, signer_bytes, threshold, decimals, now_ms, max_age_ms): (
-        u8,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        u8,
-        u8,
-        u64,
-        u64,
-    ) = env::read();
+    let (stage, payload_bytes, feed_id, signer_bytes, threshold, decimals, now_ms, max_age_ms): Input =
+        env::read();
 
     // Everything below this line and above the match is setup, and runs
     // identically in every stage.

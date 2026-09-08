@@ -86,6 +86,15 @@ jobs:
       # riscv32im-risc0-zkvm-elf std, so the guest build fails with E0463.
       # Skipping it lints the host code, which is all clippy can lint here; the
       # guest code is compiled for real by the `guest` job below.
+      #
+      # Every excluded workspace is named, the three guests included. They are the
+      # programs this repository ships and their image ids are program ids, so
+      # being the only crates outside the lint gate was the wrong way round -- and
+      # the gap was invisible, because `--workspace` cannot reach an excluded
+      # workspace and the job that does build the guests denies no warnings. It
+      # hid an unused argument on `settle` through a whole review. `--all-targets`
+      # covers their test builds, which is where that one lived, so the guest test
+      # job needs no denial of its own.
       - name: cargo clippy
         env:
           RISC0_SKIP_BUILD: 1
@@ -95,6 +104,13 @@ jobs:
             --manifest-path m0/Cargo.toml -- -D warnings
           cargo clippy --release --workspace --all-targets --locked \
             --manifest-path e2e/Cargo.toml -- -D warnings
+          cargo clippy --release --workspace --all-targets --locked \
+            --manifest-path methods/guest/Cargo.toml -- -D warnings
+          cargo clippy --release --workspace --all-targets --locked \
+            --manifest-path reference-consumers/pull/guest/Cargo.toml -- -D warnings
+          cargo clippy --release --workspace --all-targets --locked \
+            --manifest-path reference-consumers/aggregator-read/guest/Cargo.toml \
+            -- -D warnings
 
   build-test:
     name: build and test
