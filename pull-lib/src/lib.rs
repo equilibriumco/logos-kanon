@@ -172,8 +172,10 @@ pub use kanon_clock::CLOCK_ACCOUNT_ID;
 ///
 /// Every type in [`verify_price`]'s signature is here, and so is every error
 /// type reachable by matching on a [`VerifyError`]. `tests/pull.rs` is what
-/// holds this honest: it names no crate but this one, so a re-export missing
-/// from here fails to compile there.
+/// holds this honest: its own code names no crate but this one, so a re-export
+/// missing from here fails to compile there. The shared fixture reader it
+/// includes is `verifier-core`'s and does name that crate, so the guard is a
+/// statement about the test rather than about everything in the test binary.
 pub use verifier_core::backend::{BackendError, InProgramBackend, SignerAddress};
 pub use verifier_core::decode::DecodeError;
 pub use verifier_core::error::{ConfigError, VerifyError};
