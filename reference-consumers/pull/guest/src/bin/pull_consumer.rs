@@ -365,6 +365,12 @@ mod kanon_pull_consumer {
         feed_id: [u8; 32],
         payload: Vec<u8>,
     ) -> SpelResult {
+        // Read by the generated validator and by nothing here. Named rather than
+        // `_order_id` because the parameter's name is what the constraint's
+        // `arg("order_id")` resolves against and what the IDL publishes, so the
+        // underscore would rename a public argument to silence a warning.
+        let _ = order_id;
+
         let post_states = reference_consumer_pull::settle(
             order,
             trust,
