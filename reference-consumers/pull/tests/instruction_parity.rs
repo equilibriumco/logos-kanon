@@ -64,6 +64,7 @@ fn every_variant() -> Vec<Instruction> {
             limit_price_q64: 13,
         },
         Instruction::Settle {
+            order_id: [13u8; 32],
             feed_id: [14u8; 32],
             payload: vec![15, 16, 17],
         },

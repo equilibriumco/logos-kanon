@@ -323,17 +323,31 @@ mod kanon_pull_consumer {
     /// holds.
     ///
     /// Expected accounts:
-    /// 1. `order` — the order to fill. Owned by this program and holding an
-    ///    order, both checked in `settle`: an account a caller owns would decode
-    ///    as an order with a limit price of the caller's choosing. Checked there
+    /// 1. `order` — the order to fill, at the address `open_order` derived for
+    ///    `order_id`. Still owned by this program and still holding an order,
+    ///    both checked in `settle`: an account a caller owns would decode as an
+    ///    order with a limit price of the caller's choosing. Checked there
     ///    rather than by an `owner` constraint because the IDL generator parses
     ///    `owner` and discards it, so a constraint no client can see is worse
     ///    than one that carries its own error.
     ///
-    ///    No `pda` constraint, unlike `open_order`. It would buy nothing: the
-    ///    order's own contents decide which feed is verified, and an account at
-    ///    an underived address fails the ownership check. The derivation is
-    ///    published on `open_order`, which is where a client needs it.
+    ///    The `pda` constraint is what makes "ours, and it decodes" a sound way
+    ///    to name the account. Without it the only thing separating an order
+    ///    from the other types this program owns is that their borsh encodings
+    ///    happen to be different lengths, and `FeedTrust` is variable: at
+    ///    `114 + label + 20 * signers` bytes it reaches an `OrderAccount`'s 154
+    ///    whenever those sum to 40, which an empty label with two signers or a
+    ///    twenty-character one with a single signer both do. A trust account
+    ///    handed here decoded as an order, and what stopped the fill writing
+    ///    `filled = true` over a roster was borsh refusing a `bool` byte above
+    ///    one. An address derived from a different seed cannot collide with the
+    ///    order's, so the question stops being asked.
+    ///
+    ///    `order_id` is therefore an argument the handler never reads: it is the
+    ///    seed the constraint derives from, and the caller is passing the
+    ///    account it derives anyway. What its thirty-two bytes buy is the
+    ///    identification being a property of the transaction rather than of
+    ///    whatever the account turned out to contain.
     /// 2. `trust` — what this program trusts for `feed_id`. Read and never
     ///    written, and constrained to the named feed's address so a caller cannot
     ///    substitute another feed's roster.
@@ -343,12 +357,20 @@ mod kanon_pull_consumer {
     #[instruction]
     pub fn settle(
         ctx: ProgramContext,
-        #[account(mut)] order: AccountWithMetadata,
+        #[account(mut, pda = [arg("order_id"), r#const("KANON_PULL_ORDER")])]
+        order: AccountWithMetadata,
         #[account(pda = [arg("feed_id"), r#const("KANON_PULL_TRUST")])] trust: AccountWithMetadata,
         clock: AccountWithMetadata,
+        order_id: [u8; 32],
         feed_id: [u8; 32],
         payload: Vec<u8>,
     ) -> SpelResult {
+        // Read by the generated validator and by nothing here. Named rather than
+        // `_order_id` because the parameter's name is what the constraint's
+        // `arg("order_id")` resolves against and what the IDL publishes, so the
+        // underscore would rename a public argument to silence a warning.
+        let _ = order_id;
+
         let post_states = reference_consumer_pull::settle(
             order,
             trust,
@@ -411,7 +433,7 @@ mod tests {
         compute_pda(&OURS, &[&FEED_ID, &seed_from_str(TRUST_ACCOUNT_SEED)])
     }
 
-    fn order_id() -> AccountId {
+    fn order_address() -> AccountId {
         compute_pda(&OURS, &[&ORDER_ID, &seed_from_str(ORDER_ACCOUNT_SEED)])
     }
 
@@ -440,7 +462,7 @@ mod tests {
 
         super::kanon_pull_consumer::__validate_open_order(
             &[
-                account(order_id(), false),
+                account(order_address(), false),
                 account(id([0xA0; 32]), true),
                 account(trust_id(), false),
             ],
@@ -453,15 +475,16 @@ mod tests {
 
         super::kanon_pull_consumer::__validate_settle(
             &[
-                account(order_id(), false),
+                account(order_address(), false),
                 account(trust_id(), false),
                 account(id(*b"/LEZ/ClockProgramAccount/0000001"), false),
             ],
             &OURS,
             &empty,
+            &ORDER_ID,
             &FEED_ID,
         )
-        .expect("settle's trust constraint accepts the named feed's address");
+        .expect("settle's constraints accept the named order's and feed's addresses");
     }
 
     #[test]
@@ -601,7 +624,7 @@ mod tests {
         trust.account.data =
             Data::try_from(borsh::to_vec(&stored).expect("serialises")).expect("a trust fits");
 
-        let mut order = account(order_id(), false);
+        let mut order = account(order_address(), false);
         order.account.program_owner = [0u32; 8];
 
         let ctx = super::ProgramContext::new(OURS, [0u32; 8]);
@@ -665,17 +688,53 @@ mod tests {
             matches!(
                 super::kanon_pull_consumer::__validate_settle(
                     &[
-                        account(order_id(), false),
+                        account(order_address(), false),
                         account(other, false),
                         account(id(*b"/LEZ/ClockProgramAccount/0000001"), false),
                     ],
                     &OURS,
                     &empty,
+                    &ORDER_ID,
                     &FEED_ID,
                 ),
                 Err(SpelError::PdaMismatch { .. })
             ),
             "another feed's trust account has to be refused"
+        );
+    }
+
+    /// The account confusion the order constraint exists to remove.
+    ///
+    /// `FeedTrust` is variable-length and reaches an `OrderAccount`'s 154 bytes
+    /// whenever its label and roster sum to 40, so a trust account this program
+    /// owns decodes as an order. Before the constraint the whole defence was
+    /// borsh refusing a `bool` byte above one, which is a property of where
+    /// `threshold` happens to sit rather than of anything the program decided.
+    /// Now the address is wrong and the dispatcher never reaches the body.
+    #[test]
+    fn a_trust_account_cannot_be_settled_as_an_order() {
+        use reference_consumer_pull::trust::trust_address;
+
+        let empty: InstructionData = Vec::new();
+        let trust = id(*trust_address(&OURS, &FEED_ID).value());
+        assert_ne!(trust, order_address(), "the two seeds derive two addresses");
+
+        assert!(
+            matches!(
+                super::kanon_pull_consumer::__validate_settle(
+                    &[
+                        account(trust, false),
+                        account(trust_id(), false),
+                        account(id(*b"/LEZ/ClockProgramAccount/0000001"), false),
+                    ],
+                    &OURS,
+                    &empty,
+                    &ORDER_ID,
+                    &FEED_ID,
+                ),
+                Err(SpelError::PdaMismatch { .. })
+            ),
+            "a trust account offered as the order has to be refused before the body runs"
         );
     }
 

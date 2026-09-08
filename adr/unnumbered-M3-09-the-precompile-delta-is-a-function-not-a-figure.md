@@ -51,7 +51,7 @@ however free the crossing.
 
 That is a bound on a body, and a body is a fraction of a transaction. M3-10 measures the
 whole thing by running the product ELF over the inputs LEZ would hand it: a pull
-settlement is 3,513,718 cycles against a 3,048,613-cycle body, the difference being what
+settlement is 3,525,809 cycles against a 3,048,613-cycle body, the difference being what
 LEZ spends reading the inputs and what the dispatcher, the generated validator and the
 `SpelOutput` wrapping spend around it. A precompile touches none of that.
 

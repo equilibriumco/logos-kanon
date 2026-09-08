@@ -90,7 +90,7 @@ mod expected {
     /// What each recurring transaction carries: pre-state accounts, then the
     /// instruction. Both cross the same boundary, because `read_lee_inputs` reads
     /// the accounts before the instruction.
-    pub const PULL_SETTLE: (usize, usize) = (496, 758);
+    pub const PULL_SETTLE: (usize, usize) = (496, 790);
     pub const PUSH_UPDATE: (usize, usize) = (454, 726);
     pub const PUSH_READ: (usize, usize) = (562, 33);
 
@@ -98,7 +98,7 @@ mod expected {
     /// rather than multiplied out of them. An account costs far more than its
     /// words, so a word count times a rate understates every one of these -- the
     /// push read by nearly half.
-    pub const PULL_SETTLE_READ: u64 = 184_456;
+    pub const PULL_SETTLE_READ: u64 = 188_072;
     pub const PUSH_UPDATE_READ: u64 = 175_826;
     pub const PUSH_READ_READ: u64 = 122_783;
 
@@ -126,7 +126,7 @@ mod expected {
     /// A difference across harnesses rather than a measurement of its own — the
     /// transaction comes from the product ELF, the body from a cost guest and the
     /// read from `input_cost` — so it carries whatever those three disagree by.
-    pub const PULL_SETTLE_REST: u64 = 280_649;
+    pub const PULL_SETTLE_REST: u64 = 289_124;
     pub const PUSH_UPDATE_REST: u64 = 259_469;
     pub const PUSH_READ_REST: u64 = 188_480;
 
@@ -138,7 +138,7 @@ mod expected {
     pub use super::lez::CYCLE_BUDGET as BUDGET;
 
     /// What each transaction is of it, as `COSTS.md` prints it.
-    pub const PULL_SETTLE_SHARE: &str = "10.47%";
+    pub const PULL_SETTLE_SHARE: &str = "10.51%";
     pub const PUSH_UPDATE_SHARE: &str = "10.38%";
     pub const PUSH_READ_SHARE: &str = "0.97%";
 
@@ -152,10 +152,10 @@ mod expected {
     pub const SYSCALL: [u64; 3] = [0, 1_000, 10_000];
 
     /// What a whole pull settlement would cost with one, and the reduction in
-    /// tenths: 7.0x, 6.8x, 5.8x. Rounded rather than floored, as `read_cost.rs`
+    /// tenths: 6.8x, 6.7x, 5.7x. Rounded rather than floored, as `read_cost.rs`
     /// rounds the body-level equivalents.
-    pub const SETTLEMENT_WITH_PRECOMPILE: [u64; 3] = [503_448, 513_448, 603_448];
-    pub const SETTLEMENT_REDUCTION_TENTHS: [u64; 3] = [70, 68, 58];
+    pub const SETTLEMENT_WITH_PRECOMPILE: [u64; 3] = [515_539, 525_539, 615_539];
+    pub const SETTLEMENT_REDUCTION_TENTHS: [u64; 3] = [68, 67, 57];
 
     /// What a byte of an account's `data` costs, measured by varying that data
     /// rather than the instruction.
@@ -176,8 +176,8 @@ mod expected {
     /// real enum and the `SpelOutput` wrapping are all inside the figure.
     ///
     /// The difference between these and body-plus-read is that wrapping, and it is
-    /// not small: 280,649 on a pull settlement, 188,480 on a push read.
-    pub const PULL_SETTLE_TRANSACTION: u64 = 3_513_718;
+    /// not small: 289,124 on a pull settlement, 188,480 on a push read.
+    pub const PULL_SETTLE_TRANSACTION: u64 = 3_525_809;
     pub const PUSH_UPDATE_TRANSACTION: u64 = 3_483_709;
     pub const PUSH_READ_TRANSACTION: u64 = 324_667;
 
@@ -361,12 +361,14 @@ fn what_crosses_the_boundary_is_what_is_published() {
 /// a single `feed_id: [u8; 32]`.
 ///
 /// The rule is not assumed. The pull consumer's `Settle` is a real type carrying
-/// the same tag and feed id plus a `Vec<u8>`, and it encodes to exactly
-/// `1 + 32 + 1 + 724` for a 724-byte payload — which is what
-/// `what_crosses_the_boundary_is_what_is_published` pins at 758.
+/// the same tag and feed id, an order id, and a `Vec<u8>`, and it encodes to
+/// exactly `1 + 32 + 32 + 1 + 724` for a 724-byte payload — which is what
+/// `what_crosses_the_boundary_is_what_is_published` pins at 790. The push
+/// consumer's own `settle` takes neither an order id nor a payload, so only the
+/// tag and the feed id are returned.
 fn push_read_instruction_words(fixtures: &Fixtures) -> usize {
     const TAG: usize = 1;
-    const FEED_ID: usize = 32;
+    const ID: usize = 32;
     let pull = instruction_words(&fixtures.settle);
     let payload = match &fixtures.settle {
         PullInstruction::Settle { payload, .. } => payload.len(),
@@ -374,12 +376,12 @@ fn push_read_instruction_words(fixtures: &Fixtures) -> usize {
     };
     assert_eq!(
         pull,
-        TAG + FEED_ID + 1 + payload,
-        "risc0's serde no longer writes a tag, thirty-two words for a feed id and a \
-         length-prefixed byte per word, so the push consumer's instruction cannot be \
-         counted from that rule either"
+        TAG + ID + ID + 1 + payload,
+        "risc0's serde no longer writes a tag, thirty-two words for each `[u8; 32]` \
+         and a length-prefixed byte per word, so the push consumer's instruction cannot \
+         be counted from that rule either"
     );
-    TAG + FEED_ID
+    TAG + ID
 }
 
 /// What each mode actually pays to be read, measured rather than modelled.
@@ -460,7 +462,7 @@ fn aggregator_transaction(accounts: &[AccountWithMetadata], instruction: &[u32])
 ///
 /// The figure P1 is actually about. Body-plus-read is not it: the dispatcher, the
 /// validator, the instruction's decode and the `SpelOutput` wrapping are between
-/// 188,480 and 280,649 cycles depending on the mode, and none of them is reachable
+/// 188,480 and 289,124 cycles depending on the mode, and none of them is reachable
 /// by calling a function — only by running the program.
 #[test]
 fn what_each_mode_costs_as_a_transaction_is_what_is_published() {
@@ -932,6 +934,18 @@ fn fixtures() -> Fixtures {
     // make that stage measure a refusal.
     let price_id = *price_account_address(&aggregator, &feed_id).value();
     let trust_id = *trust_address(&ours, &feed_id).value();
+    // The order account is at its derived address like the rest, which `settle`'s
+    // `pda` constraint now requires: the transaction runs the product ELF and the
+    // generated validator refuses an account anywhere else.
+    let order_id = [0x31u8; 32];
+    let order_acct_id = *spel_framework::pda::compute_pda(
+        &ours,
+        &[
+            &order_id,
+            &spel_framework::pda::seed_from_str(reference_consumer_pull::ORDER_ACCOUNT_SEED),
+        ],
+    )
+    .value();
     let source_id = *source_address(&ours, &feed_id).value();
     // The feed lives at its own PDA and the price account derives from *that*
     // address rather than from the feed id (ADR 32).
@@ -956,7 +970,7 @@ fn fixtures() -> Fixtures {
 
     Fixtures {
         pull_accounts: [
-            account(ours, pull_order.clone(), [0x31; 32]),
+            account(ours, pull_order.clone(), order_acct_id),
             account(ours, trust.clone(), trust_id),
             account(ProgramId::default(), clock.clone(), CLOCK_ACCOUNT_ID),
         ],
@@ -972,6 +986,7 @@ fn fixtures() -> Fixtures {
             account(ProgramId::default(), clock.clone(), CLOCK_ACCOUNT_ID),
         ],
         settle: PullInstruction::Settle {
+            order_id,
             feed_id,
             payload: vector.payload.clone(),
         },
