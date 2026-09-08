@@ -75,6 +75,17 @@ mod expected {
     /// this whole term.
     pub const FIXED: u64 = 4_426;
 
+    /// What an account costs against the same width of instruction, in permille.
+    ///
+    /// 496 bytes of accounts read for 98,777 cycles and the same width of
+    /// instruction for 60,499, both over the `FIXED` floor above. Pinned like
+    /// every other figure here rather than bounded: the form this replaced
+    /// divided the two and asserted the quotient was 1, which integer division
+    /// satisfies anywhere from parity to just under twice the width, so a
+    /// regression to 1.99x would have passed while the message claimed to catch
+    /// exactly that.
+    pub const ACCOUNT_OVER_INSTRUCTION_PERMILLE: u64 = 1_682;
+
     /// What each recurring transaction carries: pre-state accounts, then the
     /// instruction. Both cross the same boundary, because `read_lee_inputs` reads
     /// the accounts before the instruction.
@@ -260,11 +271,11 @@ fn the_rate_does_not_bend_with_the_input_size() {
     }
 }
 
-/// Accounts cost the same as instruction words, which is why both are counted.
+/// An account costs more than the same width of instruction, and by how much.
 ///
-/// They arrive through a different `env::read()` and could in principle be priced
-/// differently. Measuring an account-carrying input against a bare one of the same
-/// total width is what says they are not.
+/// The two arrive through a different `env::read()` and could in principle be priced
+/// anywhere apart, so the tables below counting both into one width are only honest
+/// while the gap is a known figure. This is where that figure comes from.
 #[test]
 fn an_account_costs_more_than_its_width() {
     let f = fixtures();
@@ -277,11 +288,14 @@ fn an_account_costs_more_than_its_width() {
          {as_instruction}: if these ever agree, an account has stopped costing more than \
          its bytes and the per-mode figures below could be counted rather than measured"
     );
+    let permille = 1000 * (as_accounts - expected::FIXED) / (as_instruction - expected::FIXED);
     assert_eq!(
-        (as_accounts - expected::FIXED) / (as_instruction - expected::FIXED),
-        1,
-        "an account is now more than twice its width, which is a change in what \
-         deserialising one does rather than in how much of it there is"
+        permille,
+        expected::ACCOUNT_OVER_INSTRUCTION_PERMILLE,
+        "an account now costs {permille} permille of what the same width of instruction \
+         does rather than {}, which is a change in what deserialising one does rather \
+         than in how much of it there is",
+        expected::ACCOUNT_OVER_INSTRUCTION_PERMILLE
     );
 }
 
