@@ -75,16 +75,17 @@ mod expected {
     /// this whole term.
     pub const FIXED: u64 = 4_426;
 
-    /// What an account costs against the same width of instruction, in permille.
+    /// What 496 bytes of accounts cost to read, and what the same width of
+    /// instruction costs, each measured end to end.
     ///
-    /// 496 bytes of accounts read for 98,777 cycles and the same width of
-    /// instruction for 60,499, both over the `FIXED` floor above. Pinned like
-    /// every other figure here rather than bounded: the form this replaced
-    /// divided the two and asserted the quotient was 1, which integer division
-    /// satisfies anywhere from parity to just under twice the width, so a
-    /// regression to 1.99x would have passed while the message claimed to catch
-    /// exactly that.
-    pub const ACCOUNT_OVER_INSTRUCTION_PERMILLE: u64 = 1_682;
+    /// The two counts rather than the ratio between them, because a ratio is a
+    /// division and a division has a floor. Pinned at permille, every account
+    /// figure from 98,741 to 98,796 answers 1,682 and passes; pinned as a bare
+    /// quotient, as this was first written, everything from parity to just under
+    /// twice the width answers 1. Neither is a pin. The ratio these give is about
+    /// 1.68x, which is a figure to read rather than one to assert.
+    pub const PULL_ACCOUNTS_READ: u64 = 98_777;
+    pub const SAME_WIDTH_AS_INSTRUCTION: u64 = 60_499;
 
     /// What each recurring transaction carries: pre-state accounts, then the
     /// instruction. Both cross the same boundary, because `read_lee_inputs` reads
@@ -288,14 +289,14 @@ fn an_account_costs_more_than_its_width() {
          {as_instruction}: if these ever agree, an account has stopped costing more than \
          its bytes and the per-mode figures below could be counted rather than measured"
     );
-    let permille = 1000 * (as_accounts - expected::FIXED) / (as_instruction - expected::FIXED);
     assert_eq!(
-        permille,
-        expected::ACCOUNT_OVER_INSTRUCTION_PERMILLE,
-        "an account now costs {permille} permille of what the same width of instruction \
-         does rather than {}, which is a change in what deserialising one does rather \
-         than in how much of it there is",
-        expected::ACCOUNT_OVER_INSTRUCTION_PERMILLE
+        (as_accounts, as_instruction),
+        (
+            expected::PULL_ACCOUNTS_READ,
+            expected::SAME_WIDTH_AS_INSTRUCTION
+        ),
+        "reading {width} words moved, as accounts or as instruction or both, which is a \
+         change in what deserialising one does rather than in how much of it there is"
     );
 }
 
