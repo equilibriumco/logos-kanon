@@ -60,6 +60,7 @@ they describe the design being proposed for acceptance.
 | [M3-06:02](unnumbered-M3-06-where-a-pull-consumers-trust-comes-from.md) | Where a pull consumer's trust comes from | accepted, unnumbered |
 | [M3-08:01](unnumbered-M3-08-what-a-read-costs-is-two-figures-per-mode.md) | What a read costs is two figures per mode | accepted, unnumbered |
 | [M3-08:02](unnumbered-M3-08-the-guests-are-compiled-in-a-container.md) | The guests are compiled in a container, so a program id is a property of the source | accepted, unnumbered |
+| [M3-09:01](unnumbered-M3-09-the-precompile-delta-is-a-function-not-a-figure.md) | The precompile delta is a function, not a figure | accepted, unnumbered |
 
 ## How they fit together
 
@@ -220,6 +221,15 @@ and the re-exports turn out to be owed anyway, because `read_price` takes a
 `LezClock` a caller previously could not name. The lesson worth carrying is that
 the closure of a guest workspace is part of the deployed artefact, and only a
 measurement says whether an edge is free.
+
+[M3-09:01] is the answer [M3-08:01] made computable, and it inherits that ADR's
+discipline about what a measurement is allowed to claim. M3-08 refused to publish a
+mode's read that contained the consumer's bookkeeping; M3-09 refuses to publish a
+precompile delta that contains our guess at somebody else's syscall cost. In both cases
+the fix is the same shape — name the term, put it where it cannot contaminate the
+measured part, and let the reader see which is which. The band is also the reason the two
+ADRs disagree about presentation: M3-08's figures are exact because they are measured, and
+M3-09's are a function because one of them is not.
 
 ADR 29 closes a range that only had one end. ADR 18 gave staleness a two-sided window and
 left `maxAge` to the feed; registration refused zero and nothing else. But `freshness`

@@ -710,21 +710,196 @@ fn a_pull_read_costs_hundreds_of_times_more_than_a_push_read() {
 fn the_gap_between_the_modes_is_signature_recovery() {
     let pull_read = cycles(Mode::Pull, stage::READ) - cycles(Mode::Pull, stage::FLOOR);
     let push_read = cycles(Mode::Push, stage::READ) - cycles(Mode::Push, stage::FLOOR);
-    // Copied from `cost.rs`'s `expected::COMPONENTS` row for five signers, which
-    // is a separate test binary and so a separate crate: there is nothing to
-    // import. The copy is not self-checking -- if that row moves, this constant
-    // does not follow and nothing here notices, so the two have to be changed
-    // together. `recovery_cycles_are_unchanged` is what stops the original
-    // moving unobserved; this only stops the *share* moving.
-    const FIVE_SIGNER_RECOVERY: u64 = 2_922_890;
     let gap = pull_read - push_read;
     // In thousandths rather than whole percent. Integer-flooring a percentage
     // let the gap drift by up to about 1% -- some 30,000 cycles -- without the
     // assertion noticing, which is a wide enough band to hide a real change.
-    let share = FIVE_SIGNER_RECOVERY * 1_000 / gap;
+    let share = precompile::FIVE_SIGNER_RECOVERY * 1_000 / gap;
     assert_eq!(
         share, 963,
         "recovery is {share} thousandths of the {gap}-cycle gap between the modes, not \
          963; either `cost.rs`'s recovery row moved or something else grew"
     );
+}
+
+/// What a native ECDSA and keccak256 precompile would be worth to a reader
+/// (M3-09, P3).
+///
+/// The other half of the delta; `cost.rs` carries the update path and the
+/// component arithmetic. Two terms are assumed, and both are properties of a
+/// primitive nobody has built: what a call into it costs, and what it hands back,
+/// which decides how many calls there are. So the figures below are published at
+/// both ends of a band and at zero. `[M3-09:01]` records
+/// why they are not collapsed into one number.
+mod precompile {
+    /// The two removable rows of `cost.rs`'s five-signer component table.
+    ///
+    /// Copied, because each file in `tests/` is its own crate and there is
+    /// nothing to import. The copies are not self-checking: if those rows move,
+    /// these constants do not follow and nothing here notices, so the two have
+    /// to be changed together. `per_component_cycles_are_unchanged` is what
+    /// stops the originals moving unobserved.
+    ///
+    /// **They are measured in `verify_cost` and subtracted from `pull_cost`**, so
+    /// on this side the removable term is imported rather than measured in the
+    /// guest it is taken out of. What bounds the import is
+    /// `the_roster_rebuild_is_not_where_a_pull_read_goes`: `pull::VERIFY` is
+    /// 3,040,512 against `cost.rs`'s 3,039,790 for the same payload, 722 cycles
+    /// apart, so the two guests are doing the same cryptographic work to about a
+    /// part in four thousand. The residuals below inherit that, which is fine for
+    /// a reduction factor and not fine for reading small differences between
+    /// them.
+    pub const FIVE_SIGNER_KECCAK: u64 = 87_380;
+    pub const FIVE_SIGNER_RECOVERY: u64 = 2_922_890;
+
+    /// What a precompile takes out of a five-package verification.
+    pub const REMOVABLE: u64 = FIVE_SIGNER_KECCAK + FIVE_SIGNER_RECOVERY;
+
+    /// One keccak256 and one recovery per package, five packages.
+    pub const CALLS: u64 = 10;
+
+    /// A free syscall, then `m0`'s band. The first is not achievable and is not
+    /// meant to be: it is the bound that holds whatever a real precompile costs.
+    pub const SYSCALL: [u64; 3] = [0, 1_000, 10_000];
+
+    /// What would remain of a pull read at each of those, and the reduction in
+    /// tenths: 97.7x, 74.0x, 23.2x.
+    ///
+    /// Rounded rather than floored. Integer division truncates, which published
+    /// 73.97 as 73.9 — a figure that presents as 74.0 anywhere else, so the
+    /// convention read as an arithmetic slip rather than as a convention. It is
+    /// the same objection this file already makes about flooring the recovery
+    /// share, one table over.
+    pub const PULL_READ_REMAINS: [u64; 3] = [31_115, 41_115, 131_115];
+    pub const PULL_READ_REDUCTION_TENTHS: [u64; 3] = [977, 740, 232];
+
+    /// The same for the whole `settle` body. It lands 199 cycles from what
+    /// `cost.rs` computes for a push update, which is not a finding: those are
+    /// residuals from different guests, disagreeing by 42 and 722 cycles on
+    /// identical verification, and a settlement is not a submission. Both being
+    /// small is the claim; their being equal is not.
+    pub const PULL_SETTLE_REMAINS: [u64; 3] = [38_343, 48_343, 138_343];
+}
+
+/// A reduction factor in tenths, rounded to the nearest rather than truncated.
+fn tenths(before: u64, after: u64) -> u64 {
+    (before * 10 + after / 2) / after
+}
+
+/// The pull side of P3's per-mode delta.
+///
+/// A pull consumer pays verification on every read, so this is what a precompile
+/// would be worth to it *per read* rather than once per update.
+#[test]
+fn what_a_precompile_would_leave_of_a_pull_read() {
+    let floor = cycles(Mode::Pull, stage::FLOOR);
+    let read = cycles(Mode::Pull, stage::READ) - floor;
+    let settle = cycles(Mode::Pull, stage::SETTLE) - floor;
+
+    for (i, syscall) in precompile::SYSCALL.into_iter().enumerate() {
+        // Checked, because `REMOVABLE` is a constant and `read` is measured: if the
+        // guests ever take risc0's keccak coprocessor -- which `COSTS.md` discusses
+        // as a live option worth about a sevenfold cut to that row -- `read` falls
+        // and the constant does not, and an overflow backtrace is a worse way to
+        // learn that than the message below.
+        let remains = read.checked_sub(precompile::REMOVABLE).unwrap_or_else(|| {
+            panic!(
+                "a pull read is {read} cycles, less than the {} a precompile was \
+                     going to remove: the read no longer contains all of what \
+                     `cost.rs` measures as removable, so `REMOVABLE` describes a \
+                     different build",
+                precompile::REMOVABLE
+            )
+        }) + precompile::CALLS * syscall;
+        assert_eq!(
+            remains,
+            precompile::PULL_READ_REMAINS[i],
+            "a pull read with a precompile at {syscall} cycles a call moved"
+        );
+        assert_eq!(
+            tenths(read, remains),
+            precompile::PULL_READ_REDUCTION_TENTHS[i],
+            "the reduction at {syscall} cycles a call moved"
+        );
+        let settle_remains = settle
+            .checked_sub(precompile::REMOVABLE)
+            .expect("a settlement contains its own read, and the read contains the removable rows")
+            + precompile::CALLS * syscall;
+        assert_eq!(
+            settle_remains,
+            precompile::PULL_SETTLE_REMAINS[i],
+            "a pull settlement with a precompile at {syscall} cycles a call moved"
+        );
+    }
+}
+
+/// The push side: a precompile is worth nothing to a consumer's read.
+///
+/// Not an arithmetic identity dressed as a test. What it asserts is that a push
+/// read is cheaper than a *single* signature recovery, which is only possible if
+/// it performs none — so the mode has nothing for an ECDSA precompile to remove,
+/// and the saving lands on the aggregator's update instead, once per update
+/// rather than once per read.
+#[test]
+fn a_precompile_is_worth_nothing_to_a_push_read() {
+    let read = cycles(Mode::Push, stage::READ) - cycles(Mode::Push, stage::FLOOR);
+    let one_recovery = precompile::FIVE_SIGNER_RECOVERY / 5;
+    assert!(
+        read < one_recovery,
+        "a push read is {read} cycles against {one_recovery} for one recovery, so it may \
+         now contain cryptography an ECDSA precompile would address"
+    );
+    // What hashing it does do is SHA-256, for the PDA derivation, and neither
+    // primitive RFP-020 names reaches SHA-256. So the majority of a push read
+    // survives every precompile in question -- which is the claim `COSTS.md`
+    // makes, and this is what would fail if the derivation stopped dominating.
+    // The measured derivation rather than `push::ADDRESS`, which is a pinned
+    // constant and so cannot fall when the thing it describes does: comparing it
+    // against a fresh `read` would keep passing while the claim stopped being true.
+    // The margin is thin enough for that to matter -- 3,656 of 6,803 is 53.7%.
+    let derivation = cycles(Mode::Push, stage::ADDRESS) - cycles(Mode::Push, stage::FLOOR);
+    assert!(
+        derivation * 2 > read,
+        "the address derivation is {derivation} cycles of a {read}-cycle read, no longer \
+         the majority of it"
+    );
+}
+
+/// Prints the read half of `COSTS.md`'s precompile table.
+///
+/// ```sh
+/// cargo test --release -p kanon-methods --test read_cost \
+///     -- --nocapture the_precompile_read_table
+/// ```
+#[test]
+fn the_precompile_read_table_is_reproducible() {
+    let pull = cycles(Mode::Pull, stage::READ) - cycles(Mode::Pull, stage::FLOOR);
+    let push = cycles(Mode::Push, stage::READ) - cycles(Mode::Push, stage::FLOOR);
+
+    println!("\n| a read | pull | push |");
+    println!("| --- | ---: | ---: |");
+    println!("| today | {pull} | {push} |");
+    println!("| removable | {} | 0 |", precompile::REMOVABLE);
+    for syscall in precompile::SYSCALL {
+        let remains = pull - precompile::REMOVABLE + precompile::CALLS * syscall;
+        println!(
+            "| with a precompile at {syscall} cycles a call | {remains} ({}.{}x) | {push} (1x) |",
+            tenths(pull, remains) / 10,
+            tenths(pull, remains) % 10
+        );
+    }
+    // The settlement rows too, because `COSTS.md` cites the pull settlement's 38,343
+    // when it puts the two residuals beside each other, and a figure nothing prints
+    // is a figure a reader cannot check against the code that asserts it.
+    let settle = cycles(Mode::Pull, stage::SETTLE) - cycles(Mode::Pull, stage::FLOOR);
+    println!("\n| a pull `settle` body | cycles |");
+    println!("| --- | ---: |");
+    println!("| today | {settle} |");
+    for syscall in precompile::SYSCALL {
+        println!(
+            "| with a precompile at {syscall} cycles a call | {} |",
+            settle - precompile::REMOVABLE + precompile::CALLS * syscall
+        );
+    }
+    println!();
 }
