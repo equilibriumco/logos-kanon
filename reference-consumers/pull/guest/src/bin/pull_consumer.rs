@@ -287,6 +287,10 @@ mod kanon_pull_consumer {
     /// registration disagrees, and the order carries the pair afterwards so a
     /// settlement compares two independently written records rather than one
     /// against itself.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "an order is what its owner is signing for, and every argument is part of that: the pair it expects, the price it fills at and the feed it is priced against are each a claim the program compares rather than a parameter it could infer"
+    )]
     #[instruction]
     pub fn open_order(
         ctx: ProgramContext,
