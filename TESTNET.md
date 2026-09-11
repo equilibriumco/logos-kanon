@@ -29,15 +29,11 @@ five signers at a threshold of three, unpaused. All five are distinct accounts.
 The config account decodes as `AdminAccount { admin: Some(<the admin above>),
 pending: None }`.
 
-## Why these addresses are ours, and how to confirm it
+## Confirming it
 
-The proof is not custody of a key. It is that **the program id is the guest's
-image id** — a hash of the compiled ELF — and the guest builds in a pinned
-container, so the id is reproducible from source rather than dependent on who
-built it or where. Every account above is a PDA of that id, which nothing else can
-produce.
-
-To confirm, from this commit:
+The program id is the guest's image id — a hash of the compiled ELF — and the
+guest builds in a pinned container, so it is reproducible from source. Every
+account above is a PDA of it. From this commit:
 
 ```sh
 KANON_GENESIS_ADMIN=5b0e4f6dddea8b9ef3118d6002a25c09ab379653ffb60586f4604f1fa6a0b392 \
