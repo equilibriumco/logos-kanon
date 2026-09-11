@@ -78,7 +78,17 @@ use verifier_core::{
 };
 
 /// Where the harness puts it. `KANON_SEQUENCER_PORT` overrides, as the script does.
+///
+/// `KANON_SEQUENCER_URL` overrides both, and takes a whole URL rather than a port
+/// so the suite can address a sequencer that is not local -- the public testnet at
+/// `https://testnet.lez.logos.co`, or a node joined to it, which is what F7 and S1
+/// mean by devnet/testnet. The port variable still serves the standalone harness
+/// `scripts/lez-sequencer.sh` starts, which is what CI uses and what the default
+/// stays.
 fn sequencer_url() -> String {
+    if let Ok(url) = std::env::var("KANON_SEQUENCER_URL") {
+        return url;
+    }
     let port = std::env::var("KANON_SEQUENCER_PORT").unwrap_or_else(|_| "3055".to_owned());
     format!("http://127.0.0.1:{port}")
 }
@@ -867,5 +877,113 @@ async fn the_push_path_verifies_and_publishes_across_a_real_sequencer() {
         updated.price, btc_published.price,
         "the second round carried a different value, so a price that did not move means the \
          update was not applied"
+    );
+}
+
+/// F7 and M2-11 against the **public LEZ testnet**: deploy, establish the
+/// authority, register BTC, ETH, SOL, XMR and ZEC.
+///
+/// #148's fourth deliverable in its own words -- "BTC/ETH/SOL/XMR/ZEC vs USD
+/// registered on devnet/testnet" -- and F7's "registered on LEZ devnet/testnet as
+/// part of the deliverable". The five are the USD pairs by name; `FEEDS.md`
+/// records M2-00 confirming all five on `redstone-primary-prod`.
+///
+/// Ignored, and that is the safety interlock rather than a convention: this
+/// writes to a chain other people share and cannot be reset, so it runs only when
+/// someone asks for it by name. `KANON_SEQUENCER_URL` decides which chain and is
+/// asserted rather than defaulted -- without it this would quietly rehearse
+/// against `127.0.0.1` and report a green that meant nothing.
+///
+/// Every step is idempotent, so a re-run continues rather than repeats, which is
+/// what makes it safe to point at a chain that already holds a previous run's
+/// accounts.
+///
+/// No price is submitted. Registration is what the deliverable names; publishing
+/// is `the_push_path_verifies_and_publishes_across_a_real_sequencer`'s, and
+/// keeping them apart means a failure names which half broke.
+///
+/// The authority is [`TEST_ADMIN_KEY`], which is committed: anyone reading this
+/// repository can sign as it. That is acceptable for a registration that is
+/// *reproducible* rather than custodial -- the evidence is the program id, which
+/// is the guest's image id and rebuildable from source -- and it is why this is
+/// not the operated deployment. See `TESTNET.md`.
+#[tokio::test]
+#[ignore = "writes to a shared public chain; run deliberately with KANON_SEQUENCER_URL set"]
+async fn the_five_feeds_register_on_the_public_testnet() {
+    require_a_configured_build();
+    assert!(
+        std::env::var("KANON_SEQUENCER_URL").is_ok(),
+        "set KANON_SEQUENCER_URL to the chain you mean to write to, e.g. \
+         https://testnet.lez.logos.co -- this test refuses to default to localhost"
+    );
+
+    let client = client();
+    let (key, admin_id) = test_admin();
+
+    let program = deploy_the_guest(&client).await;
+    ensure_the_admin_account_is_owned(&client, &key, admin_id).await;
+
+    let chain = Chain {
+        client,
+        program,
+        key,
+        admin_id,
+    };
+    let config_id = ensure_the_authority_is_established(&chain).await;
+
+    // Printed first, because it is the evidence: the program id is the guest's
+    // image id, and the containerised guest build makes that reproducible from
+    // source, so a reviewer can rebuild this commit and confirm the program on the
+    // chain is the one in this repository. Every address below is a PDA of it,
+    // which nothing else can produce.
+    println!(
+        "program (image id): {}",
+        hex::encode(
+            program
+                .iter()
+                .flat_map(|limb| limb.to_le_bytes())
+                .collect::<Vec<u8>>()
+        )
+    );
+    println!("admin account     : {}", hex::encode(admin_id.value()));
+    println!("config account    : {}", hex::encode(config_id.value()));
+
+    let mut registered = Vec::new();
+    for feed in &FEEDS {
+        let feed_account_id = ensure_the_feed_is_registered(&chain, config_id, feed).await;
+
+        // Read back through the same decode path the local suite uses, so a pass
+        // here means the same thing it means there.
+        let stored: FeedAccount = account_when(
+            &chain.client,
+            feed_account_id,
+            "the feed is registered on the testnet",
+            |account| decode(&account.data),
+        )
+        .await;
+        assert_eq!(
+            stored.feed_id,
+            feed.padded_id(),
+            "the account at {}'s address holds another feed's id",
+            feed.label()
+        );
+        println!(
+            "registered {:<3}     : {}",
+            feed.label(),
+            hex::encode(feed_account_id.value())
+        );
+        registered.push(feed_account_id);
+    }
+
+    // Five distinct accounts, asserted after the loop rather than inside it: two
+    // feeds sharing an address would each pass their own read-back and still mean
+    // the derivation collapsed.
+    let mut distinct = registered.clone();
+    distinct.sort_unstable_by_key(|id| *id.value());
+    distinct.dedup_by_key(|id| *id.value());
+    assert_eq!(
+        distinct.len(),
+        FEEDS.len(),
+        "the five feeds did not land on five distinct accounts"
     );
 }
