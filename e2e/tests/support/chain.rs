@@ -23,7 +23,17 @@ use serde::Serialize;
 use verifier_core::time::TimeSource as _;
 
 /// Where the harness puts it. `KANON_SEQUENCER_PORT` overrides, as the script does.
+///
+/// `KANON_SEQUENCER_URL` overrides both, and takes a whole URL rather than a port
+/// so the suite can address a sequencer that is not local -- the public testnet at
+/// `https://testnet.lez.logos.co`, or a node joined to it, which is what F7 and S1
+/// mean by devnet/testnet. The port variable still serves the standalone harness
+/// `scripts/lez-sequencer.sh` starts, which is what CI uses and what the default
+/// stays.
 pub fn sequencer_url() -> String {
+    if let Ok(url) = std::env::var("KANON_SEQUENCER_URL") {
+        return url;
+    }
     let port = std::env::var("KANON_SEQUENCER_PORT").unwrap_or_else(|_| "3055".to_owned());
     format!("http://127.0.0.1:{port}")
 }
