@@ -7,8 +7,15 @@ target/
 # Exception: the M0 report is a delivered artifact, not a build output.
 !m0/M0-report.pdf
 
+# Python bytecode, from running the capture script by hand.
+__pycache__/
+
 # Editor scratch.
 .code_marks/
+
+# `lgs setup` materialises circuits, a wallet and its state here. Build output of a
+# toolchain run, not project state; `scaffold.toml` is the part that is committed.
+.scaffold/
 
 # Per-developer tool settings. Local to whoever is working here, so the repository
 # says so rather than relying on each contributor's own global ignore file.

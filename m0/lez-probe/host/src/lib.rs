@@ -158,6 +158,10 @@ pub fn measure<T: serde::Serialize>(
         let started = Instant::now();
         let info = default_prover().prove(build_env(false)?, elf)?;
         out.prove_samples.push(started.elapsed().as_secs_f64());
+        // borsh over `receipt.inner`, which excludes the journal. `cost-baseline`
+        // measures bincode over the whole `Receipt`, so these byte figures are NOT
+        // comparable across the two harnesses -- only within this one. See the
+        // caveat in README.md; changing this moves a published constant.
         out.proof_bytes = Some(borsh::to_vec(&info.receipt.inner)?.len());
     }
     Ok(out)

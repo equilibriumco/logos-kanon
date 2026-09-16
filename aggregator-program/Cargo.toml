@@ -1,0 +1,19 @@
+# The push-mode aggregator. Not implemented yet.
+#
+# It becomes a SPEL program: the SPEL dependency lands later, together
+# with the IDL surface, rather than being pinned here before anything uses it.
+# Which SPEL revision is a live question, recorded in `m0/versions.md`.
+[package]
+name = "aggregator-program"
+description = "Push-mode LEZ aggregator: verifies RedStone packages and writes the canonical price account"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+verifier-core.workspace = true
+
+# The canonical price account this program exists to populate, and the
+# `AccountId` its identifier fields are made of. Through `kanon-idl` rather than
+# from upstream directly, so "re-exported, not forked" has one place it happens.
+kanon-idl.workspace = true

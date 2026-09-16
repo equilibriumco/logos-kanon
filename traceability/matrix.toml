@@ -1,0 +1,476 @@
+# Requirement to implementation to evidence, one row per entry in
+# `requirements.toml`.
+#
+# This is the source; `TRACEABILITY.md` at the repo root is rendered from it and
+# CI fails if the two disagree, so the readable version cannot drift from the
+# checked one. `tests/matrix.rs` is what makes the file a gate rather than a
+# table: every `verified_by` entry has to resolve to something that exists, and
+# every path in `implemented_in` has to be a real directory or file.
+#
+# status
+#   planned   nothing implemented yet; `tasks` says which task will
+#   partial   partly satisfied, or satisfied by M0 evidence that later tasks
+#             extend; needs at least one piece of evidence
+#   verified  satisfied now, with at least one test or CI gate standing behind
+#             it (a document alone is never enough)
+#
+# verified_by entries
+#   test:<fn>    a test function that exists in this repository
+#   ci:<job>     a job id in `.github/workflows/`
+#   doc:<path>   a delivered document, checked to exist
+#
+# M1-06 seeded this file and its checker. M5-06 is the task that has to leave
+# every row `verified`, which is why the checker is strict about evidence now
+# rather than at the end: a row cannot be quietly marked verified without
+# something a test run can point at.
+
+# ------------------------------------------------------------------ Functionality
+
+[[row]]
+id = "F1"
+status = "partial"
+tasks = ["M1-10", "M1-11", "M2-01", "M2-02"]
+implemented_in = ["verifier-core", "aggregator-program", "methods/guest"]
+verified_by = [
+  "test:the_trait_is_object_safe",
+  "test:a_signature_round_trips_to_the_signing_key_address",
+  "test:keccak256_matches_the_known_digest_of_the_empty_input",
+]
+note = "Two halves. The verification half has landed: the `VerifierBackend` trait (M1-10) is the localised-swap structure, and `InProgramBackend` (M1-11) implements it with the same k256 and tiny-keccak M0 measured. The guest patches in the *mixed* accelerator configuration -- recovery accelerated, keccak in software -- which is M0's recommendation rather than a default. The aggregator half is M2."
+
+[[row]]
+id = "F2"
+status = "partial"
+tasks = ["M1-01", "M1-10", "M1-19", "M1-22", "M3-01"]
+implemented_in = ["verifier-core", "pull-lib"]
+verified_by = [
+  "test:exactly_the_threshold_verifies_and_reports_how_many_signers_met_it",
+  "test:more_signers_than_the_threshold_all_count_toward_the_median",
+  "test:one_unusable_value_rejects_even_when_the_other_signers_reach_threshold",
+  "test:one_stranger_rejects_even_when_the_authorised_signers_reach_threshold",
+  "test:a_package_at_the_far_edge_of_the_window_is_still_current",
+  "test:an_accepted_price_carries_both_scales_so_a_caller_need_not_convert",
+  "test:no_two_failure_modes_answer_with_the_same_variant",
+]
+note = "Structural: `verifier-core` depends on neither mode, and both modes depend on it. M3-02 asserts the pull side carries no aggregator dependency. M1-22 supplies the behavioural half: `verifier-core/src/accept_and_reject.rs` reads the accept and reject contract off the crate's public API, which is the surface both modes call. It is tested once rather than once per mode because `verify_feed` takes no argument naming its caller, so there is no per-mode behaviour to reach -- ADR 23 records that, and what the two callers add on top is M2-02 and M3-01, with M3-04 asserting they agree."
+
+[[row]]
+id = "F3"
+status = "verified"
+tasks = ["M1-13", "M1-23"]
+implemented_in = ["verifier-core"]
+verified_by = [
+  "test:three_of_three_signers_reporting_the_same_price_verifies",
+  "test:the_threshold_boundary_accepts_at_m_and_rejects_at_m_minus_one",
+  "test:one_signer_cannot_reach_the_threshold_alone_by_repeating_the_feed",
+  "test:a_single_package_carrying_the_requested_feed_twice_still_counts_once",
+  "test:a_copy_of_a_package_already_in_the_payload_cannot_deny_the_feed",
+  "test:copies_of_a_package_from_another_round_refuse_the_payload",
+  "test:one_package_cannot_crowd_the_other_signers_out",
+  "test:a_package_from_another_round_refuses_the_payload",
+  "test:a_payload_carrying_two_whole_rounds_is_refused",
+  "test:an_older_package_from_a_signer_that_already_reported_refuses_the_payload",
+  "test:a_package_duplicated_by_anyone_does_not_deny_the_feed_to_the_rest",
+  "test:a_package_replayed_from_an_older_round_refuses_the_payload",
+  "test:a_threshold_of_one_is_met_by_one_signer",
+  "test:a_threshold_equal_to_the_signer_count_needs_every_one_of_them",
+  "test:one_package_past_the_ceiling_is_refused_rather_than_answered",
+  "test:packages_for_other_feeds_are_free_and_do_not_count_against_the_ceiling",
+]
+note = "`verify_feed` enforces M-of-N over distinct authorised signers: one slot per configured signer, so a signer counts once however many packages it sends (M1-13). A second package from a slotted signer is skipped rather than fatal -- ADR 24 records why, and the tests cover both ways an attacker can produce a duplicate without a key. Which of a signer's packages fills its slot is settled by ADR 27 rather than by ADR 24's freshest rule: the price comes from one round, chosen as the timestamp the most distinct configured signers agree on, and one package files one report however many times it repeats the feed. M1-23 pins the boundaries where an off-by-one would live -- M, M-1, one, and unanimity. ADR 15 records the contract's strict package checks before the threshold is evaluated."
+
+[[row]]
+id = "F4"
+status = "partial"
+tasks = ["M1-08", "M1-12", "M1-14", "M1-15", "M1-16", "M1-17", "M1-21"]
+implemented_in = ["verifier-core", "kanon-clock"]
+verified_by = [
+  "test:the_signed_span_covers_the_points_and_the_three_trailing_fields",
+  "test:truncation_at_every_length_is_rejected_rather_than_panicking",
+  "test:trailing_bytes_before_the_packages_are_rejected",
+  "test:a_feed_registered_against_another_pair_is_refused",
+  "test:a_pair_matching_only_on_the_base_is_still_a_mismatch",
+  "test:a_negative_value_rejects_even_when_quorum_is_present",
+  "test:every_repeated_point_for_the_requested_feed_is_validated",
+  "test:one_stale_package_rejects_even_when_quorum_is_present",
+  "test:one_future_package_rejects_even_when_quorum_is_present",
+  "test:signers_that_all_reported_something_unusable_are_named_as_the_fault",
+  "test:the_staleness_boundary_admits_a_package_exactly_max_age_old",
+  "test:a_package_dated_beyond_clock_skew_is_a_different_failure_from_a_stale_one",
+  "test:a_replayed_payload_is_refused_however_well_signed_it_is",
+  "test:any_other_account_is_refused_before_its_contents_are_read",
+  "test:every_published_signature_recovers_to_the_signer_redstone_named",
+  "test:an_envelope_redstone_published_decodes_and_every_package_in_it_recovers",
+  "test:a_published_payload_verifies_end_to_end",
+  "test:a_wrong_signed_span_recovers_to_nobody",
+]
+note = "Four rejection classes in one requirement. The malformed-wire-format one has landed: M1-12 decodes zero-copy, bounds-checks every length, and is tested against truncation at every offset, since a panic in a guest aborts the transaction rather than rejecting the package. Conformance against published vectors is M1-21. Asset identity has landed (M1-16), and it is a comparison between the caller's expectation and the registration rather than a property of the payload, because a RedStone package names a feed and nothing else -- ADR 16 records what that check does and does not establish. Value sanity has landed too (M1-17): zero, negative and unrepresentable values reject the payload immediately, even when other packages meet the threshold. Staleness has landed as well (M1-14, M1-15): every package for the requested feed must be inside the two-sided window, read from LEZ's pinned every-block clock account. ADR 15 records the strict package-level contract. M1-21 conforms the decoder against payloads captured from RedStone's gateway, using their own signatures as the oracle: a signature recovers to the address they published only if the signed span matches theirs byte for byte, and a negative control shows seven plausible wrong spans recovering nobody. The envelope is covered separately, because it carries no signature and the gateway serves per-signer JSON rather than a finished payload: `sample-data/payload.hex` from the Rust SDK is vendored, and `an_envelope_redstone_published_decodes_and_every_package_in_it_recovers` asserts it decodes and that all fifteen packages recover. The EVM connector is BUSL and is not read. ADR 19 records why the two sources answer different questions."
+
+[[row]]
+id = "F5"
+status = "partial"
+tasks = ["M1-09", "M1-16", "M1-17", "M1-20", "M1-26", "M2-02"]
+implemented_in = ["aggregator-program/src/publish.rs", "verifier-core", "kanon-idl"]
+verified_by = [
+  "test:the_verified_price_carries_both_scales",
+  "test:an_agreed_price_too_large_for_the_account_is_reported_not_wrapped",
+  "test:a_fresh_account_takes_every_field_from_the_feed_and_its_configuration",
+  "test:the_source_id_is_the_bytes_a_consumer_can_write_down",
+  "test:rebuilding_the_adaptor_does_not_change_what_it_writes",
+  "test:a_newer_observation_moves_the_price_and_the_timestamp_and_nothing_else",
+  "test:an_account_for_another_pair_is_refused_rather_than_repointed",
+  "test:an_account_another_source_populated_is_not_this_adaptors_to_write",
+  "test:an_older_observation_inside_the_window_cannot_move_the_price_backwards",
+  "test:the_same_observation_twice_is_not_an_update",
+  "test:the_timestamp_is_the_round_every_counted_package_shares",
+  "test:the_vendored_idl_declares_the_fields_we_expect",
+  "test:field_order_is_part_of_the_standard",
+  "test:the_reexported_type_is_constructible_with_the_documented_shape",
+  "test:the_account_encodes_to_the_bytes_a_foreign_decoder_expects",
+  "test:the_encoded_length_is_what_the_idl_field_types_add_up_to",
+  "test:a_round_trip_through_the_on_chain_container_recovers_every_field",
+  "test:a_seventh_field_would_be_a_break_rather_than_something_consumers_ignore",
+]
+note = "The account is RFP-019's, re-exported rather than forked (M1-09), and `publish` decides what goes in its six fields. `source_id` is the constant F5 names: `RedStone`, ASCII right-padded, so a consumer checking where a price came from needs nothing from this repository to construct it. ADR 22 records the decision, including why the writer's own identity was the wrong answer: `source_id` is one of the three identifiers `publish` refuses to overwrite, so an identifier that moved with the program id would leave a rebuilt adaptor unable to update the accounts it created. The pair comes from the registration claim (M1-16), the price is the median on the account's Q64.64 scale (M1-17), the timestamp is the observation's and not the write's, and the confidence interval is zero because RedStone publishes none. M1-26 conforms the layout in both directions. What remains is M2-02: the instruction that calls `publish` inside a real transaction."
+
+[[row]]
+id = "F6"
+status = "planned"
+tasks = ["M1-07", "M2-06", "M2-07", "M2-08", "M2-09", "M2-10"]
+implemented_in = ["aggregator-program"]
+verified_by = []
+note = "Gated on RFP-001 having merged an admin-authority interface; M1-07 establishes what to build against, M2-06 is the shim if nothing has."
+
+[[row]]
+id = "F7"
+status = "planned"
+tasks = ["M2-00", "M2-11", "M2-12"]
+implemented_in = ["aggregator-program"]
+verified_by = []
+note = "M2-00 first confirms RedStone publishes XMR/USD and ZEC/USD on the chosen data service and captures the authorised signer sets; the two privacy-asset feeds are the ones that cannot be assumed."
+
+[[row]]
+id = "F8"
+status = "planned"
+tasks = ["M4-01", "M4-02", "M4-03", "M4-04", "M4-05", "M4-06", "M4-07", "M4-08"]
+implemented_in = ["kanon-relayer"]
+verified_by = []
+note = "Equilibrium operates this under the SLA, so its logging, wallet monitoring and shutdown paths are deliverables rather than conveniences."
+
+[[row]]
+id = "F9"
+status = "planned"
+tasks = ["M3-01", "M3-02", "M3-03", "M3-04"]
+implemented_in = ["pull-lib"]
+verified_by = []
+note = "\"Must not depend on the aggregator's price account\" is asserted mechanically by M3-02, not left to review."
+
+# ---------------------------------------------------------------------- Usability
+
+[[row]]
+id = "U1"
+status = "planned"
+tasks = ["M4-11"]
+implemented_in = ["kanon-sdk"]
+verified_by = []
+note = "The mode-switch ergonomics are the testable part: the same payload handling has to serve both paths."
+
+[[row]]
+id = "U2"
+status = "planned"
+tasks = ["M4-18", "M4-19", "M4-20", "M4-21"]
+implemented_in = ["kanon-app"]
+verified_by = []
+note = "Built from the M4-18 designs rather than ahead of them; M4-20 is the pull dry-run panel, M4-21 the Basecamp load and flow tests."
+
+[[row]]
+id = "U3"
+status = "planned"
+tasks = ["M4-13", "M4-14", "M4-15", "M4-16"]
+implemented_in = []
+verified_by = []
+note = "The dry-run has to report the same typed error codes the on-chain pull library returns, which is what ties M4-16 to M3-04."
+
+[[row]]
+id = "U4"
+status = "planned"
+tasks = ["M2-01", "M4-12"]
+implemented_in = ["kanon-idl"]
+verified_by = []
+note = "Re-exported, not forked: the RFP-019 standard's definition stays RFP-019's."
+
+[[row]]
+id = "U5"
+status = "planned"
+tasks = ["M4-17"]
+implemented_in = []
+verified_by = []
+note = "A change to SPEL, exercised from a fresh scaffold program so the hook is shown to work outside this repository."
+
+[[row]]
+id = "U6"
+status = "partial"
+tasks = ["M1-15", "M1-16", "M1-17", "M1-18", "M1-22", "M3-04"]
+implemented_in = ["verifier-core", "pull-lib"]
+verified_by = [
+  "test:a_decode_failure_and_a_signature_failure_stay_distinguishable",
+  "test:the_threshold_failure_carries_what_was_reached_and_what_was_needed",
+  "test:a_feed_registered_against_another_pair_is_refused",
+  "test:signers_that_all_reported_something_unusable_are_named_as_the_fault",
+  "test:one_bad_value_is_reported_before_threshold_is_evaluated",
+  "test:the_first_bad_package_in_the_wire_walk_is_reported",
+  "test:an_exponent_the_conversion_cannot_divide_by_is_a_configuration_error",
+  "test:a_missing_clock_is_not_a_stale_package",
+  "test:a_stale_package_and_a_future_one_stay_distinguishable",
+  "test:a_signers_stale_package_about_another_feed_does_not_make_this_one_stale",
+  "test:a_signers_stale_package_about_this_feed_still_makes_it_stale",
+  "test:values_spliced_from_three_rounds_do_not_become_a_price",
+  "test:values_from_different_rounds_are_not_made_into_one_price",
+  "test:the_timestamp_is_the_round_every_counted_package_shares",
+  "test:more_packages_for_this_feed_than_verification_will_pay_for_is_refused",
+  "test:package_age_is_checked_before_its_value",
+  "test:a_clock_that_cannot_be_read_refuses_rather_than_guesses",
+  "test:no_two_failure_modes_answer_with_the_same_variant",
+  "test:a_malformed_payload_is_named_as_malformed_and_carries_the_decoder_reason",
+  "test:an_envelope_that_is_not_redstones_is_refused_before_any_verification",
+  "test:too_few_signers_reports_how_many_arrived_against_how_many_were_needed",
+  "test:signers_nobody_configured_are_named_as_the_fault_rather_than_the_count",
+  "test:a_pair_that_is_not_the_callers_is_refused_before_a_single_recovery",
+  "test:a_payload_older_than_the_window_is_stale_rather_than_short_of_signers",
+  "test:a_payload_dated_ahead_of_the_clock_is_its_own_failure_not_a_stale_one",
+  "test:zero_and_negative_prices_are_rejected_directly",
+  "test:one_signer_supplying_the_feed_twice_counts_once_and_is_short_of_the_threshold",
+  "test:a_price_the_accounts_scale_cannot_hold_is_reported_not_wrapped",
+  "test:a_clock_that_cannot_be_read_fails_the_verification_rather_than_defaulting",
+  "test:an_unusable_configuration_is_refused_before_a_payload_is_ever_seen",
+  "test:a_signature_that_recovers_to_nobody_is_reported_directly",
+]
+note = "One error enum in `verifier-core` is what makes push and pull report the same failure the same way; M3-04 asserts the parity. M1-18 defines the payload and configuration failures, while later hardening added `TooManyPackages` and `TimestampMismatch`. ADR 15 requires strict package rejection: `InvalidSignature`, `UnauthorisedSigner`, `StalePackage`, `FuturePackage`, `ValueOutOfRange` and `TimestampMismatch` return immediately for any package carrying the requested feed, before threshold evaluation. Every public variant has a producer. Duplicate packages cannot fill another signer slot and ADR 24 keeps them non-fatal, so they are not represented as an unreachable error. M1-22 provides the contract-shaped suite and asserts that no two causes collapse onto the same variant."
+
+[[row]]
+id = "U7"
+status = "planned"
+tasks = ["M3-05", "M3-06", "M3-07"]
+implemented_in = ["reference-consumers/aggregator-read", "reference-consumers/pull"]
+verified_by = []
+note = "Refuse-on-unavailable is the pattern being demonstrated: a consumer must never fall back to an unsafe default."
+
+# -------------------------------------------------------------------- Reliability
+
+[[row]]
+id = "R1"
+status = "planned"
+tasks = ["M2-04"]
+implemented_in = ["aggregator-program"]
+verified_by = []
+note = ""
+
+[[row]]
+id = "R2"
+status = "planned"
+tasks = ["M2-07"]
+implemented_in = ["aggregator-program"]
+verified_by = []
+note = "Atomicity is the assertion: a partial registration must leave existing feeds untouched."
+
+[[row]]
+id = "R3"
+status = "planned"
+tasks = ["M2-05"]
+implemented_in = ["aggregator-program"]
+verified_by = []
+note = ""
+
+[[row]]
+id = "R4"
+status = "planned"
+tasks = ["M4-05", "M4-08"]
+implemented_in = ["kanon-relayer"]
+verified_by = []
+note = "Fault injection and restart, not just a retry loop: the requirement is about the state the daemon is left in."
+
+# -------------------------------------------------------------------- Performance
+
+[[row]]
+id = "P1"
+status = "partial"
+tasks = ["M2-02", "M2-19", "M3-06"]
+implemented_in = ["m0/lez-probe"]
+verified_by = [
+  "test:a_3_of_n_update_leaves_ample_budget_headroom",
+  "test:the_most_a_payload_can_cost_still_fits_in_one_transaction",
+  "test:the_largest_payload_the_decoder_accepts_is_read_and_verified_inside_the_budget",
+  "test:a_payload_past_the_size_limit_is_refused_before_it_is_parsed",
+  "doc:m0/M0-report.pdf",
+]
+note = "M0 measured a 3-of-N update at 1,906,737 cycles against LEZ's 32M per-transaction budget, 5.68%, and pinned it with a guardrail test. That is the typical case; the ceiling is the other half, because the package count sits in the payload's envelope and a hash plus recovery costs about 602,700 cycles per package. Unbounded, 56 of them overran the budget and the transaction aborted instead of publishing. ADR 25 bounds it and `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts the bound holds. That covers verification and not the read: LEZ reads a program's whole instruction data before the program's first instruction, at about 113 cycles a byte, so a 127,814-byte payload overran the budget on the read alone with verification still correctly bounded. ADR 26 sets `MAX_PAYLOAD_BYTES` at 32 KiB and the largest payload the decoder accepts reads and verifies in 23,042,390 cycles, 69% of the budget. Between the two this row is now a statement about every payload rather than about the captured one. Bounding `InstructionData` itself is LEZ's, not this adaptor's -- no program can refuse bytes it has already been charged for -- so the limit is also a number for the relayer and the aggregator to enforce before submitting. What is still open is the shipping path in one real transaction, per mode: M2-02 and M2-19 for push, M3-06 for pull."
+
+[[row]]
+id = "P2"
+status = "partial"
+tasks = ["M1-25", "M2-18", "M3-08", "M3-10", "M5-07"]
+implemented_in = ["m0/cost-baseline", "m0/lez-probe", "methods/tests/cost.rs", "COSTS.md"]
+verified_by = [
+  "test:recovery_cycles_are_unchanged",
+  "test:keccak_cycles_per_hash_are_unchanged",
+  "test:full_update_cycles_are_unchanged",
+  "test:accelerated_configuration_cycles_are_unchanged",
+  "test:proof_sizes_distinguish_the_configurations",
+  "test:instruction_handling_cost_is_unchanged",
+  "test:per_signer_cost_is_linear",
+  "test:per_component_cycles_are_unchanged",
+  "test:the_dominant_cost_is_linear_in_the_signer_count",
+  "test:recovery_is_still_the_accelerated_implementation",
+  "test:the_keccak_accelerator_is_still_declined",
+  "ci:guardrails",
+  "ci:product-costs",
+  "doc:m0/M0-report.pdf",
+  "doc:COSTS.md",
+]
+note = "\"Reproducible from the test suite\" is satisfied the strict way: every published figure is asserted by exact equality and runs in CI on x86_64. M0 measured the two primitives in isolation, and its per-component split comes from a subtraction rather than a residual: `lez_plumbing` is a third guest identical to `lez_verify` with the cryptography removed, so the framework's per-package instruction handling is taken out directly and `instruction_handling_cost_is_unchanged` pins it. Without that separation, drift in the framework's cost is silently reattributed to recovery. M1-25 does the same for the shipped path: `COSTS.md` breaks a real update into decode, keccak256, recovery, the signer-set check and a named remainder, by differencing prefixes of `verify_feed` in the product guest over payloads RedStone published. Recovery is 95.85% of a three-signer update and nothing amortises, so a wider threshold is linearly priced. The table is printed by the code that asserts it, so a published figure and an asserted figure cannot drift apart, and the two rows for keccak256 and recovery are what finally give ADR 6 its CI guards in cycles alone. The cross-architecture finding (M0-11) stands in the report, measured across three machines; ARM64 is not a delivery target and is no longer re-checked on every push. Still to come are the push write (M2-18), the pull per-read (M3-08) and byte accounting (M3-10)."
+
+[[row]]
+id = "P3"
+status = "partial"
+tasks = ["M3-09", "M5-07"]
+implemented_in = ["m0/cost-baseline"]
+verified_by = ["doc:m0/M0-report.pdf"]
+note = "M0 delivered the first delta sketch against per-chain reference points. M3-09 splits it per mode, which is the form the requirement asks for, because a per-read pull path and a per-update push path amortise a precompile differently."
+
+# ------------------------------------------------------------------ Supportability
+
+[[row]]
+id = "S1"
+status = "planned"
+tasks = ["M2-11", "M5-01", "M5-02"]
+implemented_in = []
+verified_by = []
+note = "Devnet in M2 with the day-one feeds, current testnet in M5."
+
+[[row]]
+id = "S2"
+status = "partial"
+tasks = ["M1-03", "M1-04a", "M1-05", "M2-19", "M3-07"]
+implemented_in = ["scripts/lez-sequencer.sh"]
+verified_by = ["ci:sequencer"]
+note = "The harness is standing: CI boots a Bedrock node and a sequencer built from the same LEZ revision `lee_core` resolves to, and asserts it serves. What is still missing is adaptor traffic across it, which arrives with M2-19 and M3-07. M1-03 is the other half of the requirement, the workflow that has to be green on the default branch."
+
+[[row]]
+id = "S3"
+status = "partial"
+tasks = ["M1-06", "M1-21", "M1-22", "M1-23", "M1-24", "M2-13", "M2-14", "M2-15", "M2-16", "M5-06"]
+implemented_in = ["traceability", "verifier-core", "verifier-core/src/properties.rs"]
+verified_by = [
+  "ci:traceability",
+  "test:every_published_signature_recovers_to_the_signer_redstone_named",
+  "test:an_envelope_redstone_published_decodes_and_every_package_in_it_recovers",
+  "test:a_garbage_signature_rejects_even_when_quorum_is_present",
+  "test:a_signer_set_that_is_not_the_published_one_reaches_no_threshold",
+  "test:lowering_the_threshold_never_changes_the_price_and_never_loses_it",
+  "test:a_payload_decodes_back_to_what_was_written_into_it",
+  "test:the_scale_conversion_is_a_shift_and_a_truncating_divide",
+  "test:the_representable_range_is_exactly_what_q64_64_can_hold",
+  "test:the_median_does_not_depend_on_the_order_the_reports_arrived_in",
+  "test:a_corrupted_payload_is_answered_rather_than_panicked_on",
+]
+note = "This matrix is the requirement's own instrument. It is `partial` by construction until M5-06 leaves every row verified; the checker is what stops that from being asserted without evidence. S3 asks for valid-signature acceptance and invalid-signature rejection specifically: M1-21 verifies RedStone's published signatures over their published packages, while ADR 15 adds a payload with an unrecoverable signature alongside an otherwise valid quorum and requires `InvalidSignature`. M1-24 adds the coverage an example cannot give: the threshold, the framing and the scale conversion are claims about every input, and `verifier-core/src/properties.rs` generates them (ADR 21). The last of those tests is the one that matters most for a guest, since ADR 4 makes a panic on a malformed payload an aborted transaction rather than a rejection."
+
+[[row]]
+id = "S4"
+status = "planned"
+tasks = ["M5-03"]
+implemented_in = ["README.md"]
+verified_by = []
+note = "The current README documents the M0 measurement harnesses and how to reproduce their figures. The end-to-end operator and integrator README the requirement describes is M5-03."
+
+[[row]]
+id = "S5"
+status = "planned"
+tasks = ["M5-04"]
+implemented_in = []
+verified_by = []
+note = "Submitted through the logos-docs doc-packet template. The push-versus-pull guide has to be grounded in the P2 and P3 numbers, so it follows M5-07."
+
+[[row]]
+id = "S6"
+status = "planned"
+tasks = ["M5-05"]
+implemented_in = []
+verified_by = []
+note = ""
+
+[[row]]
+id = "S7"
+status = "planned"
+tasks = ["M4-18"]
+implemented_in = []
+verified_by = []
+note = "A deliverable in its own right, and a prerequisite for U2 rather than a by-product of it."
+
+# ---------------------------------------------------------------- Adaptor Security
+
+[[row]]
+id = "SEC1"
+status = "partial"
+tasks = ["M1-13", "M1-22", "M2-13", "M3-03"]
+implemented_in = ["verifier-core"]
+verified_by = [
+  "test:an_unknown_signer_rejects_the_payload_even_when_quorum_is_present",
+  "test:an_unauthorised_signer_is_reported_directly",
+]
+note = "Both modes share one membership check in `verifier-core`. Every package carrying the requested feed is recovered and its signer must be in the configured set; the first unknown signer returns `UnauthorisedSigner` even when authorised packages already meet quorum. Packages for other feeds remain irrelevant and are skipped before recovery. ADR 15 records why this follows SEC1's literal contract and why a malicious submitter causing its own transaction to fail is not a feed-wide denial of service. Push and pull integration evidence remains M2-13 and M3-03, so the row stays partial."
+
+[[row]]
+id = "SEC2"
+status = "planned"
+tasks = ["M1-07", "M2-08", "M2-14", "M3-03"]
+implemented_in = ["aggregator-program", "pull-lib"]
+verified_by = []
+note = "Two distinct obligations. Push: only the admin authority may update the stored set, and the update path itself is tested (M2-14). Pull: the set is the consumer's, and the library must never accept one sourced from the payload (M3-03)."
+
+[[row]]
+id = "SEC3"
+status = "partial"
+tasks = ["M1-14", "M1-15", "M2-17"]
+implemented_in = ["kanon-clock", "verifier-core"]
+verified_by = [
+  "test:any_other_account_is_refused_before_its_contents_are_read",
+  "test:a_replayed_payload_is_refused_however_well_signed_it_is",
+  "test:a_clock_that_cannot_be_read_refuses_rather_than_guesses",
+  "test:a_max_age_wider_than_redstones_own_default_is_rejected",
+  "test:the_ceiling_matches_redstones_own_default",
+]
+note = "M2-17 is the document: the production `maxAge` minimum and the manipulation analysis. The mechanism it will describe exists now, and it now has an enforced ceiling. `MAX_MAX_AGE_MS` is fifteen minutes, the default RedStone's own validator falls back to, so no feed may be looser than the upstream fallback. It is enforced rather than published because a `maxAge` past it degrades the check smoothly and never visibly breaks: at a year the window admits every real package without saturating at all, and only at the extreme does `freshness` saturate outright (ADR 29). Replay is refused because the clock is the pinned every-block account and no caller may substitute another, and a clock that cannot be read refuses rather than guesses, since verifying without one accepts a package of any age. RedStone's own fifteen minutes is the reference point the `maxAge` recommendation starts from. This is also the one place pull's weaker position has to be stated plainly: a pull consumer keeps its own signer set fresh, because it bypasses the centrally administered one."
+
+# --------------------------------------------------------------------- Open source
+
+[[row]]
+id = "OS1"
+status = "partial"
+tasks = ["M1-02", "M1-04"]
+implemented_in = ["LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "deny.toml"]
+verified_by = [
+  "ci:licenses",
+  "doc:LICENSE-MIT",
+  "doc:LICENSE-APACHE",
+  "doc:NOTICE",
+]
+note = "The dual licence and the mechanical gate are done: `cargo deny check licenses` runs on every pull request over the whole graph, transitive dependencies included, and BUSL-1.1 is denied outright, which is also what enforces the RedStone boundary. What is not done is the requirement's second half. It asks for **no copyleft dependency, transitive ones included**, and the gate currently passes because copyleft is admitted by named exception rather than absent. Nothing copyleft is linked into a shipped artefact, which is the reassuring half and worth stating precisely rather than generously: the LGPL-3.0 family (`malachite` and its four siblings, plus `downloader`) appears in `m0/Cargo.lock` only, reached through risc0 proving, and is absent from the product lockfile entirely; `option-ext` is MPL-2.0 and reaches the product graph as a *build* dependency only, through `risc0-build` -> `dirs` -> `dirs-sys`, so it runs during a build and links into nothing. What remains is that the exceptions exist, so passing CI proves the gate is enforced rather than that the requirement is met, and a `verified` row would claim the latter on the strength of the former. It stays `partial` until Logos rules on whether build-time and measurement-only copyleft satisfies the requirement's *transitive ones included*. See *Open: the LGPL-3.0 dependency in LEZ's host graph* in `m0/versions.md`."
+
+# ------------------------------------------------------------------------ Soft
+
+[[row]]
+id = "SOFT1"
+status = "planned"
+tasks = []
+implemented_in = []
+verified_by = []
+note = "Stretch, once the hard set is green. `verifier-core` is structured to allow batching; whether it is justified depends on the M0 cost result and on whether LEZ prices execution per cycle."
+
+[[row]]
+id = "SOFT2"
+status = "planned"
+tasks = []
+implemented_in = []
+verified_by = []
+note = "Stretch, and gated on RFP-019's TWAP program existing to test against."

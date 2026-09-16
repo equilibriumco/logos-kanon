@@ -1,0 +1,258 @@
+# The RFP-020 requirement inventory.
+#
+# One entry per numbered requirement in RFP-020's *Scope of Work*, in the RFP's
+# own order, plus `OS1` for the *Open Source Requirement* section, which is a
+# hard obligation the RFP states outside the numbered lists.
+#
+# `title` is a one-line paraphrase for reading the matrix, not a substitute for
+# the requirement: RFP-020 is the authority and the wording there governs. What
+# this file exists to do is make the inventory countable, so a requirement
+# cannot go missing from `matrix.toml` without CI noticing.
+#
+# A paraphrase may shorten a requirement and may not drop a clause that
+# constrains the implementation. F5's "source identifier" once stood here for
+# "source identifier (a constant identifying RedStone)", and the design question
+# the parenthetical answers was then decided the other way, from this file. No
+# test can catch that -- nothing here can compare itself against a document it
+# does not have -- so the rule is the only defence: if a clause narrows what may
+# be built, quote it. `tests/matrix.rs`
+# asserts the count per category against the RFP's taxonomy, so adding or
+# removing an entry here is a deliberate act that fails until the expected
+# counts are changed with it.
+#
+# Not tracked here: the Servicing obligations. They are contractual rather than
+# code, they have no test to name, and they live in the *Servicing and SLA*
+# section of the proposal. `TRACEABILITY.md` states this explicitly, so their
+# absence reads as a boundary rather than an omission.
+
+# ------------------------------------------------------------------ Functionality
+
+[[requirement]]
+id = "F1"
+category = "Functionality"
+kind = "hard"
+title = "Public-mode push aggregator accepting signed RedStone data packages, with the signature path structured so swapping in a future host primitive (precompile or syscall) stays a localised change"
+
+[[requirement]]
+id = "F2"
+category = "Functionality"
+kind = "hard"
+title = "Verification packaged as a library callable both from the aggregator and from third-party consumer programs, so one audited implementation backs both modes"
+
+[[requirement]]
+id = "F3"
+category = "Functionality"
+kind = "hard"
+title = "M-of-N signer threshold per feed, configurable at registration, default 3-of-N; reject any package that does not meet it"
+
+[[requirement]]
+id = "F4"
+category = "Functionality"
+kind = "hard"
+title = "Decode the RedStone data-package format (asset identifier, value, timestamp, signer set) and reject any package whose timestamp is older than a configurable `maxAge`, whose value is zero, negative or otherwise invalid, or whose asset identifier does not match the registered feed"
+
+[[requirement]]
+id = "F5"
+category = "Functionality"
+kind = "hard"
+title = "Publish the verified price into a canonical RFP-019 price account, populating base and quote asset, price, timestamp, source identifier (a constant identifying RedStone) and a zero confidence interval (RedStone publishes none)"
+
+[[requirement]]
+id = "F6"
+category = "Functionality"
+kind = "hard"
+title = "Admin authority (RFP-001 via SPEL) can register feeds, update a feed's signer set on roster changes, and deregister feeds"
+
+[[requirement]]
+id = "F7"
+category = "Functionality"
+kind = "hard"
+title = "BTC/USD, ETH/USD, SOL/USD, XMR/USD and ZEC/USD registered on LEZ devnet/testnet as part of the deliverable"
+
+[[requirement]]
+id = "F8"
+category = "Functionality"
+kind = "hard"
+title = "Relayer as a Logos module with a Logos Core headless daemon: configurable data service and feeds, heartbeat and deviation triggers, parallel gateways with first-success, retry and back-off, structured logging, wallet-balance monitoring, clean shutdown"
+
+[[requirement]]
+id = "F9"
+category = "Functionality"
+kind = "hard"
+title = "Public-mode pull verification library returning a verified price or a typed error, with no dependency on the aggregator's price account"
+
+# ---------------------------------------------------------------------- Usability
+
+[[requirement]]
+id = "U1"
+category = "Usability"
+kind = "hard"
+title = "SDK for building Logos modules in both modes, exposing helpers ergonomic enough that switching modes leaves payload handling unchanged"
+
+[[requirement]]
+id = "U2"
+category = "Usability"
+kind = "hard"
+title = "Basecamp mini-app dashboard: live prices, signer set, threshold, latest timestamp and staleness per feed, plus a public-mode pull dry-run panel"
+
+[[requirement]]
+id = "U3"
+category = "Usability"
+kind = "hard"
+title = "CLI covering both modes: submit, query the canonical account, register and deregister feeds, update signer sets, and an off-chain pull dry-run reporting the same typed errors as the on-chain library"
+
+[[requirement]]
+id = "U4"
+category = "Usability"
+kind = "hard"
+title = "IDL for the adaptor program and the RFP-019 price-account standard, re-exported rather than forked, via SPEL"
+
+[[requirement]]
+id = "U5"
+category = "Usability"
+kind = "hard"
+title = "SPEL enhanced so a new program can hook in pull and push feed modes easily"
+
+[[requirement]]
+id = "U6"
+category = "Usability"
+kind = "hard"
+title = "Clear, actionable errors for every failure mode: stale package, threshold not met, unauthorised signer, asset mismatch, malformed package, invalid signature, zero or negative price"
+
+[[requirement]]
+id = "U7"
+category = "Usability"
+kind = "hard"
+title = "Two reference consumer programs, one per mode, each showing asset-pair verification, staleness handling, typed-error handling and refuse-on-unavailable"
+
+# -------------------------------------------------------------------- Reliability
+
+[[requirement]]
+id = "R1"
+category = "Reliability"
+kind = "hard"
+title = "A price read is read-only and never modifies adaptor state"
+
+[[requirement]]
+id = "R2"
+category = "Reliability"
+kind = "hard"
+title = "Feed registration is atomic: partial failure leaves existing registrations intact"
+
+[[requirement]]
+id = "R3"
+category = "Reliability"
+kind = "hard"
+title = "An upstream error on one feed does not affect push mode for other feeds handled by the same node"
+
+[[requirement]]
+id = "R4"
+category = "Reliability"
+kind = "hard"
+title = "Temporary upstream errors leave the daemon recoverable, able to push again once feeds return"
+
+# -------------------------------------------------------------------- Performance
+
+[[requirement]]
+id = "P1"
+category = "Performance"
+kind = "hard"
+title = "A single 3-of-N verify-and-publish completes within one LEZ public transaction at the budget in force at delivery, in both modes"
+
+[[requirement]]
+id = "P2"
+category = "Performance"
+kind = "hard"
+title = "Cost measurement as a primary deliverable: per-signer recovery, keccak256, decode, membership check and (push) account write and registration, per mode, reproducible from the test suite"
+
+[[requirement]]
+id = "P3"
+category = "Performance"
+kind = "hard"
+title = "Documented cost delta between the in-program path and a hypothetical native ECDSA and keccak256 precompile, reported separately per mode"
+
+# ------------------------------------------------------------------ Supportability
+
+[[requirement]]
+id = "S1"
+category = "Supportability"
+kind = "hard"
+title = "The adaptor program is deployed and tested on LEZ devnet/testnet"
+
+[[requirement]]
+id = "S2"
+category = "Supportability"
+kind = "hard"
+title = "End-to-end integration tests run against a standalone LEZ sequencer in CI, and CI is green on the default branch"
+
+[[requirement]]
+id = "S3"
+category = "Supportability"
+kind = "hard"
+title = "At least one test per hard requirement, including per mode: valid-signature acceptance, invalid-signature rejection, threshold boundaries, staleness, asset mismatch, invalid value, and (push) registration and signer-set transitions"
+
+[[requirement]]
+id = "S4"
+category = "Supportability"
+kind = "hard"
+title = "README documenting end-to-end usage for both modes: deployment, addresses, day-one feed registrations, submitting and querying, and integrating the pull library"
+
+[[requirement]]
+id = "S5"
+category = "Supportability"
+kind = "hard"
+title = "SDK doc packet covering both modes, with a Recommended Consumer Pattern section and a cost-grounded push-versus-pull decision guide"
+
+[[requirement]]
+id = "S6"
+category = "Supportability"
+kind = "hard"
+title = "CLI doc packet covering the operator and user journey"
+
+[[requirement]]
+id = "S7"
+category = "Supportability"
+kind = "hard"
+title = "Figma designs, or equivalent, for the mini-app dashboard"
+
+# ---------------------------------------------------------------- Adaptor Security
+
+[[requirement]]
+id = "SEC1"
+category = "Adaptor Security"
+kind = "hard"
+title = "Reject any package whose signer is not in the authorised signer set for the requested feed, in both modes"
+
+[[requirement]]
+id = "SEC2"
+category = "Adaptor Security"
+kind = "hard"
+title = "In push mode the stored signer set is updatable only by the admin authority, and the update path is tested; in pull mode the set comes from the consumer and never from the payload"
+
+[[requirement]]
+id = "SEC3"
+category = "Adaptor Security"
+kind = "hard"
+title = "Minimum recommended `maxAge` documented for both modes, with a manipulation analysis covering signer compromise, replay of stale packages and signer-set update delays"
+
+# --------------------------------------------------------------------- Open source
+
+[[requirement]]
+id = "OS1"
+category = "Open source"
+kind = "hard"
+title = "The deliverable is open source under a permissive licence, dual MIT and Apache-2.0, with no copyleft or BUSL dependency, transitive ones included"
+
+# ------------------------------------------------------------------------ Soft
+
+[[requirement]]
+id = "SOFT1"
+category = "Soft"
+kind = "soft"
+title = "Multi-feed batched verification, amortising calldata and recovery overhead across feeds in one instruction"
+
+[[requirement]]
+id = "SOFT2"
+category = "Soft"
+kind = "soft"
+title = "Multi-source integration test against the RFP-019 TWAP tier, one variant per RedStone mode, applying an example cross-source policy without the adaptor taking part in it"

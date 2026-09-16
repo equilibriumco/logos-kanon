@@ -1,0 +1,60 @@
+[package]
+name = "kanon-guest"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Own workspace: cross-compiles to riscv32im-risc0-zkvm-elf, so it must not be
+# resolved by the root workspace. `Cargo.lock` here is committed and CI builds
+# it with RISC0_BUILD_LOCKED=1, because the guest ELF is what every cycle
+# figure is a property of.
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] }
+verifier-core = { path = "../../verifier-core", version = "0.1.0" }
+# Not for its own sake: linking it here is what proves the canonical price
+# account, and the LEZ and SPEL crates beneath it, cross-compile to riscv32.
+# The aggregator guest needs that to be true, and this is where it fails early
+# if it stops being.
+kanon-idl = { path = "../../kanon-idl", version = "0.1.0" }
+
+# The mixed configuration: accelerate recovery, leave keccak256 in software.
+# This is the cost baseline's recommendation rather than a default, and the reasoning is
+# keeping close to the decision (`m0/cost-baseline/README.md`, *Recommendations*
+# item 1).
+#
+# The secp256k1 accelerator is a 20x cycle reduction with no side effects and is
+# not optional. The keccak accelerator is the finer call: in public mode, where
+# LEZ executes without proving and charges cycles, it is marginally *better*
+# (1,769,222 against 1,813,434, a 2.4% saving). It is declined anyway, because
+# LEZ runs the same program publicly or privately, and a consumer holding
+# private accounts has this code proven -- where the accelerator costs 26.90 s
+# of proving and 223 KB of proof per update, from a coprocessor charge that
+# needs roughly 16 hashes to amortize. It also failed
+# to fit in 6 GiB of VRAM where mixed proved successfully.
+#
+# An update runs six hashes, not the three this comment used to say: recovery
+# ends by hashing the recovered public key to an address. `COSTS.md` measures
+# that and `adr/0020` records it. Six is still under sixteen, and the decision
+# rested on the proving figures rather than on the count.
+#
+# Negligibly worse in public mode, decisively better in private. Software keccak
+# is the configuration that is never badly wrong.
+#
+# Tags, not branches, so what is built is what the baseline measured. A dropped
+# or moved tag here silently restores software recovery in a green build, which
+# is what the cost baseline's *Recommendations* item 2 asks CI to guard.
+# Both guards are `methods/tests/cost.rs`, and both are cycle counts: measuring
+# keccak256 and recovery as separate rows makes losing secp256k1 a twenty-fold
+# rise in one row and gaining keccak a seven-fold fall in another. The
+# proof-size ceiling the baseline expected for the second is unnecessary once
+# the total is broken apart (`adr/0020`).
+[patch.crates-io]
+k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.1" }
+crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.2-risczero.1" }
+sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.6-risczero.0" }
+
+[profile.release]
+lto = true
+codegen-units = 1

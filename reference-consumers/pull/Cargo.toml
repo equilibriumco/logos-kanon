@@ -1,0 +1,14 @@
+# Reference consumer B: the public-mode pull half.
+#
+# The pull tests have to exercise the library inside a representative public
+# consumer program, not only as a unit test of the verification function. Those
+# tests run against the standalone sequencer.
+[package]
+name = "reference-consumer-pull"
+description = "Reference consumer that verifies a RedStone payload inline via pull-lib"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pull-lib.workspace = true
