@@ -1,0 +1,23 @@
+# The requirement traceability matrix, and the check that keeps it true.
+#
+# A crate rather than a script because the check has to run where every other
+# check runs, `cargo test`, and fail the same way. `src/bin/render.rs`
+# regenerates `TRACEABILITY.md`; `tests/matrix.rs` is the gate.
+[package]
+name = "traceability"
+description = "RFP-020 requirement traceability matrix and its CI check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Not exact pins, unlike the crates in `[workspace.dependencies]`: nothing here
+# touches a measured figure, so an upstream patch release cannot move a number.
+# `Cargo.lock` still fixes what CI resolves.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[[bin]]
+name = "render-traceability"
+path = "src/bin/render.rs"

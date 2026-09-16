@@ -1,0 +1,69 @@
+Kanon: RedStone oracle adaptor for LEZ
+Copyright (c) 2026 Equilibrium
+
+This product is dual licensed under either of
+
+  * Apache License, Version 2.0 (LICENSE-APACHE), or
+  * MIT license (LICENSE-MIT)
+
+at your option. Unless you explicitly state otherwise, any contribution
+intentionally submitted for inclusion in this work by you shall be dual
+licensed as above, without any additional terms or conditions.
+
+RFP-020's open-source requirement is what makes the dual license a hard
+constraint rather than a preference, so it is enforced mechanically as well as
+stated here: `deny.toml` allowlists the licenses a dependency may carry and
+`cargo deny check licenses` runs in CI on every pull request, transitive
+dependencies included.
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+The following are consumed as declared dependencies. None is vendored into this
+repository; the list records what a build pulls in and under what terms.
+
+  risc0-zkvm, risc0-build (RISC Zero)              Apache-2.0
+  lee_core (logos-execution-zone, LEZ)             MIT OR Apache-2.0
+  k256, and the RustCrypto crates beneath it       Apache-2.0 OR MIT
+  tiny-keccak                                      CC0-1.0
+
+RISC Zero's accelerated forks of `k256`, `tiny-keccak`, `crypto-bigint` and
+`sha2` are consumed through `[patch.crates-io]` in the guest manifests. Each
+carries its upstream license, unchanged.
+
+--------------------------------------------------------------------------------
+RedStone
+--------------------------------------------------------------------------------
+
+RedStone's data-package wire format is decoded by first-party code in this
+repository. Two boundaries are deliberate and are the reason this section exists:
+
+  * The RedStone Rust SDK (Boost Software License 1.0) may be consumed as a
+    declared dependency where it is guest-compatible. Boost is permissive and
+    compatible with both licenses above. None of its code is vendored.
+
+  * One test fixture from it is vendored:
+    `verifier-core/tests/vectors/redstone-sdk-sample-payload.hex` is a
+    byte-for-byte copy of `sample-data/payload.hex` from
+    https://github.com/redstone-finance/rust-sdk at commit
+    50cd703eb908d249d65f322192af1757e56afc97, under the same Boost licence. It is
+    a payload RedStone serialised, which is what makes it worth having: it is the
+    only envelope in the test suite this repository did not assemble.
+
+  * RedStone's EVM connector is partly BUSL-1.1 and cannot ship in an
+    open-source deliverable. No part of it is copied, ported or read for the
+    purpose of writing the decoder here. Where byte-level conformance has to be
+    checked it is used only as a black-box oracle against published test
+    vectors.
+
+`deny.toml` denies BUSL-1.1 outright, so the second boundary fails a build
+rather than resting on reviewer discipline.
+
+--------------------------------------------------------------------------------
+Trademarks
+--------------------------------------------------------------------------------
+
+RedStone, Logos and LEZ are the marks of their respective owners. Their use
+here is descriptive: it names the systems this adaptor interoperates with and
+implies no endorsement.

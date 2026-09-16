@@ -1,0 +1,144 @@
+# Publishes a prebuilt LEZ sequencer, one image per LEZ revision.
+#
+# Why this exists
+# ---------------
+# `ci.yml`'s `sequencer` job used to build `sequencer_service` from source on
+# every run. That does not fit a standard runner: a cold build exceeded 90
+# minutes and was killed, and because a timeout cancels the job before
+# `actions/cache` saves, the cache could never warm up. Every run was cold,
+# every run timed out, and the job could not go green no matter how many times
+# it ran.
+#
+# So the sequencer is treated the way Bedrock already is: as an image to pull
+# rather than a source tree to compile. LEZ's own compose file names
+# `ghcr.io/logos-blockchain/logos-blockchain` for Bedrock; this publishes its
+# counterpart for the sequencer.
+#
+# What it contains
+# ----------------
+# The built binary plus the two things `scripts/lez-sequencer.sh` needs from the
+# LEZ checkout: the debug sequencer config, and Bedrock's compose file. It is a
+# transport format for build output, not a runnable service image -- the script
+# extracts it into the same cache layout `build` would have produced, so
+# `start`, `smoke` and `stop` cannot tell the difference.
+#
+# When to run it
+# --------------
+# After the LEZ pin moves. `ci.yml` fails with a message naming this workflow
+# when no image exists for the revision it needs, rather than silently falling
+# back to an hour-long build.
+name: LEZ sequencer image
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild and overwrite even if an image already exists
+        type: boolean
+        default: false
+  # The pin lives in a lockfile, so a pin bump is a lockfile change. This is a
+  # convenience, not the contract: the manual trigger above is.
+  push:
+    paths:
+      - 'Cargo.lock'
+      - 'methods/guest/Cargo.lock'
+      - 'scripts/lez-sequencer.sh'
+      - '.github/workflows/lez-sequencer-image.yml'
+
+concurrency:
+  # Never two builds of the same revision at once; they would race on the tag.
+  group: lez-sequencer-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/kanon-lez-sequencer
+
+jobs:
+  publish:
+    name: build and publish
+    runs-on: ubuntu-24.04
+    # The whole point of this workflow is to absorb the long build once, so the
+    # ceiling is generous. A run that hits this is a real problem rather than a
+    # tuning question.
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      # No toolchain pin: the LEZ checkout carries its own `rust-toolchain.toml`
+      # and rustup honours it inside that directory. Pinning a toolchain here
+      # would pin the wrong thing.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve the LEZ revision
+        id: lez
+        run: echo "rev=$(scripts/lez-sequencer.sh pin)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Rebuilding an existing revision produces the same bytes and costs an
+      # hour, so it is skipped unless asked for.
+      - name: Is this revision already published?
+        id: exists
+        run: |
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif docker manifest inspect "$IMAGE:${{ steps.lez.outputs.rev }}" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE:${{ steps.lez.outputs.rev }} already exists; nothing to do"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the sequencer from the pinned revision
+        if: steps.exists.outputs.skip != 'true'
+        run: scripts/lez-sequencer.sh build
+
+      # Everything `start` needs, and nothing else: the binary, the debug config
+      # it is pointed at, and Bedrock's compose file.
+      - name: Stage the payload
+        if: steps.exists.outputs.skip != 'true'
+        id: stage
+        run: |
+          set -euo pipefail
+          rev="${{ steps.lez.outputs.rev }}"
+          src="$HOME/.cache/kanon-lez/$rev"
+          out="$RUNNER_TEMP/payload"
+
+          mkdir -p "$out/target/release" "$out/lez/sequencer/service/configs" "$out/bedrock"
+          cp "$src/target/release/sequencer_service" "$out/target/release/"
+          cp -r "$src/lez/sequencer/service/configs/debug" \
+                "$out/lez/sequencer/service/configs/debug"
+          cp -r "$src/bedrock/." "$out/bedrock/"
+
+          echo "payload=$out" >> "$GITHUB_OUTPUT"
+          du -sh "$out"
+
+      - name: Build the image
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          cat > "${{ steps.stage.outputs.payload }}/Dockerfile" <<'DOCKERFILE'
+          # A transport format, not a service image. `scripts/lez-sequencer.sh
+          # fetch` copies the contents out; nothing runs in here.
+          FROM scratch
+          COPY target/release/sequencer_service /lez/target/release/sequencer_service
+          COPY lez /lez/lez
+          COPY bedrock /lez/bedrock
+          DOCKERFILE
+          docker build -t "$IMAGE:${{ steps.lez.outputs.rev }}" \
+            "${{ steps.stage.outputs.payload }}"
+
+      - name: Push
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          docker push "$IMAGE:${{ steps.lez.outputs.rev }}"
+          echo "::notice::published $IMAGE:${{ steps.lez.outputs.rev }}"

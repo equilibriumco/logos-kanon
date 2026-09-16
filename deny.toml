@@ -1,0 +1,191 @@
+# The licence gate.
+#
+# RFP-020 requires the deliverable to be open source, and it ships dual MIT and
+# Apache-2.0. That makes a copyleft or BUSL dependency a delivery failure rather
+# than a preference, and it can arrive transitively, in a crate that was never
+# selected directly. The RedStone Rust SDK is the specific hazard: it sits in a
+# monorepo alongside BUSL-1.1 packages, so "only the permissive part is a
+# dependency" is a claim that needs checking on every build.
+#
+# The list below is an allowlist. A licence that is not named here fails, which
+# is the intended behaviour: a new licence should stop a build and be reviewed,
+# not be absorbed silently. BUSL-1.1, the GPL family and SSPL are therefore
+# denied by omission, and by intent.
+#
+# The guest workspaces have their own lockfiles and are not reachable from the
+# root graph, so CI runs this config against each of them too. The accelerated
+# forks they patch in are RISC Zero's, and each keeps its upstream licence.
+
+[graph]
+# The delivery targets: a host triple and the guest one. Dependency graphs are
+# platform dependent even though cycle counts are not, so a platform-gated crate
+# would otherwise slip past the gate by appearing on only one of them.
+#
+# `aarch64-apple-darwin` was here while ARM64 was a measurement exercise. It is not a
+# delivery target, so it is gone -- and it should come back the same day ARM64
+# does, or a macOS-only dependency goes unchecked.
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "riscv32im-risc0-zkvm-elf",
+]
+all-features = true
+
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "0BSD",
+  "ISC",
+  "Zlib",
+  # Permissive data licence, carried by `webpki-roots`: the root certificate
+  # bundle the host HTTP stack trusts. Data, not code, and it imposes no terms
+  # on what links it.
+  "CDLA-Permissive-2.0",
+  # Public-domain dedications. `tiny-keccak`, which is on the measured hashing
+  # path, is CC0-1.0.
+  "CC0-1.0",
+  "Unlicense",
+  # The Boost licence: permissive, compatible with both delivery licences, and
+  # what the RedStone Rust SDK carries. Allowed so the SDK can be a declared
+  # dependency without weakening anything else.
+  "BSL-1.0",
+  # Unicode data tables, reached through `idna`/`icu` in the host HTTP stack.
+  "Unicode-3.0",
+]
+# The default is 0.8. Raised because a fuzzy match on licence text is how a
+# copyleft licence gets read as something permissive; anything below this
+# threshold should be resolved with an explicit `[[licenses.clarify]]` rather
+# than by guesswork.
+confidence-threshold = 0.93
+# Every exception is a deliberate, reviewed decision, and each one below is
+# narrowed to a single crate: an exception grants a licence to that crate alone,
+# so it cannot become a general allowance by accident.
+#
+# All of them arrive through RISC Zero's *host* crates, which LEZ's own SDK
+# depends on. None is reachable from a guest: the guest workspaces resolve
+# separately, and CI runs this config against their lockfiles too, where none of
+# these appear. No first-party code pulls any of them in, and removing them is
+# upstream's decision rather than this repository's.
+#
+# The LGPL entries are the ones that matter and they are a question for Logos,
+# recorded in `m0/versions.md`. Stated precisely, because the loose version of this
+# sentence overstates it: `malachite` (LGPL-3.0-only) arrives through
+# `lee_core` -> `risc0-zkvm` -> `risc0-circuit-rv32im` only when risc0's proving
+# feature is enabled. That is the measurement workspace's configuration, so the
+# five LGPL crates sit in `m0/Cargo.lock` and are absent from the product
+# lockfile. LEZ ships MIT-or-Apache-2.0 while carrying them. That position is inherited, not chosen, but it does need to
+# be a stated position rather than a silent one, so it is written down here and
+# raised rather than waved through.
+#
+# The licences are spelled in the deprecated bare form (`LGPL-3.0`, which also
+# matches `LGPL-3.0-only` and `LGPL-3.0-or-later`) because that is the form
+# cargo-deny's parser accepts in an exception. Modernising it to `LGPL-3.0-only`
+# fails config parsing, so it is deliberate rather than stale.
+[[licenses.exceptions]]
+# Arbitrary-precision arithmetic used by risc0's rv32im circuit, host side.
+name = "malachite"
+allow = ["LGPL-3.0"]
+
+[[licenses.exceptions]]
+name = "malachite-base"
+allow = ["LGPL-3.0"]
+
+[[licenses.exceptions]]
+name = "malachite-float"
+allow = ["LGPL-3.0"]
+
+[[licenses.exceptions]]
+name = "malachite-nz"
+allow = ["LGPL-3.0"]
+
+[[licenses.exceptions]]
+name = "malachite-q"
+allow = ["LGPL-3.0"]
+
+[[licenses.exceptions]]
+# Build-time only: risc0's recursion circuit uses it to fetch prebuilt proving
+# artefacts. It runs during a build and is not linked into anything shipped.
+name = "downloader"
+allow = ["LGPL-3.0"]
+
+[[licenses.exceptions]]
+# Build-time only, through `dirs-sys` under risc0's kernel build. MPL-2.0 is
+# file-level copyleft and reaches no first-party file, but it is allowed here for
+# one crate rather than allowed outright.
+name = "option-ext"
+allow = ["MPL-2.0"]
+
+# Three Logos crates carry no `license` field in their manifests, so cargo-deny
+# reports them as unlicensed. They are not: each repository ships a licence file,
+# and the terms are permissive. Clarified here rather than allowlisted, because a
+# clarification is a statement about a specific crate that a reviewer can check,
+# where widening the allowlist would silently cover every future unlicensed crate.
+#
+# This is worth fixing upstream rather than carrying forever: a one-line
+# `license = "..."` in each manifest would remove all three entries. Raised with
+# Logos alongside the pin questions in `m0/versions.md`.
+[[licenses.clarify]]
+# `logos-blockchain/lez-programs` ships LICENSE: "MIT License, Copyright (c) 2026
+# Logos Blockchain". Reached for the canonical price account.
+name = "twap_oracle_core"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+# `logos-co/spel` ships LICENSE-MIT and LICENSE-APACHE-v2. Reached through
+# `twap_oracle_core`, which uses the framework's `#[account_type]` macro.
+name = "spel-framework-core"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "spel-framework-macros"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[bans]
+# Duplicate versions are noisy in a graph this size and say nothing about
+# licensing, which is what this gate is for.
+multiple-versions = "allow"
+# A `*` version requirement on a published crate resolves to whatever exists at
+# build time, which is worth knowing about. Reported rather than denied, because
+# the only wildcards this repository has are stricter than a version requirement
+# rather than looser: intra-workspace path dependencies, and `lee_core` pinned by
+# git revision. Denying would mean either weakening the LEZ pin to a version
+# range or carrying a permanent exception, and `[sources]` below is what actually
+# constrains where code may come from.
+wildcards = "warn"
+allow-wildcard-paths = true
+
+[advisories]
+# Advisories are checked, and a vulnerable dependency fails CI. Not the same
+# concern as licensing, but the same reason to be mechanical about it.
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+  # LEZ itself. The revision is pinned in the manifests and recorded in
+  # `m0/versions.md`.
+  "https://github.com/logos-blockchain/logos-execution-zone",
+  # The same, spelled with the `.git` suffix: `twap_oracle_core` pins it that
+  # way and cargo treats the two URLs as distinct sources.
+  "https://github.com/logos-blockchain/logos-execution-zone.git",
+  # Logos's own LEZ programs, for the canonical price account. Pinned by
+  # revision in `[workspace.dependencies]`.
+  "https://github.com/logos-blockchain/lez-programs",
+  # SPEL, reached through `twap_oracle_core`'s use of `#[account_type]`. It
+  # becomes a direct dependency once the aggregator is a SPEL program.
+  "https://github.com/logos-co/spel.git",
+  # RISC Zero's accelerated forks, patched in by the guest manifests. Tags, not
+  # branches, so what is built is what the cost baseline measured.
+  "https://github.com/risc0/tiny-keccak",
+  "https://github.com/risc0/RustCrypto-elliptic-curves",
+  "https://github.com/risc0/RustCrypto-crypto-bigint",
+  "https://github.com/risc0/RustCrypto-hashes",
+]

@@ -1,10 +1,14 @@
-# M0-10: CI-pinned guardrails on the measured cycle counts.
+# CI-pinned guardrails on the measured cycle counts.
 #
 # The guardrail tests assert exact cycle counts, so this workflow is what makes
-# them a regression gate rather than a thing someone remembers to run. It is also
-# the standing check on M0-11's cross-architecture claim: the x86_64 and ARM64 jobs
-# assert the same constants, so if the figures ever stop being architecture
-# independent, that shows up here rather than in a footnote.
+# them a regression gate rather than a step that depends on being remembered.
+#
+# x86_64 only. The figures were established to be architecture independent
+# by measuring them on three machines across two architectures, and that finding
+# stands in the report; what is gone is the *standing* ARM64 check. It was a
+# exercise, ARM64 is not a delivery target, and a premium macOS runner on every
+# push is a real cost for re-confirming a settled result. Re-add a matrix here if
+# ARM64 ever becomes a target again.
 #
 # Proving is excluded. It takes minutes per sample and is hardware dependent, which
 # is neither cheap enough nor deterministic enough for CI; those tests are
@@ -13,9 +17,22 @@
 name: guardrails
 
 on:
+  # Push only, on every branch, and deliberately no `pull_request`.
+  #
+  # Every branch, because work here happens on branches that may have no pull
+  # request, and `workflow_dispatch` alone would not cover it: GitHub only
+  # offers manual dispatch for workflows already present on the default branch.
+  #
+  # No `pull_request`, because for a branch in this repository the push run
+  # already reports as a check on any pull request opened from it, so the second
+  # trigger would only ever duplicate the first -- two runs, two bills, and a
+  # cancelled-vs-failed race between them.
+  #
+  # The one thing this does not cover is a pull request from a fork, whose
+  # pushes do not reach this repository. If that day comes, add `pull_request`
+  # and narrow `push` to `main` in the same change: the two settings only make
+  # sense as a pair.
   push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 env:
@@ -28,42 +45,22 @@ env:
   # is what the cycle counts measure, that is the one place drift matters most.
   RISC0_BUILD_LOCKED: 1
 
+concurrency:
+  group: guardrails-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   guardrails:
-    name: cycles (${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      # Report both architectures even when one fails: which ones moved is the
-      # first thing worth knowing.
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            arch: x86_64
-          # The ARM64 half of the reproducibility claim. macOS runners are billed
-          # at a premium on private repos, so this leg is gated below to pushes to
-          # main and manual runs rather than every PR.
-          - os: macos-14
-            arch: arm64
+    name: cycles
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-
-      - name: Skip ARM64 on pull requests
-        id: gate
-        shell: bash
-        run: |
-          if [ "${{ matrix.arch }}" = "arm64" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
 
       # Host toolchain. Pinned, though the numbers do not depend on it: Ubuntu at
       # 1.93.0 and 1.97.1 gave identical cycle counts, because the host compiler
       # builds only the driver. Pinned anyway so a host-side compile error is
       # attributable.
       - name: Install host Rust 1.97.1
-        if: steps.gate.outputs.run == 'true'
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
@@ -72,11 +69,9 @@ jobs:
       # m0/versions.md; a bump there without a bump here would silently measure
       # something else.
       # rzup resolves releases through api.github.com. Unauthenticated, that shares a
-      # rate limit with every other job on the runner's IP, which fails intermittently
-      # on hosted macOS in particular. The token raises the limit; no extra scope is
-      # needed beyond the default read access.
+      # rate limit with every other job on the runner's IP. The token raises the
+      # limit; no extra scope is needed beyond the default read access.
       - name: Install RISC Zero toolchain
-        if: steps.gate.outputs.run == 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -90,7 +85,6 @@ jobs:
           rzup install rust 1.97.0
 
       - name: Record the environment
-        if: steps.gate.outputs.run == 'true'
         shell: bash
         run: |
           rustc --version
@@ -101,43 +95,66 @@ jobs:
       # guest sources or the pinned versions do, so they are keyed on the manifests
       # and lockfiles.
       - name: Cache cargo and guest builds
-        if: steps.gate.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ matrix.os }}-guardrails-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: ${{ matrix.os }}-guardrails-
+          key: guardrails-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: guardrails-${{ runner.os }}-
 
       # `--locked` is the assertion that the committed lockfiles are complete and
       # current. Without it CI would re-resolve and could measure a different
       # dependency set than the one m0/versions.md documents, which is precisely the
       # drift the exact pins exist to prevent.
       - name: guardrails, both projects
-        if: steps.gate.outputs.run == 'true'
-        run: cargo test --release --locked --workspace
+        run: cargo test --release --locked --workspace --manifest-path m0/Cargo.toml
 
-  lint:
-    name: fmt and clippy
+  # The product path's own figures. Separate from the job above because it is a
+  # separate workspace on separate pins: m0 is frozen to the toolchain its
+  # published figures were measured on, while the product tracks what LEZ pins,
+  # which is 3.0.5. `adr/0008` records that the cycle counts are identical on
+  # both, so the two sets of figures stay comparable.
+  #
+  # Here rather than in `ci.yml` for the reason this workflow exists: a red tick
+  # here means a measured figure moved.
+  product-costs:
+    name: per-component costs
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          components: clippy, rustfmt
 
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
-
-      # RISC0_SKIP_BUILD is required, not a shortcut. `cargo clippy` exports a
-      # rustc wrapper that the guest build inherits, and clippy-driver has no
-      # riscv32im-risc0-zkvm-elf std, so the guest build fails with E0463. Skipping
-      # it lints the host code, which is all clippy can lint here; the guest code is
-      # compiled for real by the guardrail jobs above.
-      - name: cargo clippy
+      - name: Install RISC Zero toolchain
+        shell: bash
         env:
-          RISC0_SKIP_BUILD: 1
-        run: cargo clippy --release --workspace --all-targets -- -D warnings
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -L https://risczero.com/install | bash
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.risc0/bin:$PATH"
+          rzup install cargo-risczero 3.0.5
+          rzup install r0vm 3.0.5
+          rzup install rust 1.97.0
+
+      - name: Cache cargo and guest builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: product-costs-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: product-costs-${{ runner.os }}-
+
+      # Asserts every figure `COSTS.md` publishes, and ADR 6's two ceilings on
+      # the accelerator configuration with it.
+      - name: cost table
+        run: cargo test --release --locked -p kanon-methods
+
+  # fmt and clippy used to live here. They moved to `ci.yml` because
+  # they lint product code as much as m0's, and this workflow is the cycle gate:
+  # a red tick here should mean a figure moved, not that a line was too long.

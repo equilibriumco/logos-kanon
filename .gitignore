@@ -4,11 +4,21 @@ target/
 # cannot slip in.
 *.pdf
 
-# Exception: the M0 report is a delivered artifact, not a build output.
+# Exception: the milestone reports are delivered artifacts, not build output. M0's
+# sits in its own workspace because that is where its harnesses are; later reports
+# have no such home and live under `docs/`.
 !m0/M0-report.pdf
+!docs/*.pdf
+
+# Python bytecode, from running the capture script by hand.
+__pycache__/
 
 # Editor scratch.
 .code_marks/
+
+# `lgs setup` materialises circuits, a wallet and its state here. Build output of a
+# toolchain run, not project state; `scaffold.toml` is the part that is committed.
+.scaffold/
 
 # Per-developer tool settings. Local to whoever is working here, so the repository
 # says so rather than relying on each contributor's own global ignore file.

@@ -1,0 +1,10 @@
+# Reference consumer A: the aggregator-read half.
+[package]
+name = "reference-consumer-aggregator-read"
+description = "Reference consumer that reads the canonical price account written by the push aggregator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kanon-idl.workspace = true

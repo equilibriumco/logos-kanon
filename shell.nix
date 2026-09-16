@@ -19,13 +19,21 @@ let
 
   pkgs = import <nixpkgs> { config.allowUnfree = withCuda; };
 
-  rustToolchain = fenix.stable.withComponents [
-    "rustc"
-    "cargo"
-    "clippy"
-    "rustfmt"
-    "rust-src"
-    "rust-analyzer"
+  rustToolchain = fenix.combine [
+    (fenix.stable.withComponents [
+      "rustc"
+      "cargo"
+      "clippy"
+      "rustfmt"
+      "rust-src"
+      "rust-analyzer"
+    ])
+    # A bare-metal target with no `std` at all, so `verifier-core` and `pull-lib`
+    # can be checked for `no_std` locally rather than only in CI. The
+    # attribute only says a crate does not *import* std; a dependency that pulls
+    # it back in fails here and nowhere else, and finding that out on a pull
+    # request is slower than finding it out before pushing.
+    fenix.targets.riscv32im-unknown-none-elf.stable.rust-std
   ];
 
   # risc0 compiles its CUDA kernels at build time, so the toolkit is required,
@@ -55,8 +63,13 @@ in
   pkgs.mkShell {
     buildInputs = [
       rustToolchain
-      pkgs.cargo-deny # the M1 licence gate: fails CI on BUSL or copyleft deps
+      pkgs.cargo-deny # the licence gate: fails CI on BUSL or copyleft deps
       pkgs.cargo-nextest
+      # `scripts/lez-sequencer.sh` needs these three. The docker *daemon* is
+      # system-level and cannot come from here: on NixOS that is
+      # `virtualisation.docker.enable = true`.
+      pkgs.curl
+      pkgs.docker-client
       pkgs.git
       pkgs.llvmPackages.libclang
       pkgs.openssl

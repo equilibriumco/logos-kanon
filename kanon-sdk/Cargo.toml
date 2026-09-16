@@ -1,0 +1,15 @@
+# The SDK over both modes. Not implemented yet.
+#
+# One requirement shapes the API: a developer must be able to switch between
+# push and pull "without changing the payload-handling code", so the SDK sits
+# over both `pull-lib` and the aggregator's client surface rather than over
+# either alone.
+[package]
+name = "kanon-sdk"
+description = "Kanon SDK: submit to the push aggregator, read the canonical price account, verify in public-mode pull"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pull-lib.workspace = true
