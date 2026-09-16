@@ -61,7 +61,7 @@ an ADR, with the finding, the decision and what it cost:
 | Can the product sit on risc0 3.0.6 and LEZ v0.2.1, as `m0/` does? | no — it tracks the estate at 3.0.5 and v0.2.0, and the figures stay comparable, measured rather than assumed | [8](../adr/0008-exact-pins-and-tracking-the-estate.md) |
 | Does the canonical RFP-019 price account exist to write into? (M1-09) | yes, `twap_oracle_core::OraclePriceAccount`, re-exported rather than forked | [9](../adr/0009-re-export-the-canonical-price-account-and-vendor-its-idl.md) |
 | Where does a `maxAge` comparison get "now"? (M1-08) | LEZ's clock program, the every-block account, never caller-supplied | [13](../adr/0013-staleness-is-measured-against-the-lez-clock-program.md) |
-| Is there an admin-authority interface to build F6 against? (M1-07) | yes, `logos-co/spel` PR #212 — written, unmerged; built against with a shim in reserve | [14](../adr/0014-build-admin-gating-against-the-unmerged-spel-admin-authority.md) |
+| Is there an admin-authority interface to build F6 against? (M1-07) | yes — it was `logos-co/spel` PR #212; the work has since moved to a separate extension crate, and the shim in reserve is what absorbs the move | [14](../adr/0014-build-admin-gating-against-the-unmerged-spel-admin-authority.md) |
 
 ## Open: which LEZ version
 
@@ -72,12 +72,18 @@ Two are in play, 784 commits and three months apart.
 | What the figures are built against (`lee_core`) | `15144ddb` | v0.2.1 | 2026-08-02 |
 | What the `lgs` toolchain pins for its sequencer | `cf3639d8` | v0.1.2 | 2026-04-27 |
 
-Upstream has since tagged v0.2.4, so neither is current. **No M0 figure is affected**:
-cost is a property of the guest ELF and no sequencer takes part in producing one.
+Upstream has since tagged v0.2.4 and, as of 2026-09-16, v0.2.5-rc3, so neither is
+current. **No M0 figure is affected**: cost is a property of the guest ELF and no
+sequencer takes part in producing one.
 
 The product has since moved to v0.2.0 for reasons unrelated to either — it tracks the
 LEZ that `lez-programs` is built against (ADR 8) — so there are now three revisions in
 the estate and `m0/` deliberately stays on the one its figures were measured against.
+
+Two facts have since landed that narrow this, and both are why the question is now asked
+as *"is a SPEL release coming"* rather than *"which LEZ pin"*: the live testnet runs
+**v0.2.1**, and the LEZ a product links is not a free choice — SPEL resolves it, so
+whichever SPEL we pin decides it. See *Open: questions outstanding with Logos*, item 1.
 
 **M1-05 is not affected either.** M1-04a resolved it by not using `lgs`: see below.
 What remains open is SPEL, which matters to M2.
@@ -100,7 +106,9 @@ A spike established the following, and it is all reproducible from
   exists: scaffold's default `73fc462e` vendors v0.1.2, while `3d639076` vendors
   v0.2.0-rc3.
 - Upstream scaffold #240 / PR #246 covers `setup`, `run` and `doctor`, but not
-  `test-node`.
+  `test-node`. **PR #246 merged on 2026-08-10 and #240 closed with it**, which settles
+  the timeline half of what M0 asked about and confirms the `test-node` half: it was
+  never in scope. Neither matters to us now — see below.
 
 ### How M1-04a resolved this, for integration tests
 
@@ -120,12 +128,12 @@ startup and never opens its RPC port without it, so **Bedrock is not optional** 
 that is a startup dependency and nothing more. It is *not* a `maxAge` time source. That
 answer is the clock program, ADR 13.
 
-**Still open, and now M2's question rather than M1's:** SPEL stays pinned to v0.1.2
-regardless of which LEZ the sequencer runs, so the aggregator program in M2-01 is where
-the version question actually bites. A v0.2.x-aligned SPEL exists (scaffold
-`3d639076` vendors v0.2.0-rc3, against the default `73fc462e`'s v0.1.2), which is the
-first thing to try. Deploying a program through `lgs` may need the same treatment as
-`test-node` did.
+**Still open, and now M2's question rather than M1's:** the sequencer's LEZ revision and
+the *product's* SPEL pin are independent, and it is the second that bites. The aggregator
+program in M2-01 links `logos-co/spel` **v0.6.0**, which resolves LEZ v0.2.0; everything
+M2 wants has landed on SPEL's `main` since. That is item 1 below. Deploying a program
+through `lgs` may need the same treatment `test-node` did, which is a separate matter and
+does not block the sequencer integration tests M1-04a unblocked.
 
 ## Open: the LGPL-3.0 dependency in LEZ's host graph
 
@@ -157,19 +165,61 @@ exception in `deny.toml` and raised here rather than waved through. The gate its
 
 ## Open: questions outstanding with Logos
 
-Four, in descending order of how much they block delivery. All four concern
+Five, in descending order of how much they block delivery. All five concern
 repositories outside this one, which is why they are tracked here rather than resolved
-in code.
+in code. Every claim below was re-checked against the upstream repository on 2026-09-16;
+two of the four M0 asked about had moved, and the dates say which.
 
-**1. Which LEZ pin the estate is standardising on**, and the timeline for scaffold
-PR #246 — including whether `test-node` is in scope. Three revisions are now live
-across `m0/`, the product and `lgs`. Detail in *Open: which LEZ version* above.
+**1. Is a SPEL release coming, and when — or is pinning `main` sanctioned.** This is the
+one concrete ask, and it settles the LEZ pin with it. The product pins `logos-co/spel` at
+**v0.6.0**, tagged 2026-07-15, and that tag resolves LEZ **v0.2.0**. Everything M2 wants
+has landed on `main` since: PR #256 migrated SPEL to LEZ v0.2.4 (merged 2026-08-25), and
+PR #257 merged the extension mechanism the admin gating in M2-06 to M2-10 builds on
+(merged 2026-09-11). None of it is in a release.
 
-**2. Is `logos-co/spel` PR #212 merging, and when.** Not "is there an admin-authority
-interface" — there is, and it is written. The PR has had no activity since 2026-05-20,
-and M2-06 through M2-10 are designed against its `#[require_admin(config)]` plus
-`AdminConfig` shape with a shim held in reserve (ADR 14). One naming trap: the RFP-001
-milestone text promises `renounce_admin` where the code implements `revoke_admin`.
+A SPEL pin is not a local choice: SPEL resolves LEZ, so whatever SPEL pins is the LEZ the
+aggregator links, and the two have to be spelled identically or the guest links two
+incompatible copies (ADR 8). That coupling is why M0's separate *"which LEZ pin is the
+estate standardising on"* is no longer asked on its own — its factual half is answered
+(testnet runs v0.2.1; upstream has tagged v0.2.5-rc3; v0.2.5 is the next testnet target).
+What remains is that the repositories we depend on disagree:
+
+| where | LEZ | SPEL |
+| --- | --- | --- |
+| LEZ testnet | v0.2.1 | — |
+| `logos-co/spel` v0.6.0 — our pin | v0.2.0 | — |
+| `logos-co/spel` `main` | v0.2.4 | — |
+| `logos-blockchain/lez-programs` `main` | v0.2.4 | a `main` revision, untagged |
+| this repository | v0.2.0 | v0.6.0 |
+
+A release resolves all of it. Note that `lez-programs` already pins SPEL by `main`
+revision rather than by tag, which is the precedent for the answer we expect. **The
+scaffold PR #246 half of M0's question is withdrawn**: it merged 2026-08-10, it never
+covered `test-node`, and M1-04a removed our dependence on `test-node` anyway (ADR 12).
+
+**2. Where the RFP-001 admin-authority extension is going to live.** Not "is #212
+merging" any more. #212 is still open with no activity since 2026-05-20, but the work
+moved: PR #257's extension mechanism was developed on the `feat/admin_authority_m3`
+branch, and the admin authority now ships as a **separate consumer crate** supplying
+`#[admin_authority]`, `#[require_admin]` and three management instructions. Two things
+follow.
+
+*Is #212 superseded?* We read it as yes and want that confirmed, because ADR 14's shim
+was designed against #212's `#[require_admin(config)]` plus `AdminConfig` shape and the
+extension crate's shape is close but not identical — the gate now synthesises its own
+account parameters. Confirming it lets M2-06 drop the shim rather than carry it. That
+also settles the naming trap: the RFP-001 milestone text promises `renounce_admin`, #212
+implements `revoke_admin`, the shipped crate calls it `admin_renounce`. Three names, one
+operation; the shipped one is what M2 builds against.
+
+*And where do the crates live?* The three extension crates — `spel-authority`,
+`spel-admin-authority`, `spel-freeze-authority` — are under the personal namespace
+`mmlado/`, not `logos-co/`. They are Apache-2.0 and actively released, so this is not a
+licensing problem; it is a governance one. RFP-020 delivers a program whose admin gating,
+the thing deciding who may change a signer set, would depend on a repository outside the
+Logos organisation. If a move to `logos-co` is planned we pin the destination; if it is
+not, we want that stated so it is recorded as a deliberate estate position rather than
+discovered at audit.
 
 **3. Three Logos crates ship without licence metadata.** `twap_oracle_core`,
 `spel-framework-core` and `spel-framework-macros` declare no `license` field, so
@@ -177,16 +227,33 @@ cargo-deny reports them as unlicensed. They are not: `lez-programs` ships a LICE
 file (MIT) and `spel` ships LICENSE-MIT and LICENSE-APACHE-v2, and the terms are
 permissive and compatible with the delivery licences. `deny.toml` carries three
 `[[licenses.clarify]]` entries rather than a widened allowlist, because a
-clarification names one crate and can be checked. This is the cheapest of the four
+clarification names one crate and can be checked. This is the cheapest of the five
 asks: a one-line `license = "..."` in each manifest removes all three entries and
 stops every downstream consumer having to make the same judgement call privately.
+Re-checked against each repository's `main` on 2026-09-16 — still missing in all three.
+Its positional counterpart is the LGPL-3.0 question in *Open: the LGPL-3.0 dependency in
+LEZ's host graph* above: the cheap licensing ask is a manifest fix, that one needs a
+stated estate position.
 
 **4. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
 closer to a defect report than a preference: the account-type crate needs neither
 risc0 nor `uniswap_v3_math` to carry six Borsh fields. Splitting it into a standalone
 crate with relaxed pins — or at minimum loosening `=3.0.5` to `^3.0.5` — would make the
-canonical account usable by the external adaptors it was explicitly written for. What
-its current pins cost this repository is in ADR 8 and ADR 9.
+canonical account usable by the external adaptors it was explicitly written for. Still
+the case on `lez-programs` `main` as of 2026-09-16. What its current pins cost this
+repository is in ADR 8 and ADR 9.
+
+**5. What happens to a price account when the program that created it is upgraded.**
+Recorded in ADR 22 and left open on purpose. Under LEZ's ownership model a program id is
+the hash of its binary, an account is bound for good to the id that created it, and no
+operation hands an account to a new binary — so an upgraded aggregator cannot update the
+price accounts the old one created, and consumers would have to follow it to new
+addresses. Two shapes could answer it: consumers discover the account rather than pin it,
+or a small permanent program owns the accounts and the upgradeable one writes through it,
+which is the only arrangement that keeps the address fixed. Both belong to M2's read-path
+and admin work, and neither is decidable from what LEZ documents today, which defines no
+upgrade path at all. We want the shape settled with Logos before M2 pours concrete around
+one of them.
 
 ## Changing any of this
 

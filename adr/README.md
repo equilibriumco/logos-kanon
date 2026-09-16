@@ -44,6 +44,7 @@ they describe the design being proposed for acceptance.
 | [26](0026-a-maximum-payload-size-and-where-it-has-to-be-enforced.md) | A maximum payload size, and where it has to be enforced | accepted |
 | [27](0027-one-price-comes-from-one-round-and-a-mixed-payload-is-refused.md) | One price comes from one round, and a payload that mixes rounds is refused | accepted |
 | [28](0028-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
+| [29](0029-a-staleness-window-has-an-upper-bound-and-it-is-enforced.md) | A staleness window has an upper bound, and it is enforced | accepted |
 
 ## How they fit together
 
@@ -136,15 +137,24 @@ arrives with fifty sites of churn behind it.
 
 ## Open questions carried by these decisions
 
-Four are with Logos, and all four are stated in full in `m0/versions.md`, *Open:
+Five are with Logos, and all five are stated in full in `m0/versions.md`, *Open:
 questions outstanding with Logos*:
 
-- **Which LEZ pin the estate is standardising on**, and the timeline for scaffold
-  PR #246 including whether `test-node` is in scope (ADR 8, ADR 12).
-- **Is `#212` merging, and when** (ADR 14).
+- **Is a SPEL release coming, or is pinning `main` sanctioned** (ADR 8, ADR 14). SPEL
+  resolves LEZ, so this settles the LEZ pin with it — which is why M0's separate
+  "which LEZ pin is the estate standardising on" is no longer asked on its own. The
+  scaffold PR #246 half of that question is withdrawn: it merged on 2026-08-10, and
+  M1-04a had already removed the dependency on `lgs test-node` (ADR 12).
+- **Where the RFP-001 admin-authority extension is going to live**, now that the work
+  has moved off PR #212 and onto a separate extension crate in a personal namespace
+  (ADR 14).
 - **Is LEZ's transitive LGPL-3.0 dependency an accepted position for the estate**
   (ADR 1) — and, separately, three Logos crates ship without a `license` field, which a
   one-line manifest change would fix for every downstream consumer (ADR 9).
+- **Can the canonical price account be made cheaper to depend on** — a standalone
+  account-type crate, or at minimum a relaxed risc0 pin (ADR 8, ADR 9).
+- **What happens to a price account when the program that created it is upgraded**
+  (ADR 22). Nothing LEZ documents answers it.
 
 One is settled locally, with a measurement in M2: which clock account an oracle should
 read (ADR 13). The CI ceilings that stop the accelerator configuration regressing

@@ -1,6 +1,6 @@
 # 14. Build admin gating against the unmerged SPEL admin-authority library, with a shim held in reserve
 
-- **Status**: accepted, contingency live
+- **Status**: accepted, contingency live; premise overtaken upstream — the decision stands, the target does not. `m0/versions.md` (*Open: questions outstanding with Logos*, item 2) carries what moved and what is being confirmed with Logos. Superseded by a new ADR in M2 once that answer lands.
 - **Milestone**: M1 (`M1-07` answered; built in `M2-06`–`M2-10`)
 - **Requirements**: F6, SEC2
 - **Artefacts**: `logos-co/spel` PR #212 upstream; tracked in `m0/versions.md` (*Open: questions outstanding with Logos*, item 2)
