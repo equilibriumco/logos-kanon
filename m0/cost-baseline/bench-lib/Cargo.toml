@@ -1,0 +1,23 @@
+[package]
+name = "bench-lib"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# The two workloads RFP-020's cost question turns on: keccak256 and secp256k1
+# ECDSA public-key recovery. Deliberately no risc0 dependency -- this crate is
+# pure Rust so the identical source compiles under both the software and the
+# accelerated guest workspaces, and the only difference between the two runs is
+# which implementation of these crates the linker picked.
+#
+# Exact versions, not caret ranges. The accelerated and mixed arms pin their
+# implementations to git tags (`k256/v0.13.3-risczero.1`,
+# `tiny-keccak/v2.0.2-risczero.0`), so a caret range here lets the *software* arm
+# drift to a newer registry patch release while the other two stay fixed. That
+# turns the comparison from "same version, different implementation" into a
+# version bump confounded with an accelerator, and moves every software recovery
+# figure by about 0.01%. Nothing about it is visible in a green build, so the `=`
+# pins here are load-bearing rather than tidy.
+[dependencies]
+tiny-keccak = { version = "=2.0.2", features = ["keccak"] }
+k256 = { version = "=0.13.3", default-features = false, features = ["ecdsa", "arithmetic"] }

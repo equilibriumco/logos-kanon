@@ -1,0 +1,19 @@
+[package]
+name = "kanon-guest-software"
+version = "0.1.0"
+edition = "2021"
+
+# Own workspace: this crate cross-compiles to riscv32im-risc0-zkvm-elf.
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["std"] }
+bench-lib = { path = "../../bench-lib" }
+
+# No [patch.crates-io] section, deliberately. This is the software baseline:
+# upstream tiny-keccak and upstream k256, executed as plain RISC-V instructions
+# in the zkVM. The accelerated counterpart lives in ../../methods-accelerated/guest.
+
+[profile.release]
+lto = true
+codegen-units = 1

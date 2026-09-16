@@ -1,0 +1,22 @@
+[package]
+name = "kanon-cost-baseline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+risc0-zkvm.workspace = true
+kanon-methods-software = { path = "../methods-software" }
+kanon-methods-accelerated = { path = "../methods-accelerated" }
+kanon-methods-mixed = { path = "../methods-mixed" }
+anyhow = "1"
+bincode = "1.3"
+serde = "1"
+clap = { version = "4", features = ["derive"] }
+k256.workspace = true
+tiny-keccak.workspace = true
+
+# GPU proving. risc0 compiles CUDA kernels at build time, so this needs the CUDA
+# toolkit present, not just the driver. See shell.nix `--arg withCuda true`.
+[features]
+cuda = ["risc0-zkvm/cuda"]

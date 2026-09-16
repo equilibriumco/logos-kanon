@@ -1,0 +1,29 @@
+[package]
+name = "kanon-guest-accelerated"
+version = "0.1.0"
+edition = "2021"
+
+# Own workspace: this crate cross-compiles to riscv32im-risc0-zkvm-elf.
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["std"] }
+bench-lib = { path = "../../bench-lib" }
+
+# The accelerated path. These forks route keccak256 and the secp256k1 field
+# arithmetic to zkVM accelerator circuits instead of executing them as plain
+# RISC-V instructions. Guest source is byte-identical to methods-software/guest --
+# this section is the entire difference, which is what makes the two cycle
+# counts comparable.
+#
+# Tags taken from risc0 3.0.2's own examples (examples/keccak,
+# examples/ecdsa/k256), which is the combination upstream tests.
+[patch.crates-io]
+tiny-keccak = { git = "https://github.com/risc0/tiny-keccak", tag = "tiny-keccak/v2.0.2-risczero.0" }
+k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.1" }
+crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.2-risczero.1" }
+sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.6-risczero.0" }
+
+[profile.release]
+lto = true
+codegen-units = 1

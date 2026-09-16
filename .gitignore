@@ -1,0 +1,15 @@
+target/
+
+# Rendered reports. Matched by extension rather than by name so a stray output name
+# cannot slip in.
+*.pdf
+
+# Exception: the M0 report is a delivered artifact, not a build output.
+!m0/M0-report.pdf
+
+# Editor scratch.
+.code_marks/
+
+# Per-developer tool settings. Local to whoever is working here, so the repository
+# says so rather than relying on each contributor's own global ignore file.
+.claude/
