@@ -1,4 +1,11 @@
-//! Payload fixtures. Compiled only under `cfg(test)`.
+//! Payload fixtures. Compiled under `cfg(test)`, or under the `test-fixtures`
+//! feature for another crate's tests.
+//!
+//! Public opt-in API, and `[M2-16:01]` records the cost that accepts: a third party
+//! linking this crate can enable the feature and ship these fixtures. What
+//! `tests/feature_edges.rs` holds is the narrower line -- that *Kanon's* own guests
+//! do not enable it by accident. The `no_std` job is weaker evidence than it looks,
+//! because risc0's guest target ships `std`.
 //!
 //! `decode`'s tests need framing they control byte for byte; `feed`'s tests need
 //! signatures that recover to a known address. One builder serves both:
@@ -19,10 +26,19 @@ use crate::{
 
 /// A deterministic key, so every assertion is reproducible.
 ///
-/// `seed` must not be zero: an all-zero scalar is not a valid secret key, and
-/// this would panic. Every caller here uses 1 or above.
+/// `seed` must be in `1..=254`, and both ends are real. Zero gives an all-zero
+/// scalar, which is not a valid secret key. `255` gives `[0xff; 32]`, which is
+/// *above* secp256k1's group order -- the order's top eight bytes are `0xff`, so
+/// the repeated-byte trick runs out exactly one seed before `u8` does. The old
+/// contract said only "not zero", which was true of every caller in this crate
+/// and wrong for the range it advertised.
 pub fn signing_key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32].into()).expect("a non-zero repeated byte is a valid scalar")
+    assert!(
+        (1..=254).contains(&seed),
+        "signing_key takes a seed in 1..=254: 0 is not a valid scalar and 255 exceeds the group order"
+    );
+    SigningKey::from_bytes(&[seed; 32].into())
+        .expect("a repeated byte in 1..=254 is below the group order")
 }
 
 /// The Ethereum address of a key: keccak256 of the uncompressed point without its

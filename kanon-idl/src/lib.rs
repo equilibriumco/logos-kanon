@@ -11,11 +11,20 @@
 //! is what lets a test notice if the two ever stop agreeing, which is the whole
 //! job of the conformance test alongside it.
 //!
+//! `aggregator-idl.json` is the adaptor's own IDL, and the one artefact here that
+//! this repository defines. It is generated from the guest program's source by
+//! `aggregator-program`'s `generate-idl` binary rather than written, so it cannot
+//! describe a surface the program does not have, and the tests beside that
+//! generator assert the surface twice over: that the committed artefact is
+//! current, and that the instruction discriminants and argument order it
+//! publishes are the ones the wire codec produces.
+//!
 //! # Not yet implemented
 //!
-//! What this crate re-exports is settled. Still to come: the aggregator's own
-//! IDL surface, emitting it as a standalone artefact, and the write path into
-//! the account described here. `TRACEABILITY.md` maps each to its task.
+//! What this crate re-exports is settled, and so is the adaptor's IDL. Still to
+//! come: publishing that artefact as a standalone deliverable and generating the
+//! CLI from it (M4-12), and the write path into the account described here.
+//! `TRACEABILITY.md` maps each to its task.
 #![forbid(unsafe_code)]
 
 /// The canonical LEZ oracle price account, re-exported from the crate that

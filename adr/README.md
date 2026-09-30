@@ -45,6 +45,14 @@ they describe the design being proposed for acceptance.
 | [27](0027-one-price-comes-from-one-round-and-a-mixed-payload-is-refused.md) | One price comes from one round, and a payload that mixes rounds is refused | accepted |
 | [28](0028-lgs-build-in-ci-triggered-by-the-manifests.md) | `lgs build` runs in CI, triggered by the manifests rather than by every push | accepted |
 | [29](0029-a-staleness-window-has-an-upper-bound-and-it-is-enforced.md) | A staleness window has an upper bound, and it is enforced | accepted |
+| [30](0030-the-signer-set-stays-per-feed.md) | The signer set stays per feed, though every feed currently shares one | accepted |
+| [31](0031-the-aggregator-pins-spel-and-lez-as-one-decision.md) | The aggregator pins SPEL and LEZ as one decision, spelled as the graph resolves them | accepted |
+| [32](0032-one-price-account-per-feed-and-anyone-may-fill-it.md) | One price account per feed, at a derived address, and anyone may fill it | accepted |
+| [33](0033-a-feed-lives-at-the-address-its-id-derives.md) | A feed lives at the address its id derives, so a client can find one | accepted |
+| [34](0034-the-sequencer-runs-in-a-container-like-the-node-beside-it.md) | The sequencer runs in a container, like the node beside it | accepted, supersedes part of 12 |
+| [M2-06:01](unnumbered-M2-06-where-the-admin-authority-comes-from.md) | Where the admin authority comes from, and how it is established | accepted, unnumbered |
+| [M2-16:01](unnumbered-M2-16-where-a-payload-nobody-captured-comes-from.md) | Where a payload nobody captured comes from | accepted, unnumbered, supersedes part of 21 and 23 |
+| [M2-19:01](unnumbered-M2-19-the-end-to-end-tests-resolve-in-their-own-workspace.md) | The end-to-end tests resolve in their own workspace | accepted, unnumbered, extends 7 |
 
 ## How they fit together
 
@@ -127,6 +135,23 @@ answer costs is written into ADR 27: an appended package is now a denial, so a s
 has to own the bytes it submits. The moment check runs before recovery, so that package
 needs no signer at all, which is why no amount of tuning relaxes the constraint.
 
+ADR 32 is where three of those decisions stop being about a verification and
+start being about a transaction. ADR 13 chose a clock account, ADR 16 made the
+asset pair the caller's claim, and ADR 22 wrote the six fields — but none of them
+had a caller, so none had to say which account a price belongs in, who creates it,
+or who may ask. Deriving the account from the feed answers the first two together:
+the address a caller must reproduce is also the seed a first write claims. The
+third goes the other way from how it looks — refusing to check the submitter is
+the position that admits what a signature does and does not attest to, and it is
+the one `MANIPULATION-ANALYSIS.md` had been written against.
+
+It also finds the sharp edge in the mechanism. Making an account's address a
+function of something also makes it unique, and uniqueness in LEZ is permanent:
+ownership is never released, so an address claimed once is claimed for that
+program build's lifetime. That is why the price account is derived from the feed
+and the feed is not derived from the asset pair — one is a binding, the other
+would be a registration that a single wrong exponent could burn.
+
 ADR 29 closes a range that only had one end. ADR 18 gave staleness a two-sided window and
 left `maxAge` to the feed; registration refused zero and nothing else. But `freshness`
 saturates, so a `maxAge` near `u64::MAX` put the window's lower edge at zero and admitted
@@ -137,26 +162,56 @@ arrives with fifty sites of churn behind it.
 
 ## Open questions carried by these decisions
 
-Five are with Logos, and all five are stated in full in `m0/versions.md`, *Open:
-questions outstanding with Logos*:
+Seven are with Logos. `m0/versions.md`, *Open: questions outstanding with Logos*,
+states six of them in full and the mapping is not one-to-one, so it is spelled
+out per bullet rather than by a count:
 
 - **Is a SPEL release coming, or is pinning `main` sanctioned** (ADR 8, ADR 14). SPEL
   resolves LEZ, so this settles the LEZ pin with it — which is why M0's separate
   "which LEZ pin is the estate standardising on" is no longer asked on its own. The
   scaffold PR #246 half of that question is withdrawn: it merged on 2026-08-10, and
   M1-04a had already removed the dependency on `lgs test-node` (ADR 12).
+  `m0/versions.md` item 1.
 - **Where the RFP-001 admin-authority extension is going to live**, now that the work
   has moved off PR #212 and onto a separate extension crate in a personal namespace
-  (ADR 14).
+  (ADR 14). `m0/versions.md` item 2.
 - **Is LEZ's transitive LGPL-3.0 dependency an accepted position for the estate**
   (ADR 1) — and, separately, three Logos crates ship without a `license` field, which a
-  one-line manifest change would fix for every downstream consumer (ADR 9).
-- **Can the canonical price account be made cheaper to depend on** — a standalone
-  account-type crate, or at minimum a relaxed risc0 pin (ADR 8, ADR 9).
+  one-line manifest change would fix for every downstream consumer (ADR 9). The
+  second half is `m0/versions.md` item 3; the LGPL question is stated in
+  `deny.toml` beside the exceptions it justifies rather than there.
+- **May a program claim a non-default, default-owned account** (`[M2-06:01]`, ADR 33).
+  One rule pair, met twice: it strands a signer a program declines to claim, and it lets
+  anyone put one unit of balance on a publicly derivable PDA and make that address
+  permanently unwritable — including the admin config account, whose address takes no
+  input an attacker cannot predict. `m0/versions.md` item 4.
+- **`OraclePriceAccount` is harder to depend on than it needs to be** (ADR 8,
+  ADR 9): the account-type crate pulls risc0 and `uniswap_v3_math` in to carry six
+  Borsh fields, and `=3.0.5` is an exact pin, which is what makes the canonical
+  account awkward for the external adaptors it was written for.
+  `m0/versions.md` item 5 has the detail.
+- **Two things SPEL's IDL generator does that a program author cannot see**
+  (ADR 32), found while declaring `submit_price`'s accounts and worth reporting
+  rather than working around twice. It parses `#[account(owner = ...)]` and
+  discards it, so an owner constraint is enforced at runtime and absent from
+  every generated client — which is why Kanon's is a Rust check with a test
+  recording why. And the documented `const("...")` seed spelling cannot parse,
+  because a seed is read as an expression and a bare keyword is not one; only the
+  raw `r#const("...")` and the legacy `literal("...")` work. Not in
+  `m0/versions.md`, which predates it.
 - **What happens to a price account when the program that created it is upgraded**
-  (ADR 22). Nothing LEZ documents answers it.
+  (ADR 22). Nothing LEZ documents answers it. `m0/versions.md` item 6.
 
-One is settled locally, with a measurement in M2: which clock account an oracle should
-read (ADR 13). The CI ceilings that stop the accelerator configuration regressing
-silently (ADR 6) landed with M1-25, and ADR 20 records that both of them turned out to
-be cycle counts.
+One that `m0/versions.md` carried as M2's is now closed rather than answered: which SPEL
+revision the aggregator builds against had already been decided by the dependency graph,
+because the canonical price account brings SPEL in through its own macro (ADR 31).
+
+One is settled locally and still needs its measurement: which clock account an
+oracle should read (ADR 13). M2-02 made the read real, on the every-block account,
+so the freshness-against-contention trade the 10- and 50-block accounts exist for
+is now a live property of every submission rather than a hypothetical one.
+Measuring it needs a running sequencer, which no M2 task currently carries.
+
+The CI ceilings that stop the accelerator configuration regressing silently
+(ADR 6) landed with M1-25, and ADR 20 records that both of them turned out to be
+cycle counts.

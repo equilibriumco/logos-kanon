@@ -2,30 +2,38 @@
 
 RFP-020. Built by Equilibrium for Logos. Dual licensed MIT and Apache-2.0.
 
-**Start with the M1 report**, `docs/M1-report.pdf`. It is the M1 deliverable: the
-verification core and what it establishes, what a price update costs, the evidence
-behind both, and the decisions outstanding with Logos.
+**Start with the M2 report**, `docs/M2-report.pdf`. It is the M2 deliverable: the push
+aggregator that verifies and publishes in one transaction, the administration around it,
+the five feeds on the public testnet, the security analysis SEC3 asks for, what the write
+costs, and the decisions outstanding with Logos.
 
-The headline: **verifying** a 3-of-N single-feed payload costs **1,831,638 cycles** —
-5.5% of LEZ's 33,554,432-cycle per-transaction budget — and secp256k1 recovery alone is
-95.85% of it. `COSTS.md` carries the full breakdown, generated and asserted by the tests
-rather than transcribed.
+The headline is a negative result, and a useful one: **the write is not where the money
+goes.** Publishing a verified price costs **8,582 cycles** for an update and **7,386** for
+a first write — 0.0256% of LEZ's 33,554,432-cycle per-transaction budget — against
+**3,039,832** to verify the payload being published. What decides whether a payload fits
+in one transaction is verification, which M1 bounded, and not the account write.
 
-The M0 report, `m0/M0-report.pdf`, remains the reference for the cost baseline: what a
-RedStone price update costs inside a LEZ program, how that was measured, and the
-recommendations that follow.
+The M1 report, `docs/M1-report.pdf`, remains the reference for the verification core: what
+it establishes, what verifying costs component by component, and the evidence behind both.
+The M0 report, `m0/M0-report.pdf`, is the original cost baseline — what a RedStone price
+update costs inside a LEZ program, how that was measured, and the recommendations that
+follow.
 
-**The two reports quote different headline numbers, and they are measuring different
-things.** M0's 1,906,737 is a whole LEZ transaction — it includes 158,290 cycles of LEZ
-framework floor and instruction handling that no verifier controls. M1's 1,831,638 is
-`verify_feed` alone: the verification work, with the framework excluded and with decode,
-the median, staleness and the threshold included, none of which the M0 harness had. Where
-the two overlap they agree to within cycles, and `COSTS.md` (*Agreement with the M0
-baseline*) reconciles them primitive by primitive.
+**The reports quote different headline numbers, and they are measuring different things.**
+M0's 1,906,737 is a whole LEZ transaction — it includes 158,290 cycles of LEZ framework
+floor and instruction handling that no verifier controls. M1's 1,831,638 is `verify_feed`
+alone: the verification work, with the framework excluded and with decode, the median,
+staleness and the threshold included, none of which the M0 harness had. M2's figures are
+the account write only, measured beside the 3,039,832-cycle verification of the same
+payload, which is a five-signer payload rather than M1's three. Where they overlap they
+agree to within cycles, and `COSTS.md` (*Agreement with the M0 baseline*) reconciles them
+primitive by primitive.
 
-M1 is implemented: the crate layout, verification core, CI gates, conformance suite,
-traceability matrix and standalone LEZ sequencer are in place. Later milestones wire
-that core into the two shipping modes and add deployment and operator-facing pieces.
+M1 and M2 are implemented. M1 put the crate layout, verification core, CI gates,
+conformance suite, traceability matrix and standalone LEZ sequencer in place; M2 wired
+that core into the push mode — `submit_price`, the admin instructions, the five feeds on
+the public testnet, and the security set — and priced the write. What remains is the pull
+mode (M3), the relayer, SDK, CLI and mini-app (M4), and testnet, docs and operations (M5).
 `TRACEABILITY.md` records what is complete and what remains.
 
 ## Layout
@@ -43,11 +51,15 @@ that core into the two shipping modes and add deployment and operator-facing pie
 | `reference-consumers/` | the two reference consumers, one per mode |
 | `examples/` | runnable examples for the documented developer journeys |
 | `traceability/` | the RFP-020 requirement matrix and the check that keeps it true |
+| `e2e/` | the end-to-end tests against a standalone sequencer. A workspace of its own, see below |
 | `adr/` | the architecture decision records: why the repository is shaped the way it is |
-| `scripts/` | `lez-sequencer.sh`: a standalone LEZ sequencer for integration tests |
+| `scripts/` | `lez-sequencer.sh` for integration tests, and the two by-hand captures that regenerate the committed vectors and `FEEDS.md` |
 | `m0/` | M0's measurement harnesses, report and pinned versions. Delivered; a workspace of its own, see below |
 | `docs/` | the milestone reports from M1 on. M0's sits under `m0/`, next to the harnesses it describes |
 | `COSTS.md` | what an update costs, component by component, generated by the tests that assert it |
+| `FEEDS.md` | the five feeds F7 names, who signs them, and how often a round lands |
+| `TESTNET.md` | what is deployed on the public LEZ testnet, and how to confirm it is ours |
+| `MANIPULATION-ANALYSIS.md` | the `maxAge` recommendation for both modes, and what signer compromise, replay and roster lag can and cannot do |
 | `deny.toml` | the licence gate: an allowlist, enforced in CI over every workspace |
 | `scaffold.toml` | what the `lgs` toolchain needs to see a project here; the pins are checked against `Cargo.lock` in CI |
 | `shell.nix` | dev shell: host Rust toolchain and the build prerequisites |
@@ -57,19 +69,28 @@ comment.
 
 ### Workspaces
 
-Two, plus the guests, and the separation is load-bearing rather than tidy.
+Three, plus the guests. Each split is there for a reason rather than for tidiness,
+and the reason differs in each case.
 
 | workspace | lockfile | what it is for |
 |---|---|---|
 | the repository root | `Cargo.lock` | the product crates. Pins move here, as ordinary upgrades |
 | `m0/` | `m0/Cargo.lock` | the measurement harnesses. Pins are frozen to the toolchain the published figures were measured on |
+| `e2e/` | `e2e/Cargo.lock` | the end-to-end tests. Resolves the sequencer's own RPC client, and with it the Bedrock node behind it: 793 packages that have no business in a delivered lockfile |
 | each `*/guest/` | its own | cross-compiles to `riscv32im-risc0-zkvm-elf`, with its own `[patch.crates-io]` |
 
 M0's figures are a property of an exact toolchain, so one shared lockfile would mean
 an ordinary product upgrade could move a number in a delivered report, silently, in a
-green build. Two lockfiles let each side move on its own terms. The cost is that
-`cargo test --workspace` no longer runs everything: `ci.yml` covers the product and
-`guardrails.yml` covers `m0/`, which is the division those workflows already had.
+green build. `e2e/` is separate for a different reason: what it needs to talk to a
+sequencer is a whole third-party node, which would double the lockfile of everything
+that ships and bring git sources the licence gate does not allow a deliverable
+(`[M2-19:01]`). Separate lockfiles let each side move on its own terms. The cost is
+that `cargo test --workspace` no longer runs everything: `ci.yml` covers the product
+and `e2e/`, `guardrails.yml` covers `m0/`.
+
+The LEZ revision cannot drift between the product and `e2e/`:
+`scripts/lez-sequencer.sh` reads it out of every non-`m0` `Cargo.lock` and refuses to
+run when they disagree.
 
 ### `m0/`
 
@@ -139,9 +160,9 @@ wallet and SPEL from source, none of which it then uses. `adr/0028` has the reas
 | `build-test` | the product crates build and their tests pass, `kanon-methods` excepted: its tests need real guest ELFs, so `guardrails.yml` runs them |
 | `no-std` | `verifier-core`, `pull-lib` and `kanon-clock` build for `riscv32im-unknown-none-elf` |
 | `guest` | product code cross-compiles to a real guest ELF with the pinned rzup toolchain |
-| `licenses` | `cargo deny`, on the product workspace, `m0/`, and each of the six guest workspaces |
+| `licenses` | `cargo deny`, on the product workspace, `m0/`, `e2e/`, and each of the six guest workspaces |
 | `traceability` | every requirement has a row, and every row's evidence exists |
-| `sequencer` | a standalone LEZ sequencer comes up and serves RPC, from a prebuilt image |
+| `sequencer` | a standalone LEZ sequencer comes up from a prebuilt image, and the push path verifies and publishes across it (`e2e/`) |
 
 `build-test` is the one job whose inputs are not fixed. `verifier-core/src/properties.rs`
 generates them: the threshold, the payload framing and the scale conversion are claims
@@ -161,8 +182,8 @@ components and the RedStone boundary recorded in `NOTICE`.
 
 RFP-020's open-source requirement makes this a constraint rather than a preference,
 so it is enforced rather than asserted: `deny.toml` is an allowlist and
-`cargo deny check licenses` runs in CI over the product workspace, `m0/` and every
-guest workspace, transitive dependencies included. A licence that is not on the list fails
+`cargo deny check licenses` runs in CI over the product workspace, `m0/`, `e2e/` and
+every guest workspace, transitive dependencies included. A licence that is not on the list fails
 the build, which is the intended behaviour. BUSL-1.1 and the GPL family are
 denied, which is also what enforces the RedStone boundary, since the RedStone
 Rust SDK sits in a monorepo alongside BUSL packages.
@@ -202,22 +223,62 @@ standalone mode, in CI. `scripts/lez-sequencer.sh` is that sequencer:
 scripts/lez-sequencer.sh pin      # the LEZ revision the product resolves
 scripts/lez-sequencer.sh build    # clone it and build sequencer_service (minutes, cached)
 scripts/lez-sequencer.sh fetch    # or pull a prebuilt one, which is what CI does
-scripts/lez-sequencer.sh start    # bedrock in docker, then the sequencer; prints the RPC URL
+scripts/lez-sequencer.sh start    # bedrock and the sequencer, both in docker; prints the RPC URL
 scripts/lez-sequencer.sh smoke    # assert it serves RPC and is producing blocks
 scripts/lez-sequencer.sh stop
 ```
 
 Needs a docker daemon with the compose plugin, plus git and curl; `nix-shell` covers
-everything but docker itself.
+everything but docker itself. `start` needs a checkout either way, because Bedrock's
+compose file is LEZ's own and is read from the host — so `fetch` or `build` comes first.
+
+Both services run as containers (ADR 34). The sequencer's uses `--network host`, which
+is what lets LEZ's committed debug config be used exactly as it ships: its
+`bedrock_config.node_url` is `http://localhost:18080`, and on a bridge network
+`localhost` would be the container itself. That is free on linux. On Docker Desktop it
+needs 4.34 or later with host networking switched on in *Settings → Resources →
+Network*, which is off by default — supported, but untested here.
+
+On a host the published image cannot serve at all — NixOS, a non-x86_64 machine — run
+the binary directly instead:
+
+```sh
+scripts/lez-sequencer.sh build
+KANON_SEQUENCER_RUNTIME=host scripts/lez-sequencer.sh start
+```
+
+The tests that use it live in `e2e/`, which is a workspace of its own (see
+*Workspaces*). With a sequencer running:
+
+```sh
+KANON_GENESIS_ADMIN=5b0e4f6dddea8b9ef3118d6002a25c09ab379653ffb60586f4604f1fa6a0b392 \
+  cargo test --manifest-path e2e/Cargo.toml
+```
+
+`KANON_GENESIS_ADMIN` is required rather than convenient. The guest compiles its
+genesis authority in, a build carrying none cannot be initialised by anyone
+(`[M2-06:01]`), and the value above is the account id of the fixed test key the
+test signs with -- it derives that id and refuses to run if the two disagree. A
+guest built with it has a different image id from the one CI ships, so every
+address derived from it differs too; that is expected.
+
+`KANON_SEQUENCER_PORT` overrides the port if `start` chose another one.
+
+These tests fail rather than skip when nothing is listening, because a skipped
+end-to-end test reports the same green as a passing one. They assert account state
+read back from the chain and never the result of `sendTransaction`: that call
+answers `Ok` for a transaction that was accepted and never executed, and the
+reason appears only in `scripts/lez-sequencer.sh logs`.
 
 CI does not build LEZ. A cold build ran past 90 minutes on a standard runner, and
 because a timeout cancels the job before `actions/cache` saves, the cache could never
 warm up: every run was cold and every run was killed. So the sequencer is treated the
 way Bedrock already is, as an image to pull. `lez-sequencer-image.yml` builds it once
 per LEZ revision and publishes
-`ghcr.io/equilibriumco/kanon-lez-sequencer:<rev>`; `fetch` unpacks that into the layout
-`build` would have produced. **Run that workflow after a pin bump** — CI fails naming
-it rather than starting an hour-long build.
+`ghcr.io/equilibriumco/kanon-lez-sequencer:<rev>`; `start` runs that image, and `fetch`
+unpacks it into the layout `build` would have produced for the host runtime. **Run that
+workflow after a pin bump** — CI fails naming it rather than starting an hour-long
+build.
 
 The revision is read from the product lockfiles, so the sequencer is always built from
 the same LEZ commit the product's `lee_core` resolves to. `m0/` is skipped on purpose:

@@ -30,5 +30,15 @@ verifier-core.workspace = true
 serde_json = "1.0.151"
 hex = "0.4"
 
+# For the push-write measurement (M2-18), which has to hand the guest the same
+# account bytes LEZ would: a Borsh-encoded `FeedAccount`, a canonical price
+# account, and the clock at the address the program is required to read. All
+# already in this workspace's graph, so no new package enters the lockfile --
+# only three dependency edges under `kanon-methods`, and the package count stays
+# at 384.
+aggregator-program.workspace = true
+kanon-clock.workspace = true
+borsh = { workspace = true, features = ["derive"] }
+
 [package.metadata.risc0]
 methods = ["guest"]

@@ -32,8 +32,11 @@ pub mod value;
 mod accept_and_reject;
 #[cfg(test)]
 mod properties;
-#[cfg(test)]
-mod test_support;
+// `pub` under the feature so other crates' tests can build a payload nobody
+// captured; `cfg(test)` keeps it available to this crate's own tests without it.
+// `[M2-16:01]` records why the feature exists rather than a builder per consumer.
+#[cfg(any(test, feature = "test-fixtures"))]
+pub mod test_support;
 
 pub use backend::{BackendError, Signature, SignerAddress, VerifierBackend};
 pub use decode::{DataPackage, DataPoint, DecodeError, Payload};

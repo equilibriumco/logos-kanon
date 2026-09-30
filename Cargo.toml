@@ -46,6 +46,13 @@ exclude = [
   # `risc0-build` from `methods`' build script, under its own resolution and its
   # own lockfile.
   "methods/guest",
+
+  # The end-to-end tests against a standalone sequencer. Excluded for the reason
+  # `m0` is -- its own lockfile -- and the reason is the client half of LEZ:
+  # reaching a sequencer over its typed RPC resolves the whole Bedrock node,
+  # which doubles the lockfile of everything that ships and needs git sources
+  # `deny.toml` does not allow the product. `e2e/Cargo.toml` has the numbers.
+  "e2e",
 ]
 
 [workspace.package]
@@ -61,6 +68,10 @@ license = "MIT OR Apache-2.0"
 # anything published resolves to whatever exists at build time.
 verifier-core = { path = "verifier-core", version = "0.1.0" }
 pull-lib = { path = "pull-lib", version = "0.1.0" }
+# Declared here for `methods`' push-write measurement (M2-18), which needs the
+# instruction it is measuring. The guest spells its own path, because the guest
+# workspace does not see this table.
+aggregator-program = { path = "aggregator-program", version = "0.1.0" }
 kanon-clock = { path = "kanon-clock", version = "0.1.0" }
 kanon-idl = { path = "kanon-idl", version = "0.1.0" }
 kanon-sdk = { path = "kanon-sdk", version = "0.1.0" }
@@ -82,6 +93,18 @@ clock_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.g
 # way upstream does and checks that the declared layout reads it. Pinned to what
 # the LEZ graph already resolves, so it adds no new version to the tree.
 borsh = "1.8.0"
+
+# SPEL, for the aggregator. Only the macro crate here: `#[account_type]` is a
+# no-op the IDL generator reads, and the instruction enum needs nothing else, so
+# the core crate carries no framework runtime. The guest takes the full
+# framework, where the program actually runs.
+#
+# Spelled by the same tag the graph already resolves through `twap_oracle_core`,
+# which is what keeps one SPEL in the tree: a second revision would give the
+# guest two `AccountId` types, the hazard the `lee_core` note above describes.
+spel-framework-macros = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" }
+spel-framework = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" }
+serde = { version = "1", features = ["derive"] }
 twap_oracle_core = { git = "https://github.com/logos-blockchain/lez-programs", rev = "4363f13912e0ba8627e70575161862ab337c1169" }
 
 # Exact, not a caret range, and deliberately 3.0.5 where `m0/Cargo.toml` says 3.0.6.

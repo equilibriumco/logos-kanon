@@ -128,12 +128,19 @@ startup and never opens its RPC port without it, so **Bedrock is not optional** 
 that is a startup dependency and nothing more. It is *not* a `maxAge` time source. That
 answer is the clock program, ADR 13.
 
-**Still open, and now M2's question rather than M1's:** the sequencer's LEZ revision and
-the *product's* SPEL pin are independent, and it is the second that bites. The aggregator
-program in M2-01 links `logos-co/spel` **v0.6.0**, which resolves LEZ v0.2.0; everything
-M2 wants has landed on SPEL's `main` since. That is item 1 below. Deploying a program
-through `lgs` may need the same treatment `test-node` did, which is a separate matter and
-does not block the sequencer integration tests M1-04a unblocked.
+**Closed by M2-01, and it was never a choice.** This section used to read that SPEL sat
+at v0.1.2 and that M2-01 would have to pick between that and a v0.2.x-aligned scaffold.
+Both figures were stale. SPEL is at v0.6.0, `scaffold.toml` pins `0cb7e098`, and
+`Cargo.lock` already resolved `spel-framework-core` at that same commit before the
+aggregator existed -- `twap_oracle_core` uses the framework's `#[account_type]` macro, so
+the canonical price account brought SPEL into the graph.
+
+What remains is a constraint rather than a question. `spel-framework` names its own LEZ
+tag (`v0.2.0`, as `nssa_core`, which is `lee_core` renamed), so a SPEL bump and a LEZ bump
+are one decision: cargo unifies the two spellings only when source and tag match exactly,
+and `AccountId` is defined there. [ADR
+31](../adr/0031-the-aggregator-pins-spel-and-lez-as-one-decision.md) records it.
+Deploying a program through `lgs` is still untried, and is M4's rather than M2-01's.
 
 ## Open: the LGPL-3.0 dependency in LEZ's host graph
 
@@ -165,7 +172,7 @@ exception in `deny.toml` and raised here rather than waved through. The gate its
 
 ## Open: questions outstanding with Logos
 
-Five, in descending order of how much they block delivery. All five concern
+Seven, in descending order of how much they block delivery. All but the last concern
 repositories outside this one, which is why they are tracked here rather than resolved
 in code. Every claim below was re-checked against the upstream repository on 2026-09-16;
 two of the four M0 asked about had moved, and the dates say which.
@@ -235,7 +242,58 @@ Its positional counterpart is the LGPL-3.0 question in *Open: the LGPL-3.0 depen
 LEZ's host graph* above: the cheap licensing ask is a manifest fix, that one needs a
 stated estate position.
 
-**4. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
+**4. The rule pair that makes a default-owned account permanently unwritable, and what
+it costs.** LEZ increments every signer's nonce after applying a state diff, outside
+program execution (`lee/state_machine/src/state.rs:212-216`); rule 6 refuses a data
+change unless the executing program owns the account or the pre-state is default; and
+rule 7 refuses any post-state whose program owner is the default one unless the
+pre-state was `Account::default()` (`lee/state_machine/core/src/program.rs:711-731`).
+The claim mechanism cannot undo either, because the claim loop runs *after*
+`validate_execution` (`lee/state_machine/src/validated_state_diff.rs:215` then `:267`).
+
+Together those make an account that is non-default and default-owned permanently
+unwritable by any program. We have now met it twice, from opposite directions, and the
+second is the sharper one.
+
+**As a trap.** A program that takes a signer and does not claim it strands that account:
+the signer passes once while it is still pristine, LEZ bumps its nonce, and every later
+post-state naming it is refused. `aggregator-program` refuses a default-owned admin key
+rather than claim the operator's wallet (`AdminUnowned`), because rule 4 would make that
+ownership permanent and rule 5 would let the program move the balance. So: **is a
+program obliged to claim or reject a default-owned signer?** "You must claim" is a
+change to every program that takes one; "claim or reject" is satisfied by a guard.
+
+**As a griefing vector, which is the part worth answering.** Rule 5 guards balance
+*decreases* only, so anyone may *increase* the balance of an account they do not own,
+and rule 7 admits a pristine target. One unit of balance on a publicly derivable PDA
+therefore puts that address into the unwritable state for good, before the program that
+owns the derivation has ever run. Measured on this branch: the transfer validates, the
+generated `init` check then answers `AccountAlreadyInitialized` forever — with
+`RegisterError::AlreadyRegistered` one layer further in, which is what a host test sees
+— and any post-state writing the account is refused by rule 6.
+
+The reach is the whole of this adaptor's account model. Feed accounts derive from the
+feed id, and the five production ids are published in `FEEDS.md`. The **admin config
+account is the worst case**: its address derives from the program id and a constant,
+both of which an attacker can compute, so squatting it makes the generated `init` check
+answer `AccountAlreadyInitialized` forever — `AlreadyInitialised` is what the pure
+function returns, one layer further in — and the deployment is dead before the operator
+can bootstrap it. Price accounts derive from the feed account's id and go the same way.
+Rebuilding is not an escape either: the program id is the image id and ADR 8's exact pins make the build
+reproducible, so the next build's addresses are computable from published source too.
+
+**So the question is whether a program may claim a non-default, default-owned account.**
+If it may, both problems close at once — the squatted address becomes recoverable and
+the signer trap stops being a trap. If it may not, then every program in the estate
+using derived addresses can be denied for one unit of balance by anyone who can read its
+source, and that is worth knowing before mainnet. Pinned at both layers rather than
+assumed: `aggregator-program/tests/register_feed.rs::a_derived_address_can_be_squatted_and_this_pins_the_refusal`
+and `tests/admin.rs` for the pure functions,
+`a_squatted_feed_account_is_refused_by_the_generated_validator` and
+`a_squatted_admin_config_is_refused_by_the_generated_validator` in
+`methods/guest/src/bin/aggregator.rs` for the dispatcher.
+
+**5. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
 closer to a defect report than a preference: the account-type crate needs neither
 risc0 nor `uniswap_v3_math` to carry six Borsh fields. Splitting it into a standalone
 crate with relaxed pins — or at minimum loosening `=3.0.5` to `^3.0.5` — would make the
@@ -243,7 +301,7 @@ canonical account usable by the external adaptors it was explicitly written for.
 the case on `lez-programs` `main` as of 2026-09-16. What its current pins cost this
 repository is in ADR 8 and ADR 9.
 
-**5. What happens to a price account when the program that created it is upgraded.**
+**6. What happens to a price account when the program that created it is upgraded.**
 Recorded in ADR 22 and left open on purpose. Under LEZ's ownership model a program id is
 the hash of its binary, an account is bound for good to the id that created it, and no
 operation hands an account to a new binary — so an upgraded aggregator cannot update the
@@ -254,6 +312,23 @@ which is the only arrangement that keeps the address fixed. Both belong to M2's 
 and admin work, and neither is decidable from what LEZ documents today, which defines no
 upgrade path at all. We want the shape settled with Logos before M2 pours concrete around
 one of them.
+
+**7. Is a guest ELF bit-identical across machines at the pinned toolchain?** Measured
+here: the same inputs reproduce the image id bit for bit *on one machine*, including
+from a cleaned guest tree — the table is in `[M2-06:01]`. What that does not settle is
+whether two machines at the same pins produce the same id, and nothing in this
+repository establishes it. ADR 8 pins r0vm and the guest rustc as necessary conditions
+for the measured *figures*, and records a case where a different ELF gave identical
+cycle counts, so it is evidence about counts rather than about bytes.
+
+It matters for deployment rather than for the reports. The program id *is* the image
+id, so every account address derives from it. CI builds the guest on GitHub's runners:
+if a release is built there and an operator rebuilds it locally to verify what they are
+running, a differing id means the local build addresses different accounts and verifies
+nothing. Everything the ADR concludes holds under same-machine reproducibility, which
+is what was measured — but the deployment story quietly assumes the stronger property,
+and nobody has checked it. Two builds of one commit on two machines, ids compared,
+would answer it.
 
 ## Changing any of this
 
