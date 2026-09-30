@@ -1,0 +1,604 @@
+{
+  "accounts": [
+    {
+      "name": "AdminAccount",
+      "type": {
+        "fields": [
+          {
+            "name": "admin",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "pending",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          }
+        ],
+        "kind": "struct"
+      }
+    },
+    {
+      "name": "FeedAccount",
+      "type": {
+        "fields": [
+          {
+            "name": "feed_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "base_asset",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "quote_asset",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "max_age_ms",
+            "type": "u64"
+          },
+          {
+            "name": "signers",
+            "type": {
+              "vec": {
+                "array": [
+                  "u8",
+                  20
+                ]
+              }
+            }
+          },
+          {
+            "name": "threshold",
+            "type": "u8"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ],
+        "kind": "struct"
+      }
+    }
+  ],
+  "errors": [],
+  "instruction_type": "aggregator_program::Instruction",
+  "instructions": [
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "price_account",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "feed"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_PRICE_ACCOUNT"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "clock",
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "payload",
+          "type": {
+            "vec": "u8"
+          }
+        }
+      ],
+      "name": "submit_price"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "price_account",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "feed"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_PRICE_ACCOUNT"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "base_asset",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "quote_asset",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "decimals",
+          "type": "u8"
+        },
+        {
+          "name": "max_age_ms",
+          "type": "u64"
+        },
+        {
+          "name": "signers",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          }
+        },
+        {
+          "name": "threshold",
+          "type": "u8"
+        }
+      ],
+      "name": "register_feed"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "signers",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          }
+        },
+        {
+          "name": "threshold",
+          "type": "u8"
+        }
+      ],
+      "name": "update_signer_set"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
+      "name": "deregister_feed"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
+      "name": "pause_feed"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_FEED_ACCOUNT"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
+      "name": "unpause_feed"
+    },
+    {
+      "accounts": [
+        {
+          "init": true,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "initialise_admin"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
+      "name": "nominate_admin"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "accept_admin"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_ADMIN_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "admin",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "revoke_admin"
+    }
+  ],
+  "name": "kanon_aggregator",
+  "types": [],
+  "version": "0.1.0"
+}

@@ -1,8 +1,11 @@
-# The push-mode aggregator. Not implemented yet.
+# The push-mode aggregator: the instruction set, the feed state it keeps, and
+# the logic each instruction runs.
 #
-# It becomes a SPEL program: the SPEL dependency lands later, together
-# with the IDL surface, rather than being pinned here before anything uses it.
-# Which SPEL revision is a live question, recorded in `m0/versions.md`.
+# The SPEL program itself is the guest binary under `methods/guest/src/bin/`,
+# because that is what LEZ executes. This crate is what the guest delegates to,
+# which is what makes the logic testable on the host, and it follows the shape
+# Logos's own programs use: an instruction enum and `#[account_type]` state here,
+# the `#[lez_program]` module there.
 [package]
 name = "aggregator-program"
 description = "Push-mode LEZ aggregator: verifies RedStone packages and writes the canonical price account"
@@ -17,3 +20,51 @@ verifier-core.workspace = true
 # `AccountId` its identifier fields are made of. Through `kanon-idl` rather than
 # from upstream directly, so "re-exported, not forked" has one place it happens.
 kanon-idl.workspace = true
+
+# LEZ's account and post-state types, under the name the root workspace spells
+# them. The guest calls the same crate `nssa_core`; it resolves to one crate
+# because the source and the tag match character for character, which is the
+# whole of ADR 31's argument for spelling the pin once.
+lee_core.workspace = true
+
+# The clock, read from the one account a caller may not choose (ADR 13).
+kanon-clock.workspace = true
+
+# `#[account_type]`, which marks the state types the IDL generator publishes,
+# and the derives the instruction enum and account state need on the wire.
+spel-framework-macros.workspace = true
+# For the IDL generator binary: the macro expands to a `main` that refers to the
+# framework by name. Without its `host` feature, which would pull in a LEZ node.
+spel-framework.workspace = true
+borsh = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
+
+# A binary rather than an example, so `tests/idl.rs` can reach it through
+# `CARGO_BIN_EXE_generate-idl` and assert the committed artefact is current. An
+# example is not addressable that way, which would leave the check to CI alone.
+[[bin]]
+name = "generate-idl"
+path = "src/bin/generate-idl.rs"
+
+[dev-dependencies]
+# Deliberately without `preserve_order`. It would give the parity test field
+# order for free, and it would also change what the IDL generator emits: the
+# feature is unified across the graph, so `serde_json::Map` becomes an `IndexMap`
+# for `spel-framework`'s use of it too, and the committed artefact's key order
+# would then depend on whether the command that produced it built dev
+# dependencies. The test reads declaration order off the serialised text instead.
+serde_json = "1"
+# The codec the wire actually uses. `read_lee_inputs` deserialises the
+# instruction with `risc0_zkvm::serde`, so encoding with it here is what makes
+# the parity test a statement about the transaction rather than about Rust.
+risc0-zkvm.workspace = true
+# What the committed RedStone capture is encoded in. The fixture reader is
+# `verifier-core/tests/support/vectors.rs`, included by path rather than shared
+# through a crate, so its dependencies are declared by each consumer.
+hex = "0.4"
+# The signed-payload builder, for the one S3 dimension no captured payload can
+# reach: a package carrying a zero or negative value. The captures committed here
+# contain none, so this test signs its own deterministic fixture --
+# `[M2-16:01]` records it. Dev-only, and `verifier-core/tests/feature_edges.rs`
+# is what keeps it off a normal edge.
+verifier-core = { workspace = true, features = ["test-fixtures"] }

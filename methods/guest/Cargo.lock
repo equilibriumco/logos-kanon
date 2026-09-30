@@ -3,6 +3,20 @@
 version = 4
 
 [[package]]
+name = "aggregator-program"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "kanon-clock",
+ "kanon-idl",
+ "lee_core",
+ "serde",
+ "spel-framework",
+ "spel-framework-macros",
+ "verifier-core",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1594,11 +1608,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kanon-clock"
+version = "0.1.0"
+dependencies = [
+ "verifier-core",
+]
+
+[[package]]
 name = "kanon-guest"
 version = "0.1.0"
 dependencies = [
+ "aggregator-program",
  "kanon-idl",
+ "lee_core",
  "risc0-zkvm",
+ "spel-framework",
  "verifier-core",
 ]
 
@@ -2659,6 +2683,18 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "spel-framework"
+version = "0.6.0"
+source = "git+https://github.com/logos-co/spel.git?tag=v0.6.0#0cb7e0980535af619482cf1c823f4d394b3ebd61"
+dependencies = [
+ "borsh",
+ "lee_core",
+ "serde_json",
+ "spel-framework-core",
+ "spel-framework-macros",
+]
 
 [[package]]
 name = "spel-framework-core"

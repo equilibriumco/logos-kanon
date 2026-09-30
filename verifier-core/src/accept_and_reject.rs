@@ -647,3 +647,156 @@ fn no_two_failure_modes_answer_with_the_same_variant() {
         }
     }
 }
+
+/// Twice the honest value, so a median that moved is a median that says so.
+const TWO_HUNDRED: &[u8] = &[0, 0, 0, 200];
+
+fn value(n: u8) -> Value {
+    Value::from_be_slice(&[n]).expect("fits")
+}
+
+/// A payload an attacker assembled: `held` packages carrying [`TWO_HUNDRED`],
+/// then honest packages carrying [`HUNDRED`], `threshold` in total.
+///
+/// Every honest report is the same value here, which is deliberate and also a
+/// limit: it makes the tests below read as the attacker choosing the answer, and
+/// it hides the sub-majority case that
+/// `signers_below_the_bar_still_choose_which_honest_report_wins` covers with
+/// honest reports that differ.
+///
+/// The honest packages are the point. An attacker short of the threshold needs no
+/// further keys, because every honest package for the round is public and it can
+/// put in as many as the threshold requires.
+fn assembled_by_an_attacker(keys: &[SigningKey], held: usize, threshold: usize) -> Vec<u8> {
+    let mut builder = PayloadBuilder::default();
+    for (i, key) in keys.iter().take(threshold).enumerate() {
+        let reported: &[u8] = if i < held { TWO_HUNDRED } else { HUNDRED };
+        builder = builder.signed_package(key, &[(FEED, reported)], NOW_MS);
+    }
+    builder.build()
+}
+
+#[test]
+fn two_compromised_signers_decide_a_threshold_of_three() {
+    // The price is a median, so an attacker needs more than half of the counted
+    // slots rather than all of them. Nothing here is a defect: every package is
+    // validly signed by an authorised signer, for the right feed, at one moment.
+    // That is what leaves the threshold as the only thing in the way, and why its
+    // arithmetic is worth pinning rather than describing.
+    let keys = keys(5);
+    let set = addresses(&keys);
+    let config = config(&set, 3);
+
+    let two = verify(&assembled_by_an_attacker(&keys, 2, 3), &config).expect("verifies");
+    assert_eq!(
+        two.value,
+        value(200),
+        "two of three slots decide the median outright"
+    );
+
+    let one = verify(&assembled_by_an_attacker(&keys, 1, 3), &config).expect("verifies");
+    assert_eq!(
+        one.value,
+        value(100),
+        "one of three moves nothing, and the honest majority holds"
+    );
+}
+
+#[test]
+fn a_threshold_of_four_is_no_harder_to_move_than_a_threshold_of_three() {
+    // An even threshold averages the two middle values, so half the slots reach
+    // the answer without holding a majority of them. Raising a threshold from
+    // three to four therefore buys nothing, which is the whole reason the
+    // recommendation names five.
+    let keys = keys(5);
+    let set = addresses(&keys);
+
+    let moved = verify(&assembled_by_an_attacker(&keys, 2, 4), &config(&set, 4)).expect("verifies");
+
+    assert_eq!(
+        moved.value,
+        value(150),
+        "two of four slots pull the midpoint halfway, and further with a wider value"
+    );
+    assert_ne!(moved.value, value(100), "the honest value did not survive");
+}
+
+#[test]
+fn a_threshold_of_five_needs_three_compromised_signers() {
+    // The odd step up is the one that helps. Two slots of five cannot reach the
+    // middle of the sorted values, so the honest report is the answer.
+    let keys = keys(5);
+    let set = addresses(&keys);
+    let config = config(&set, 5);
+
+    let two = verify(&assembled_by_an_attacker(&keys, 2, 5), &config).expect("verifies");
+    assert_eq!(two.value, value(100), "two of five cannot reach the middle");
+
+    let three = verify(&assembled_by_an_attacker(&keys, 3, 5), &config).expect("verifies");
+    assert_eq!(three.value, value(200), "three of five decide it");
+}
+
+#[test]
+fn a_threshold_of_seven_needs_four_and_the_pattern_does_not_stop_at_five() {
+    // The last row of the table in `MANIPULATION-ANALYSIS.md`, and the reason it
+    // is there: the ratio does not improve as the threshold grows. Seven slots
+    // need four, the same half-plus-one as five needing three, so the step from
+    // five to seven buys proportionally nothing. Pinned rather than left to the
+    // formula, because the formula is what the table is asserting.
+    let keys = keys(9);
+    let set = addresses(&keys);
+    let config = config(&set, 7);
+
+    let three = verify(&assembled_by_an_attacker(&keys, 3, 7), &config).expect("verifies");
+    assert_eq!(
+        three.value,
+        value(100),
+        "three of seven cannot reach the middle"
+    );
+
+    let four = verify(&assembled_by_an_attacker(&keys, 4, 7), &config).expect("verifies");
+    assert_eq!(four.value, value(200), "four of seven decide it");
+}
+
+#[test]
+fn signers_below_the_bar_still_choose_which_honest_report_wins() {
+    // The other tests here give every honest signer the same value, so an
+    // attacker under the majority bar looks powerless. It is not: a median picks
+    // a position, and two of five slots pushed to one extreme move that position
+    // onto the highest or the lowest honest report. The honest values bound the
+    // outcome and the attacker picks which of them is the outcome, which is a
+    // weaker position than deciding the price and a stronger one than nothing.
+    let keys = keys(5);
+    let set = addresses(&keys);
+    let config = config(&set, 5);
+
+    // Three honest reports that disagree, and two slots the attacker holds.
+    let spread: [&[u8]; 3] = [&[0, 0, 0, 95], &[0, 0, 0, 100], &[0, 0, 0, 105]];
+    let attacked = |attacker_value: &[u8]| {
+        let mut builder = PayloadBuilder::default();
+        for (key, honest) in keys[..3].iter().zip(spread) {
+            builder = builder.signed_package(key, &[(FEED, honest)], NOW_MS);
+        }
+        for key in &keys[3..] {
+            builder = builder.signed_package(key, &[(FEED, attacker_value)], NOW_MS);
+        }
+        verify(&builder.build(), &config).expect("verifies").value
+    };
+
+    assert_eq!(
+        attacked(TWO_HUNDRED),
+        value(105),
+        "pushed high, the top honest report becomes the median"
+    );
+    assert_eq!(
+        attacked(&[0, 0, 0, 1]),
+        value(95),
+        "pushed low, the bottom one does"
+    );
+
+    // And the bound: the attacker cannot reach past the honest reports, however
+    // far it pushes. Without this the test above would not distinguish influence
+    // from control.
+    assert_ne!(attacked(TWO_HUNDRED), value(200), "200 is not reachable");
+    assert_ne!(attacked(&[0, 0, 0, 1]), value(1), "nor is 1");
+}
