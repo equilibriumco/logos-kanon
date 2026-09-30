@@ -2,30 +2,38 @@
 
 RFP-020. Built by Equilibrium for Logos. Dual licensed MIT and Apache-2.0.
 
-**Start with the M1 report**, `docs/M1-report.pdf`. It is the M1 deliverable: the
-verification core and what it establishes, what a price update costs, the evidence
-behind both, and the decisions outstanding with Logos.
+**Start with the M2 report**, `docs/M2-report.pdf`. It is the M2 deliverable: the push
+aggregator that verifies and publishes in one transaction, the administration around it,
+the five feeds on the public testnet, the security analysis SEC3 asks for, what the write
+costs, and the decisions outstanding with Logos.
 
-The headline: **verifying** a 3-of-N single-feed payload costs **1,831,638 cycles** —
-5.5% of LEZ's 33,554,432-cycle per-transaction budget — and secp256k1 recovery alone is
-95.85% of it. `COSTS.md` carries the full breakdown, generated and asserted by the tests
-rather than transcribed.
+The headline is a negative result, and a useful one: **the write is not where the money
+goes.** Publishing a verified price costs **8,582 cycles** for an update and **7,386** for
+a first write — 0.0256% of LEZ's 33,554,432-cycle per-transaction budget — against
+**3,039,832** to verify the payload being published. What decides whether a payload fits
+in one transaction is verification, which M1 bounded, and not the account write.
 
-The M0 report, `m0/M0-report.pdf`, remains the reference for the cost baseline: what a
-RedStone price update costs inside a LEZ program, how that was measured, and the
-recommendations that follow.
+The M1 report, `docs/M1-report.pdf`, remains the reference for the verification core: what
+it establishes, what verifying costs component by component, and the evidence behind both.
+The M0 report, `m0/M0-report.pdf`, is the original cost baseline — what a RedStone price
+update costs inside a LEZ program, how that was measured, and the recommendations that
+follow.
 
-**The two reports quote different headline numbers, and they are measuring different
-things.** M0's 1,906,737 is a whole LEZ transaction — it includes 158,290 cycles of LEZ
-framework floor and instruction handling that no verifier controls. M1's 1,831,638 is
-`verify_feed` alone: the verification work, with the framework excluded and with decode,
-the median, staleness and the threshold included, none of which the M0 harness had. Where
-the two overlap they agree to within cycles, and `COSTS.md` (*Agreement with the M0
-baseline*) reconciles them primitive by primitive.
+**The reports quote different headline numbers, and they are measuring different things.**
+M0's 1,906,737 is a whole LEZ transaction — it includes 158,290 cycles of LEZ framework
+floor and instruction handling that no verifier controls. M1's 1,831,638 is `verify_feed`
+alone: the verification work, with the framework excluded and with decode, the median,
+staleness and the threshold included, none of which the M0 harness had. M2's figures are
+the account write only, measured beside the 3,039,832-cycle verification of the same
+payload, which is a five-signer payload rather than M1's three. Where they overlap they
+agree to within cycles, and `COSTS.md` (*Agreement with the M0 baseline*) reconciles them
+primitive by primitive.
 
-M1 is implemented: the crate layout, verification core, CI gates, conformance suite,
-traceability matrix and standalone LEZ sequencer are in place. Later milestones wire
-that core into the two shipping modes and add deployment and operator-facing pieces.
+M1 and M2 are implemented. M1 put the crate layout, verification core, CI gates,
+conformance suite, traceability matrix and standalone LEZ sequencer in place; M2 wired
+that core into the push mode — `submit_price`, the admin instructions, the five feeds on
+the public testnet, and the security set — and priced the write. What remains is the pull
+mode (M3), the relayer, SDK, CLI and mini-app (M4), and testnet, docs and operations (M5).
 `TRACEABILITY.md` records what is complete and what remains.
 
 ## Layout
