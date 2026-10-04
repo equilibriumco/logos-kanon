@@ -150,8 +150,14 @@ jobs:
           key: product-costs-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: product-costs-${{ runner.os }}-
 
+      - uses: ./.github/actions/free-disk-space
+
       # Asserts every figure `COSTS.md` publishes, and ADR 6's two ceilings on
-      # the accelerator configuration with it.
+      # the accelerator configuration with it. The guests build in a container
+      # (`[M3-08:02]`), pinned by digest to the image carrying the same guest rustc
+      # these figures were measured on -- so the container moves where they
+      # compile and not what compiles them, and no figure here moved when it
+      # landed.
       - name: cost table
         run: cargo test --release --locked -p kanon-methods
 

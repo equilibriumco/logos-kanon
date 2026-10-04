@@ -330,9 +330,28 @@ is what was measured — but the deployment story quietly assumes the stronger p
 and nobody has checked it. Two builds of one commit on two machines, ids compared,
 would answer it.
 
+**Answered, and the answer changed under us.** It was *no*: a guest's image id depended
+on the absolute path the repository was checked out at, because cargo derives
+`-C metadata` from a package id whose source id, for a path dependency, is that path. Two
+directories on one machine were enough to show it, which is a weaker condition than the
+two machines proposed here. `[M3-08:02]` records the mechanism and compiles the guests in
+a container at a fixed path, and it is now *yes*: a review of that change built the same
+commit on a second machine and got all three product ids identical to the ones that ADR
+records. So a release can be verified by rebuilding it, which is what this question was
+really asking. Unextended: the builder image is x86_64, so this says nothing about
+another architecture.
+
 ## Changing any of this
 
 Bump it, run both guardrail suites, and update the constants, the affected report
 tables and this file in the same commit. A guardrail failure is a prompt to re-measure,
 not necessarily a defect, but a published figure must never move without the table that
 quotes it.
+
+Moving the LEZ pin has one step the suites cannot perform: re-read
+`MAX_NUM_CYCLES_PUBLIC_EXECUTION` out of the new revision and hold it against
+`methods/tests/support/lez.rs`. The constant is private, so no test imports it and no
+failure would follow from its moving; the number has held at `1024 * 1024 * 32` across
+v0.2.0 and v0.2.1 while the file holding it moved, which is exactly the shape of a change
+that goes unnoticed. Every headroom figure in the cost reports is a ratio against it, and
+P1 claims a transaction fits the budget in force at delivery.

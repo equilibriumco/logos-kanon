@@ -1,0 +1,568 @@
+{
+  "accounts": [
+    {
+      "name": "ConfigAccount",
+      "type": {
+        "fields": [
+          {
+            "name": "authority",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "pending",
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          }
+        ],
+        "kind": "struct"
+      }
+    },
+    {
+      "name": "OrderAccount",
+      "type": {
+        "fields": [
+          {
+            "name": "owner",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "feed_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "base_asset",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "quote_asset",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "max_age_ms",
+            "type": "u64"
+          },
+          {
+            "name": "limit_price_q64",
+            "type": "u128"
+          },
+          {
+            "name": "filled",
+            "type": "bool"
+          }
+        ],
+        "kind": "struct"
+      }
+    },
+    {
+      "name": "PriceSource",
+      "type": {
+        "fields": [
+          {
+            "name": "feed_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "aggregator",
+            "type": "program_id"
+          },
+          {
+            "name": "base_asset",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "quote_asset",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "max_age_ms",
+            "type": "u64"
+          }
+        ],
+        "kind": "struct"
+      }
+    }
+  ],
+  "errors": [],
+  "instructions": [
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_READ_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "authority",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "establish_authority"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_READ_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "authority",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "nominee",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
+      "name": "nominate_authority"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_READ_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "nominee",
+          "signer": true,
+          "writable": false
+        }
+      ],
+      "args": [],
+      "name": "accept_authority"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "source",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_READ_SOURCE"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "authority",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_READ_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "aggregator",
+          "type": {
+            "array": [
+              "u32",
+              8
+            ]
+          }
+        },
+        {
+          "name": "base_asset",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "quote_asset",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "max_age_ms",
+          "type": "u64"
+        }
+      ],
+      "name": "register_price_source"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "source",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_READ_SOURCE"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "authority",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_READ_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "aggregator",
+          "type": {
+            "array": [
+              "u32",
+              8
+            ]
+          }
+        }
+      ],
+      "name": "update_aggregator"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "source",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_READ_SOURCE"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "authority",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": "KANON_READ_CONFIG"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
+      "name": "deregister_price_source"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "order",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "order_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_READ_ORDER"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "owner",
+          "signer": true,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "source",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_READ_SOURCE"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "order_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "base_asset",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "quote_asset",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "limit_price_q64",
+          "type": "u128"
+        }
+      ],
+      "name": "open_order"
+    },
+    {
+      "accounts": [
+        {
+          "init": false,
+          "name": "order",
+          "signer": false,
+          "writable": true
+        },
+        {
+          "init": false,
+          "name": "source",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "arg",
+                "path": "feed_id"
+              },
+              {
+                "kind": "const",
+                "value": "KANON_READ_SOURCE"
+              }
+            ]
+          },
+          "signer": false,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "price",
+          "signer": false,
+          "writable": false
+        },
+        {
+          "init": false,
+          "name": "clock",
+          "signer": false,
+          "writable": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ],
+      "name": "settle"
+    }
+  ],
+  "name": "kanon_aggregator_read_consumer",
+  "types": [],
+  "version": "0.1.0"
+}

@@ -65,39 +65,17 @@ use aggregator_program::{
     submit::PRICE_ACCOUNT_SEED,
     Instruction,
 };
-use kanon_clock::{LezClock, CLOCK_ACCOUNT_ID};
-use lee_core::{
-    account::{Account, Data},
-    program::ProgramId,
+use kanon_clock::CLOCK_ACCOUNT_ID;
+#[path = "support/chain.rs"]
+mod chain;
+use chain::{
+    account_now, account_when, chain_now_ms, chain_now_past, client, decode, deploy_guest,
+    ensure_the_account_is_owned, send_to_program,
 };
-use sequencer_service_rpc::{RpcClient as _, SequencerClient, SequencerClientBuilder};
+use lee_core::program::ProgramId;
+use sequencer_service_rpc::{RpcClient as _, SequencerClient};
 use spel_framework::pda::{compute_pda, seed_from_str};
-use verifier_core::{
-    test_support::{address_of, signing_key, PayloadBuilder},
-    time::TimeSource as _,
-};
-
-/// Where the harness puts it. `KANON_SEQUENCER_PORT` overrides, as the script does.
-///
-/// `KANON_SEQUENCER_URL` overrides both, and takes a whole URL rather than a port
-/// so the suite can address a sequencer that is not local -- the public testnet at
-/// `https://testnet.lez.logos.co`, or a node joined to it, which is what F7 and S1
-/// mean by devnet/testnet. The port variable still serves the standalone harness
-/// `scripts/lez-sequencer.sh` starts, which is what CI uses and what the default
-/// stays.
-fn sequencer_url() -> String {
-    if let Ok(url) = std::env::var("KANON_SEQUENCER_URL") {
-        return url;
-    }
-    let port = std::env::var("KANON_SEQUENCER_PORT").unwrap_or_else(|_| "3055".to_owned());
-    format!("http://127.0.0.1:{port}")
-}
-
-fn client() -> SequencerClient {
-    SequencerClientBuilder::default()
-        .build(sequencer_url())
-        .expect("a client for the sequencer URL")
-}
+use verifier_core::test_support::{address_of, signing_key, PayloadBuilder};
 
 /// The admin key this end-to-end test holds.
 ///
@@ -293,196 +271,26 @@ fn expected_price(value_scaled: u64) -> u128 {
 /// them individually put `submit_and_read_back` over clippy's argument limit
 /// once a feed joined them. Built after the deployment, which is where the
 /// program id comes from.
-struct Chain {
+///
+/// Not in `chain.rs` with the transport, and not named `Chain` any more, both
+/// for the same reason: it is this suite's shape rather than the harness's. The
+/// pull suite signs with two keys -- an authority and an order's owner -- so a
+/// bundle carrying one `key` and one `admin_id` does not fit it, and a `Chain`
+/// beside a `mod chain` would read as the module's own type.
+struct Deployment {
     client: SequencerClient,
     program: ProgramId,
     key: lee::PrivateKey,
     admin_id: lee::AccountId,
 }
 
-/// How long to wait for a transaction to show up in state.
-///
-/// The sequencer collects the mempool on an interval — about fifteen seconds
-/// against this harness — so a submission takes a block or two to appear. Sixty
-/// seconds is several of those.
-const SETTLE_ATTEMPTS: u32 = 60;
-
-/// Polls `id` until `read` answers, and fails naming the log if it never does.
-///
-/// This is the shape every step here takes, and the reason is the one in the
-/// module docs: a transaction that failed is indistinguishable from one still in
-/// the mempool by looking at the send. Only state answers, and only the
-/// sequencer's log says why it never moved.
-async fn account_when<T>(
-    client: &SequencerClient,
-    id: lee::AccountId,
-    what: &str,
-    read: impl Fn(&Account) -> Option<T>,
-) -> T {
-    for _ in 0..SETTLE_ATTEMPTS {
-        let account = client
-            .get_account(id)
-            .await
-            .expect("the sequencer answers getAccount");
-        if let Some(value) = read(&account) {
-            return value;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    panic!(
-        "{what}: state never moved within {SETTLE_ATTEMPTS}s. The transaction was accepted -- \
-         `sendTransaction` returning a hash says only that -- so the reason it did not execute is \
-         in target/lez-sequencer/sequencer.log"
-    );
-}
-
-/// One read, with no waiting.
-async fn account_now(client: &SequencerClient, id: lee::AccountId) -> Account {
-    client
-        .get_account(id)
-        .await
-        .expect("the sequencer answers getAccount")
-}
-
-fn decode<T: borsh::BorshDeserialize>(data: &Data) -> Option<T> {
-    borsh::from_slice(data.as_ref()).ok()
-}
-
-/// Sends an instruction to the aggregator, signed by `key`.
-///
-/// Nonces are fetched per send and are one per **signer**, not one per account:
-/// a nonce for every account gets `InvalidInput("Mismatch between number of
-/// nonces and signatures/public keys")` out of the block builder, which -- being
-/// the block builder -- is invisible at the send.
-async fn send_to_program(
-    client: &SequencerClient,
-    program: ProgramId,
-    accounts: Vec<lee::AccountId>,
-    key: &lee::PrivateKey,
-    signer: lee::AccountId,
-    instruction: &Instruction,
-) {
-    let nonces = client
-        .get_accounts_nonces(vec![signer])
-        .await
-        .expect("the sequencer answers getAccountsNonces");
-
-    let message = lee::public_transaction::Message::try_new(program, accounts, nonces, instruction)
-        .expect("the instruction encodes");
-    let witness = lee::public_transaction::WitnessSet::for_message(&message, &[key]);
-
-    client
-        .send_transaction(common::transaction::LeeTransaction::Public(
-            lee::PublicTransaction::new(message, witness),
-        ))
-        .await
-        .expect("the sequencer accepts the transaction");
-}
-
-/// The chain's own time, from the account the program is required to read.
-async fn chain_now_ms(client: &SequencerClient) -> u64 {
-    let clock = account_now(client, lee::AccountId::new(CLOCK_ACCOUNT_ID)).await;
-    LezClock::from_account(&CLOCK_ACCOUNT_ID, clock.data.as_ref())
-        .expect("the pinned clock account decodes")
-        .now_ms()
-        .expect("the clock has a time")
-}
-
 // ---------------------------------------------------------------------------
 // The steps.
 // ---------------------------------------------------------------------------
 
-/// Deploys this build's guest, and returns its program id.
-///
-/// Unconditional, because a deployment cannot be read back: `getProgramIds`
-/// answers with the sequencer's built-ins only. On a clean chain it lands. On a
-/// chain that already has this program — a second local run — the same bytecode
-/// gives the same transaction hash and the sequencer refuses it with a
-/// `failed execution check` line in its log. That line is expected there and
-/// nothing here depends on the send: what establishes the program is deployed is
-/// that the instructions after this one execute.
-async fn deploy_the_guest(client: &SequencerClient) -> ProgramId {
-    let bytecode = kanon_methods::AGGREGATOR_ELF.to_vec();
-    assert!(
-        !bytecode.is_empty(),
-        "the guest ELF is empty, which means RISC0_SKIP_BUILD stubbed it out -- \
-         this test needs a real build"
-    );
-
-    client
-        .send_transaction(common::transaction::LeeTransaction::ProgramDeployment(
-            lee::ProgramDeploymentTransaction::new(
-                lee::program_deployment_transaction::Message::new(bytecode),
-            ),
-        ))
-        .await
-        .expect("the sequencer accepts a program deployment");
-
-    kanon_methods::AGGREGATOR_ID
-}
-
-/// Claims `admin` under `authenticated_transfer`, so it is owned by a program.
-///
-/// `initialise_admin` refuses a default-owned key -- error 812, "owned by no
-/// program, and LEZ strands such an account after one transaction" -- so the
-/// authority has to be an account that already exists on chain. `[M2-06:01]`
-/// states that as a deployment property; this is what satisfies it on a fresh
-/// chain, and it is the check firing for real rather than in a host fixture.
-///
-/// `authenticated_transfer::Instruction::Initialize` is a unit variant at index
-/// 1 and claims a *default* account for itself, needing only that the account
-/// signs. No funding and no genesis entitlement: the account claims itself. The
-/// instruction is encoded by index rather than by depending on
-/// `authenticated_transfer_core`, because one `u32` is a smaller thing to keep
-/// true than a git dependency, and `getProgramIds` is what pins the program it
-/// is sent to.
-async fn ensure_the_admin_account_is_owned(
-    client: &SequencerClient,
-    key: &lee::PrivateKey,
-    admin_id: lee::AccountId,
-) {
-    if account_now(client, admin_id).await.program_owner != ProgramId::default() {
-        return;
-    }
-
-    let program = *client
-        .get_program_ids()
-        .await
-        .expect("the sequencer answers getProgramIds")
-        .get("authenticated_transfer")
-        .expect("the sequencer has authenticated_transfer built in");
-
-    let nonces = client
-        .get_accounts_nonces(vec![admin_id])
-        .await
-        .expect("nonces");
-    let message = lee::public_transaction::Message::new_preserialized(
-        program,
-        vec![admin_id],
-        nonces,
-        vec![1u32],
-    );
-    let witness = lee::public_transaction::WitnessSet::for_message(&message, &[key]);
-    client
-        .send_transaction(common::transaction::LeeTransaction::Public(
-            lee::PublicTransaction::new(message, witness),
-        ))
-        .await
-        .expect("the sequencer accepts the claim");
-
-    account_when(
-        client,
-        admin_id,
-        "the admin account is claimed",
-        |account| (account.program_owner != ProgramId::default()).then_some(()),
-    )
-    .await;
-}
-
 /// Establishes the authority, and returns the config account's address.
-async fn ensure_the_authority_is_established(chain: &Chain) -> lee::AccountId {
-    let Chain {
+async fn ensure_the_authority_is_established(chain: &Deployment) -> lee::AccountId {
+    let Deployment {
         client,
         program,
         key,
@@ -531,11 +339,11 @@ async fn ensure_the_authority_is_established(chain: &Chain) -> lee::AccountId {
 
 /// Registers one feed, and returns its account address.
 async fn ensure_the_feed_is_registered(
-    chain: &Chain,
+    chain: &Deployment,
     config_id: lee::AccountId,
     feed: &Feed,
 ) -> lee::AccountId {
-    let Chain {
+    let Deployment {
         client,
         program,
         key,
@@ -638,13 +446,13 @@ fn price_account_id(program: ProgramId, feed_account_id: lee::AccountId) -> lee:
 /// observation rather than a re-read: no previous run can have written this
 /// round, because it comes from the chain's clock during this one.
 async fn submit_and_read_back(
-    chain: &Chain,
+    chain: &Deployment,
     feed: &Feed,
     feed_account_id: lee::AccountId,
     round: u64,
     value_scaled: u64,
 ) -> OraclePriceAccount {
-    let Chain {
+    let Deployment {
         client,
         program,
         key,
@@ -673,21 +481,6 @@ async fn submit_and_read_back(
         decode::<OraclePriceAccount>(&account.data).filter(|price| price.timestamp == round)
     })
     .await
-}
-
-/// The chain's clock, once it is strictly past `round`.
-///
-/// Waited for rather than dated forward: a package timestamped ahead of the
-/// chain would be testing the forward tolerance instead of the update.
-async fn chain_now_past(client: &SequencerClient, round: u64) -> u64 {
-    for _ in 0..SETTLE_ATTEMPTS {
-        let now = chain_now_ms(client).await;
-        if now > round {
-            return now;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-    panic!("the chain clock never passed {round}, so no newer round was available");
 }
 
 // ---------------------------------------------------------------------------
@@ -733,10 +526,15 @@ async fn the_push_path_verifies_and_publishes_across_a_real_sequencer() {
     let client = client();
     let (key, admin_id) = test_admin();
 
-    let program = deploy_the_guest(&client).await;
-    ensure_the_admin_account_is_owned(&client, &key, admin_id).await;
+    let program = deploy_guest(
+        &client,
+        kanon_methods::AGGREGATOR_ELF,
+        kanon_methods::AGGREGATOR_ID,
+    )
+    .await;
+    ensure_the_account_is_owned(&client, &key, admin_id).await;
 
-    let chain = Chain {
+    let chain = Deployment {
         client,
         program,
         key,
@@ -920,10 +718,15 @@ async fn the_five_feeds_register_on_the_public_testnet() {
     let client = client();
     let (key, admin_id) = test_admin();
 
-    let program = deploy_the_guest(&client).await;
-    ensure_the_admin_account_is_owned(&client, &key, admin_id).await;
+    let program = deploy_guest(
+        &client,
+        kanon_methods::AGGREGATOR_ELF,
+        kanon_methods::AGGREGATOR_ID,
+    )
+    .await;
+    ensure_the_account_is_owned(&client, &key, admin_id).await;
 
-    let chain = Chain {
+    let chain = Deployment {
         client,
         program,
         key,

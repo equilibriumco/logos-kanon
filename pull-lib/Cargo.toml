@@ -1,8 +1,16 @@
-# Public-mode pull verification. Not implemented yet.
+# Public-mode pull verification: one call over `verifier-core`, for a consumer
+# program that verifies a payload inline rather than reading a published price.
 #
 # The RFP requires that a consumer using only pull can integrate without
 # registering a feed against the aggregator, so this crate must never depend on
-# `aggregator-program`. CI asserts that rather than trusting review.
+# an aggregator crate. CI's `pull-independence` job asserts it on the resolved
+# build graph, under every feature and every target rather than the runner's
+# defaults -- an allow-list of every package in the closure that does not come
+# from a registry, so a reuse nobody anticipated is caught too. It has to reach
+# past this repository's own packages, because `twap_oracle_core` declares the
+# canonical price account and arrives by git. Registry packages are `cargo
+# deny`'s business. Dev-dependencies are outside it, which is what leaves the
+# two paths comparable in a test.
 [package]
 name = "pull-lib"
 description = "Inline RedStone payload verification for public-mode LEZ consumer programs"
@@ -12,3 +20,17 @@ license.workspace = true
 
 [dependencies]
 verifier-core.workspace = true
+
+# The clock, and the reason it is a dependency rather than a parameter: the
+# consumer names an account rather than handing over a time. That refuses any
+# account but the pinned every-block one, which is the mistake worth catching --
+# the other two hold plausible timestamps. It is weaker than the aggregator's
+# check, which gets id and data as fields of one account the dispatcher supplied;
+# here they are separate arguments. `src/lib.rs` has the whole of it.
+kanon-clock.workspace = true
+
+[dev-dependencies]
+# The committed RedStone capture is the fixture, read by the shared reader in
+# `verifier-core/tests/support/`, which each consumer includes by path.
+serde_json = "1"
+hex = "0.4"

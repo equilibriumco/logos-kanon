@@ -79,7 +79,7 @@ title = "Relayer as a Logos module with a Logos Core headless daemon: configurab
 id = "F9"
 category = "Functionality"
 kind = "hard"
-title = "Public-mode pull verification library returning a verified price or a typed error, with no dependency on the aggregator's price account"
+title = "Public-mode pull verification library: given a payload, a configured (dataServiceId, feedId, authorised signer set, M-of-N threshold, maxAge) and the consumer's expected (base_asset, quote_asset), returns the verified price and timestamp or a typed error, with no dependency on the aggregator's price account"
 
 # ---------------------------------------------------------------------- Usability
 

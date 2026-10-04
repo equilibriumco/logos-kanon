@@ -323,9 +323,12 @@ fn a_newer_round_updates_the_account_this_program_already_owns() {
 
 #[test]
 fn an_update_emits_no_claim() {
-    // The account is already owned, and `validate_execution` refuses a claim on
-    // anything but a default-owned account -- so claiming here would turn every
-    // update after the first into a rejected transaction.
+    // The account is already owned, and LEZ refuses a claim on anything but a
+    // default-owned account -- so claiming here would turn every update after
+    // the first into a rejected transaction. Not `validate_execution`, which
+    // never reads `required_claim`: the claim loop in the state machine applies
+    // claims after validation has run, which is why this asserts the claim
+    // directly rather than through the validator.
     let v = vector("BTC");
     let stale = OraclePriceAccount {
         base_asset: AccountId::new(BASE),

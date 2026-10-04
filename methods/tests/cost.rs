@@ -73,6 +73,9 @@ use verifier_core::feed::MAX_RECOVERIES;
 #[path = "../../verifier-core/tests/support/vectors.rs"]
 mod vectors;
 
+#[path = "support/lez.rs"]
+mod lez;
+
 use vectors::Vector;
 
 /// RedStone's scale for `redstone-primary-prod`.
@@ -132,7 +135,7 @@ mod expected {
     /// `MAX_NUM_CYCLES_PUBLIC_EXECUTION`, the cycles a LEZ public transaction
     /// gets. Recorded in `m0/lez-probe/README.md` and the figure P1 is measured
     /// against.
-    pub const LEZ_CYCLE_BUDGET: u64 = 33_554_432;
+    pub use super::lez::CYCLE_BUDGET as LEZ_CYCLE_BUDGET;
 
     /// What the same rows would read if the wrong `[patch.crates-io]` were in
     /// force, from `m0`'s software and accelerated measurements: one software
@@ -1203,4 +1206,250 @@ fn the_registration_figure_is_reproducible() {
         "| _as a share of the per-transaction budget_ | _{:.4}%_ |\n",
         100.0 * cycles as f64 / expected::LEZ_CYCLE_BUDGET as f64
     );
+}
+
+/// What a native ECDSA and keccak256 precompile would be worth (M3-09, P3).
+///
+/// The delta P3 asks for is measured everywhere but three terms, all of them
+/// properties of a primitive nobody has built: what a call costs, how many calls
+/// there are (which depends on what it returns), and what it validates. What a
+/// precompile would *remove* is two rows of the component table and what would
+/// *remain* is the difference, both measured — but only if it absorbs the signature
+/// parsing and the malleability refusal the recovery row also contains. If it does
+/// not, the removable figure is an upper bound and what stays behind is unmeasured. What it would *add* is a syscall crossing per
+/// call, and no such precompile exists in LEZ to measure, so that term stays a
+/// parameter and every figure below is published as a function of it.
+///
+/// `[M3-09:01]` records why it is not collapsed into a single number: the answer
+/// swings by a factor of three across the band, and the term it swings on is one
+/// the reader — Logos, deciding whether to build the thing — controls and we do
+/// not.
+mod precompile {
+    /// Cycles a guest spends crossing into a precompile and back, per call.
+    ///
+    /// The band `m0/lez-probe/README.md` introduced, carried forward unchanged so
+    /// this delta and that report's can be read together. The lower end is what
+    /// an accelerator-style syscall plausibly costs; the upper end is generous.
+    ///
+    /// One band for both primitives, which is a simplification rather than a
+    /// finding: `m0` derived it for a *recovery* syscall and left hashing in
+    /// software. Written out the addition is `5·c_keccak + 5·c_recovery`, and
+    /// `10·c_keccak + 5·c_recovery` for a primitive returning a public key.
+    /// Collapsing it to one `c` publishes one band instead of two, which is less
+    /// invented precision rather than more knowledge.
+    pub const SYSCALL_BAND: [u64; 2] = [1_000, 10_000];
+
+    /// One keccak256 and one recovery, so two crossings per package.
+    ///
+    /// Two assumes the precompile hands back an **address**, the way the EVM's
+    /// `ecrecover` does. A pubkey-returning one -- which is what "native ECDSA"
+    /// means anywhere the EVM's convention does not apply -- leaves the caller to
+    /// keccak the point, as `address_of` does today, and costs three crossings a
+    /// package. That is not a rounding difference at the top of the band: fifteen
+    /// crossings at 10,000 cycles puts a pull read at 181,115 rather than 131,115,
+    /// 16.8x rather than 23.2x. `COSTS.md` states the assumption where it states
+    /// the band, because it is the reader's to overturn.
+    pub const CALLS_PER_PACKAGE: u64 = 2;
+
+    /// The removable rows as a share of what verification costs, per signer count.
+    ///
+    /// Per signer count and not per payload: verification hashes each package's whole
+    /// signable span, so a package with more data points than the captured one hashes
+    /// more without recovering more. Every captured package carries one point and a
+    /// 77-byte span, which is the shape these shares describe.
+    ///
+    /// Not comparable with `m0`'s 89% without saying what moved, because both
+    /// halves did. That figure is `m0`'s *recovery row alone* against the whole
+    /// 3-of-N program, with its keccak row a separate 2.72%; this is recovery
+    /// **and** keccak against verification only, with the framework floor and the
+    /// per-package instruction handling excluded because no crypto precompile
+    /// touches them.
+    /// In thousandths, for the reason the next constant is: at whole percent a
+    /// five-signer regression of some 29,500 cycles floors to the same 99.
+    pub const SHARE_OF_VERIFICATION: [(usize, u64); 3] = [(1, 970), (3, 987), (5, 990)];
+
+    /// Of the removable cost, how much is recovery rather than hashing, in
+    /// thousandths.
+    ///
+    /// **A split of table rows, which is not a split of primitives.** The recovery
+    /// row is everything `recover_signer` does: parsing the signature, refusing a
+    /// malleable one, the recovery, encoding the point, and a second keccak256 in
+    /// `address_of`, which hashes it to an Ethereum address.
+    ///
+    /// Nothing isolates that second hash, so the primitive split is an estimate and
+    /// the only one in this module: taking it at 17,476 -- the *message* hash's
+    /// measured cost, on the reasoning that a 64-byte and a 77-byte input both fit
+    /// one 136-byte keccak block -- puts the removable 3,010,270 at roughly 174,760
+    /// of keccak256 against 2,835,510 of ECDSA proper, 5.8% to 94.2% rather than
+    /// 2.9% to 97.1%. The recommendation is unchanged under either; the size of the
+    /// smaller half is not. What the primitive validates is a further assumption,
+    /// since the row being removed includes the parsing and the malleability check.
+    ///
+    /// The figure that decides which precompile to build first if only one is
+    /// built. Thousandths rather than whole percent, for the reason
+    /// `read_cost.rs` gives about the recovery share it pins: flooring a
+    /// percentage tolerates a percent of drift, which is wide enough to hide a
+    /// real change. Per count, because at that resolution they are 971, 971 and
+    /// 970 rather than one number -- 97.10% at all three to two decimals, which
+    /// is the claim `COSTS.md` makes and the strongest one the figures support.
+    pub const RECOVERY_SHARE_THOUSANDTHS: [(usize, u64); 3] = [(1, 971), (3, 971), (5, 970)];
+
+    /// What a precompile would leave of a push update, at each end of the band,
+    /// and with a free syscall.
+    pub const PUSH_UPDATE_REMAINS: [u64; 3] = [38_144, 48_144, 138_144];
+
+    /// The same, as a reduction factor in tenths: 79.9x, 63.3x, 22.1x. Rounded
+    /// rather than floored, for the reason `read_cost.rs` gives where it pins the
+    /// pull side's.
+    pub const PUSH_UPDATE_REDUCTION_TENTHS: [u64; 3] = [799, 633, 221];
+}
+
+/// The figures `support/lez.rs` shares are the ones this file measures.
+///
+/// The shared module exists so three test binaries stop retyping the same
+/// constants, and a copy is only worth having if something holds it against its
+/// source. This is that: the component table is the measurement, and these are
+/// the rows other files take from it.
+#[test]
+fn the_shared_figures_match_the_component_table() {
+    let vector = vector();
+    let [_decode, keccak, recovery, _membership, _rest] = components(&vector, SIGNER_COUNTS[2]);
+    assert_eq!(
+        (keccak, recovery),
+        (lez::FIVE_SIGNER_KECCAK, lez::FIVE_SIGNER_RECOVERY),
+        "the shared copies of the removable rows no longer match what this file measures, \
+         so `read_cost.rs` and `bytes.rs` are working from stale figures"
+    );
+}
+
+/// A reduction factor in tenths, rounded to the nearest rather than truncated.
+fn tenths(before: u64, after: u64) -> u64 {
+    (before * 10 + after / 2) / after
+}
+
+/// What a precompile would remove, and what it would leave, per signer count.
+///
+/// Two rows of a table this file already pins, so nothing new is executed: the
+/// arithmetic is the deliverable, and asserting it is what stops `COSTS.md` and
+/// the components drifting apart.
+#[test]
+fn a_precompile_addresses_almost_all_of_verification() {
+    let vector = vector();
+    for (n, share) in precompile::SHARE_OF_VERIFICATION {
+        let [_decode, keccak, recovery, _membership, _rest] = components(&vector, n);
+        let removable = keccak + recovery;
+        let total = expected::TOTAL
+            .iter()
+            .find(|(c, _)| *c == n)
+            .expect("pinned")
+            .1;
+        assert_eq!(
+            removable * 1_000 / total,
+            share,
+            "{n} signers: a precompile addresses {removable} of {total} cycles, which is \
+             not {share} thousandths of it"
+        );
+        let expected = precompile::RECOVERY_SHARE_THOUSANDTHS
+            .iter()
+            .find(|(count, _)| *count == n)
+            .expect("every counted signer count has a share")
+            .1;
+        assert_eq!(
+            recovery * 1_000 / removable,
+            expected,
+            "{n} signers: recovery is not {expected} thousandths of what a precompile \
+             would remove, and that share is the argument for building the ECDSA half \
+             first"
+        );
+    }
+}
+
+/// The push side of P3's per-mode delta: what an update would cost instead.
+///
+/// The update rather than the create, because the update is what a heartbeat
+/// runs. Both ends of the syscall band are asserted, and so is the free-syscall
+/// case, which is the bound that holds however cheap a real precompile turns out
+/// to be.
+///
+/// **The residual is a difference across two guests**, and that is worth stating
+/// because it is two ~3M figures subtracted to leave ~38K. `body` comes from
+/// `submit_cost` and `removable` from `verify_cost`, and
+/// `both_harnesses_agree_about_what_verification_costs` measures those two
+/// disagreeing by 42 cycles on identical verification while tolerating 0.1%. So
+/// this figure carries that disagreement: 42 cycles of it today, and up to about
+/// 3,000 before anything here would notice. It is a residual accurate to a few
+/// tens of cycles rather than to one, which is enough for a reduction factor and
+/// not enough to read small differences between residuals as meaningful.
+#[test]
+fn what_a_precompile_would_leave_of_a_push_update() {
+    let vector = vector();
+    // From the capture rather than from a pinned index: `push_components` submits
+    // the whole payload, so the two halves of `body - removable` would describe
+    // different package counts if the capture ever held a different number of
+    // signers. `both_harnesses_agree_about_what_verification_costs` derives it the
+    // same way.
+    let signers = vector.signers.len();
+    let [_decode, keccak, recovery, _membership, _rest] = components(&vector, signers);
+    let removable = keccak + recovery;
+    let calls = signers as u64 * precompile::CALLS_PER_PACKAGE;
+    let (_verify, _write, body) = push_components(&vector, Case::Update);
+
+    let syscall = [0, precompile::SYSCALL_BAND[0], precompile::SYSCALL_BAND[1]];
+    for (i, cost) in syscall.into_iter().enumerate() {
+        // Checked, and for a sharper reason than the pull side's: this subtracts a
+        // `verify_cost` figure from a `submit_cost` one, so it is not guaranteed
+        // positive by construction the way a within-guest difference is. `--release`
+        // is how `COSTS.md` says to run these, and release wraps rather than panics.
+        let remains = body
+            .checked_sub(removable)
+            .expect("a submission contains the verification whose rows are removed")
+            + calls * cost;
+        assert_eq!(
+            remains,
+            precompile::PUSH_UPDATE_REMAINS[i],
+            "a push update with a precompile at {cost} cycles a call moved"
+        );
+        assert_eq!(
+            tenths(body, remains),
+            precompile::PUSH_UPDATE_REDUCTION_TENTHS[i],
+            "the reduction at {cost} cycles a call moved"
+        );
+    }
+}
+
+/// Prints the update half of `COSTS.md`'s precompile table.
+///
+/// ```sh
+/// cargo test --release -p kanon-methods -- --nocapture the_precompile_table
+/// ```
+#[test]
+fn the_precompile_table_is_reproducible() {
+    let vector = vector();
+    let signers = vector.signers.len();
+    let [_decode, keccak, recovery, _membership, _rest] = components(&vector, signers);
+    let removable = keccak + recovery;
+    let calls = signers as u64 * precompile::CALLS_PER_PACKAGE;
+    let (_verify, _write, body) = push_components(&vector, Case::Update);
+
+    println!("\n| a push update | cycles |");
+    println!("| --- | ---: |");
+    println!("| today | {} |", thousands(body));
+    println!("| removable | {} |", thousands(removable));
+    println!(
+        "| _of which recovery, over {calls} calls_ | _{}_ |",
+        thousands(recovery)
+    );
+    for cost in [0, precompile::SYSCALL_BAND[0], precompile::SYSCALL_BAND[1]] {
+        let remains = body
+            .checked_sub(removable)
+            .expect("a submission contains the verification whose rows are removed")
+            + calls * cost;
+        println!(
+            "| with a precompile at {cost} cycles a call | {} ({}.{}x) |",
+            thousands(remains),
+            tenths(body, remains) / 10,
+            tenths(body, remains) % 10
+        );
+    }
+    println!();
 }

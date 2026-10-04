@@ -1,0 +1,59 @@
+[package]
+name = "reference-consumer-aggregator-read-guest"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Own workspace, for two reasons.
+#
+# It cross-compiles to riscv32im-risc0-zkvm-elf, so it must not be resolved by
+# the root workspace, and its `Cargo.lock` is committed.
+#
+# And it is not a binary under `methods/guest/`, which is where the aggregator's
+# own guest lives. `cargo tree` resolves a package rather than a binary, so a
+# consumer built there would sit in a closure containing `aggregator-program`.
+# Nothing forbids that the way F9 forbids it for reference consumer B, but it
+# would misrepresent what this consumer needs: reading a price account takes the
+# account type, two seed strings and a program id, and a reader should be able to
+# see that from the manifest.
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] }
+
+# The consumer's logic. This binary is the SPEL entry point that dispatches on
+# it, because the guest is what LEZ executes.
+reference-consumer-aggregator-read = { path = "..", version = "0.1.0" }
+
+# SPEL, and LEZ's account types under the name SPEL refers to them by. Spelled
+# with the tag the root workspace uses: `nssa_core` *is* `lee_core`, and cargo
+# only unifies them when the source and tag match character for character.
+spel-framework = { git = "https://github.com/logos-co/spel.git", tag = "v0.6.0" }
+
+# `#[lez_program]` with no `instruction` argument generates the instruction enum
+# in this file, and the enum it generates derives serde.
+serde = { version = "1", features = ["derive"] }
+nssa_core = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", package = "lee_core" }
+
+# One pin, and the two it leaves out are the point. `k256` and `crypto-bigint`
+# accelerate secp256k1 recovery, and this consumer recovers nothing: it reads an
+# account somebody else already verified. `sha2` is a different matter.
+# `compute_pda` combines a multi-seed PDA with a software SHA-256, and a
+# settlement runs three of those: the source account's declared constraint and
+# the two derivations `read::price_account_address` performs. Leaving it
+# unpinned would spend cycles on a hash the machine can do in a precompile, and
+# would put a pin difference inside M3-09's per-mode precompile delta, which is
+# a comparison of modes. `tests/accelerator_pins.rs` asserts the split in
+# both directions.
+[patch.crates-io]
+sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.6-risczero.0" }
+
+[dev-dependencies]
+# Test-only, and it reaches no shipped build: the handler tests build a source
+# account's bytes directly, because `source::register` cannot run here (this
+# build's `GENESIS_AUTHORITY` is all zeroes, so no config can be established).
+borsh = { version = "1", default-features = false, features = ["derive"] }
+
+[profile.release]
+lto = true
+codegen-units = 1

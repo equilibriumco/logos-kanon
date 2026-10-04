@@ -17,6 +17,11 @@ license.workspace = true
 
 [build-dependencies]
 risc0-build.workspace = true
+# To read `[package.metadata.risc0]` below, so the guests configured for a container
+# build are the guests `risc0-build` builds rather than a second list beside it. Already
+# in the graph under `risc0-build`, so this is an edge and not a package: the count stays
+# at 384.
+toml = "0.8.23"
 
 # For `tests/cost.rs`, which executes the guests it builds. Nothing here is a
 # runtime dependency: the crate's job is still to hand out ELFs and image ids.
@@ -28,6 +33,10 @@ risc0-build.workspace = true
 risc0-zkvm.workspace = true
 verifier-core.workspace = true
 serde_json = "1.0.151"
+# For `tests/bytes.rs`, which encodes an instruction the way the wire does to
+# count what crosses. Already in the graph; an edge, not a package.
+serde_crate = { package = "serde", version = "1" }
+spel-framework.workspace = true
 hex = "0.4"
 
 # For the push-write measurement (M2-18), which has to hand the guest the same
@@ -40,5 +49,27 @@ aggregator-program.workspace = true
 kanon-clock.workspace = true
 borsh = { workspace = true, features = ["derive"] }
 
+# For the per-read measurement (M3-08), on the same terms: each consumer's
+# account types, so the host builds the bytes its guest will be given rather
+# than a hand-laid approximation of them. Both are already workspace members.
+reference-consumer-pull.workspace = true
+reference-consumer-aggregator-read.workspace = true
+# For the one type the consumers take but do not re-export: a `ProgramId`, which
+# is what a registration names its aggregator by. Already in this graph through
+# `aggregator-program`, so this is an edge rather than a package.
+lee_core.workspace = true
+
+# All three product guests: the aggregator and the two reference consumers. Each
+# is its own workspace with its own lockfile and its own `[patch.crates-io]`,
+# which is what risc0-build expects and, for the pull consumer, what F9 requires
+# -- one sharing a package with `aggregator-program` could not be shown to reach
+# no aggregator crate. `[M3-06:01]` records that, and `[M3-05:01]` the reading
+# consumer's own reason, which is not a requirement but a claim about what
+# reading a price really takes. One methods crate builds all three because a path
+# here is resolved against this manifest's directory.
 [package.metadata.risc0]
-methods = ["guest"]
+methods = [
+  "guest",
+  "../reference-consumers/pull/guest",
+  "../reference-consumers/aggregator-read/guest",
+]

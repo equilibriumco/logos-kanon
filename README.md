@@ -133,7 +133,34 @@ Guest code cross-compiles to `riscv32im-risc0-zkvm-elf` with RISC Zero's own Rus
 toolchain, managed by `rzup` outside Nix. On NixOS that needs
 `programs.nix-ld.enable = true`, because rzup ships prebuilt dynamically linked
 binaries. `m0/cost-baseline/README.md` has the full setup for both NixOS and
-non-NixOS.
+non-NixOS. The rzup toolchain is required even though the guests build in a
+container, because `risc0-build` reads its version to compute the guest's rustflags.
+
+### A program id is a property of the source
+
+**Building the guests needs a docker daemon with the buildx plugin.** `risc0-build` runs
+`docker build --output`, which only BuildKit provides; the legacy builder rejects it with
+a message about the flag rather than about the cause, so `build.rs` checks for buildx up
+front and says which. They compile inside RISC Zero's builder image, pinned by digest,
+and not for isolation: a program's id *is* its guest image id, and
+outside a container that id depends on the absolute path the repository happens to sit
+at. Cargo derives `-C metadata` from a package id whose source id, for a path dependency,
+is that path, and the hash reaches the ELF through every mangled symbol name. Two
+checkouts of one commit at two directories produced three different program ids — and a
+program's accounts are PDAs derived from its id, so that is three different sets of
+accounts. Building at a fixed path inside the container removes it. `[M3-08:02]` has the
+measurements.
+
+So anybody can check what is deployed:
+
+```sh
+cargo build --release --locked -p kanon-methods   # any directory, same ids
+```
+
+`KANON_GUEST_BUILD=host` builds on the host instead, for architectures the builder image
+cannot serve, the way `KANON_SEQUENCER_RUNTIME=host` does for the sequencer. It warns,
+and its ids are path-dependent and must not be published. Cycle figures are the same
+either way, so the guardrail suites pass under both.
 
 ## CI
 

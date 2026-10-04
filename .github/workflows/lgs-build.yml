@@ -92,5 +92,9 @@ jobs:
             echo "$repo: $got"
           done
 
+      # `lgs build` does a release build of `methods/`, so it pulls the same
+      # builder image as the jobs in `ci.yml` and needs the same headroom.
+      - uses: ./.github/actions/free-disk-space
+
       - name: lgs build
         run: lgs build

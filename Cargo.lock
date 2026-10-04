@@ -11,6 +11,7 @@ dependencies = [
  "kanon-clock",
  "kanon-idl",
  "lee_core",
+ "pull-lib",
  "risc0-zkvm",
  "serde",
  "serde_json",
@@ -1845,9 +1846,15 @@ dependencies = [
  "borsh",
  "hex",
  "kanon-clock",
+ "lee_core",
+ "reference-consumer-aggregator-read",
+ "reference-consumer-pull",
  "risc0-build",
  "risc0-zkvm",
+ "serde",
  "serde_json",
+ "spel-framework",
+ "toml",
  "verifier-core",
 ]
 
@@ -2380,6 +2387,9 @@ dependencies = [
 name = "pull-lib"
 version = "0.1.0"
 dependencies = [
+ "hex",
+ "kanon-clock",
+ "serde_json",
  "verifier-core",
 ]
 
@@ -2528,14 +2538,33 @@ dependencies = [
 name = "reference-consumer-aggregator-read"
 version = "0.1.0"
 dependencies = [
+ "aggregator-program",
+ "borsh",
+ "hex",
+ "kanon-clock",
  "kanon-idl",
+ "lee_core",
+ "serde",
+ "serde_json",
+ "spel-framework",
+ "spel-framework-macros",
+ "verifier-core",
 ]
 
 [[package]]
 name = "reference-consumer-pull"
 version = "0.1.0"
 dependencies = [
+ "borsh",
+ "hex",
+ "lee_core",
  "pull-lib",
+ "risc0-zkvm",
+ "serde",
+ "serde_json",
+ "spel-framework",
+ "spel-framework-macros",
+ "verifier-core",
 ]
 
 [[package]]

@@ -17,11 +17,17 @@
 //! than against a restatement of it.
 
 use aggregator_program::Instruction;
-use serde_json::Value;
+
+use std::collections::BTreeSet;
+
+#[path = "support/idl_parity.rs"]
+mod idl_parity;
+use idl_parity::{idl_at, name_and_fields, snake_case, wire_discriminant};
 
 /// One value per variant. Order is deliberately not meaningful: each variant's
 /// discriminant is read out of its own encoding, so this list only has to be
-/// complete, and the count assertion is what checks that it is.
+/// complete, and `the_enum_and_the_idl_describe_the_same_number_of_instructions`
+/// is what checks that it is.
 /// A feed id as the wire pads it, which is what the instruction now takes.
 fn padded(name: &[u8]) -> [u8; 32] {
     let mut id = [0u8; 32];
@@ -66,105 +72,8 @@ fn every_variant() -> Vec<Instruction> {
     ]
 }
 
-/// The discriminant the wire carries, which is the first word risc0's serde
-/// writes for an enum.
-fn wire_discriminant(instruction: &Instruction) -> u32 {
-    let words = risc0_zkvm::serde::to_vec(instruction).expect("the instruction encodes");
-    *words.first().expect("an encoded enum has a discriminant")
-}
-
-/// The variant's name and its field names, in declaration order.
-///
-/// Read off the serialised text rather than out of a `serde_json::Value`. A
-/// `Value` holds its object in a `BTreeMap`, which sorts the keys and so destroys
-/// the one property being asserted; serialising writes each key as it is reached,
-/// which is declaration order. The `preserve_order` feature would give the same
-/// answer, and would also reorder what the IDL generator emits, because the
-/// feature is unified across the graph.
-///
-/// Serde's external tagging puts the name at the only key of the outer object. A
-/// unit variant serialises to a bare string and has no fields.
-fn name_and_fields(instruction: &Instruction) -> (String, Vec<String>) {
-    let text = serde_json::to_string(instruction).expect("the instruction serialises");
-    let name = match serde_json::from_str::<Value>(&text).expect("it is JSON") {
-        Value::String(name) => return (name, Vec::new()),
-        Value::Object(map) => map.keys().next().expect("one variant per value").clone(),
-        other => panic!("expected an externally tagged variant, got {other:?}"),
-    };
-    (name, keys_of_the_inner_object(&text))
-}
-
-/// The keys of the one object nested inside the outer one, in the order written.
-///
-/// A depth-aware scan rather than a search for `"key":`, so a field whose own
-/// value is an object cannot contribute its keys to the answer.
-fn keys_of_the_inner_object(text: &str) -> Vec<String> {
-    let mut keys = Vec::new();
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut current = String::new();
-    let mut expecting_key = false;
-
-    for character in text.chars() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if character == '\\' {
-                escaped = true;
-            } else if character == '"' {
-                in_string = false;
-                if expecting_key && depth == 2 {
-                    keys.push(std::mem::take(&mut current));
-                }
-                expecting_key = false;
-                continue;
-            }
-            if expecting_key {
-                current.push(character);
-            }
-            continue;
-        }
-        match character {
-            '"' => {
-                in_string = true;
-                expecting_key = true;
-                current.clear();
-            }
-            '{' => depth += 1,
-            '}' => depth = depth.saturating_sub(1),
-            '[' => depth += 1,
-            ']' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    keys
-}
-
-/// `SubmitPrice` and `submit_price` are the same instruction under two
-/// conventions: the enum is Rust's, the IDL takes the guest function's.
-fn snake_case(camel: &str) -> String {
-    let mut out = String::new();
-    for (index, character) in camel.char_indices() {
-        if character.is_ascii_uppercase() {
-            if index != 0 {
-                out.push('_');
-            }
-            out.push(character.to_ascii_lowercase());
-        } else {
-            out.push(character);
-        }
-    }
-    out
-}
-
-fn idl() -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("kanon-idl")
-        .join("aggregator-idl.json");
-    let text = std::fs::read_to_string(path).expect("the artefact is committed");
-    serde_json::from_str(&text).expect("the artefact is JSON")
+fn idl() -> serde_json::Value {
+    idl_at("../kanon-idl/aggregator-idl.json")
 }
 
 #[test]
@@ -206,14 +115,19 @@ fn each_variants_fields_are_the_arguments_the_idl_lists_in_that_order() {
     for variant in every_variant() {
         let (name, fields) = name_and_fields(&variant);
         let index = wire_discriminant(&variant) as usize;
-        let published: Vec<String> = instructions[index]["args"]
+        let at_index = instructions
+            .get(index)
+            .unwrap_or_else(|| panic!("the IDL has no instruction at index {index} for {name}"));
+        // `args` required rather than defaulted: the generator emits the key
+        // even for an instruction that takes none, so a missing one means the
+        // artefact is not what this test thinks it is reading. Defaulting would
+        // compare equal for the unit variants and hide that.
+        let published: Vec<String> = at_index["args"]
             .as_array()
-            .map(|args| {
-                args.iter()
-                    .map(|arg| arg["name"].as_str().unwrap_or_default().to_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
+            .unwrap_or_else(|| panic!("the IDL lists no `args` for {name}"))
+            .iter()
+            .map(|arg| arg["name"].as_str().unwrap_or_default().to_owned())
+            .collect();
 
         assert_eq!(
             fields, published,
@@ -233,15 +147,22 @@ fn the_enum_and_the_idl_describe_the_same_number_of_instructions() {
         .expect("the IDL lists instructions")
         .len();
 
-    // What this catches is a variant added to one side only. Without it the two
-    // tests above pass while a whole instruction goes unchecked, because they
-    // only ever look at the variants this file remembers to list.
+    // The *set* of discriminants rather than the count, because length is not
+    // completeness: a copy-pasted entry in `every_variant` would leave the list
+    // the right length with one variant listed twice and another not at all, and
+    // the two tests above only ever look at what the list contains. The missing
+    // instruction's discriminant and field order would then be asserted by
+    // nothing.
+    let covered: BTreeSet<u32> = every_variant().iter().map(wire_discriminant).collect();
+    let expected: BTreeSet<u32> = (0..u32::try_from(published).expect("a small enum")).collect();
+
     assert_eq!(
-        every_variant().len(),
-        published,
-        "the IDL publishes {published} instructions and this test covers {}. \
-         A new instruction needs a guest function, an `Instruction` variant, and a \
-         value in `every_variant`.",
-        every_variant().len(),
+        covered,
+        expected,
+        "every discriminant the IDL publishes needs exactly one value in \
+         `every_variant`. Missing: {:?}. Not published: {:?}. A new instruction \
+         needs a guest function, an `Instruction` variant, and a value here.",
+        expected.difference(&covered).collect::<Vec<_>>(),
+        covered.difference(&expected).collect::<Vec<_>>(),
     );
 }

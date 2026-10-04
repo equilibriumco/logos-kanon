@@ -53,6 +53,15 @@ they describe the design being proposed for acceptance.
 | [M2-06:01](unnumbered-M2-06-where-the-admin-authority-comes-from.md) | Where the admin authority comes from, and how it is established | accepted, unnumbered |
 | [M2-16:01](unnumbered-M2-16-where-a-payload-nobody-captured-comes-from.md) | Where a payload nobody captured comes from | accepted, unnumbered, supersedes part of 21 and 23 |
 | [M2-19:01](unnumbered-M2-19-the-end-to-end-tests-resolve-in-their-own-workspace.md) | The end-to-end tests resolve in their own workspace | accepted, unnumbered, extends 7 |
+| [M3-01:01](unnumbered-M3-01-the-pull-library-is-a-call-not-a-layer.md) | The pull library is a call, not a layer | accepted, unnumbered |
+| [M3-04:01](unnumbered-M3-04-where-a-two-mode-test-can-live.md) | Where a test that needs both modes can live | accepted, unnumbered |
+| [M3-05:01](unnumbered-M3-05-where-a-reading-consumers-trust-comes-from.md) | Where a reading consumer's trust comes from | accepted, unnumbered |
+| [M3-06:01](unnumbered-M3-06-where-a-pull-consumers-program-lives.md) | Where a pull consumer's program lives | accepted, unnumbered |
+| [M3-06:02](unnumbered-M3-06-where-a-pull-consumers-trust-comes-from.md) | Where a pull consumer's trust comes from | accepted, unnumbered |
+| [M3-08:01](unnumbered-M3-08-what-a-read-costs-is-two-figures-per-mode.md) | What a read costs is two figures per mode | accepted, unnumbered |
+| [M3-08:02](unnumbered-M3-08-the-guests-are-compiled-in-a-container.md) | The guests are compiled in a container, so a program id is a property of the source | accepted, unnumbered |
+| [M3-09:01](unnumbered-M3-09-the-precompile-delta-is-a-function-not-a-figure.md) | The precompile delta is a function, not a figure | accepted, unnumbered |
+| [M3-10:01](unnumbered-M3-10-a-transaction-is-not-its-body.md) | A transaction is not its body, and the difference is measured | accepted, unnumbered |
 
 ## How they fit together
 
@@ -151,6 +160,77 @@ ownership is never released, so an address claimed once is claimed for that
 program build's lifetime. That is why the price account is derived from the feed
 and the feed is not derived from the asset pair — one is a binding, the other
 would be a registration that a single wrong exponent could burn.
+
+[M3-01:01] is ADR 13 reaching its second caller, and the place where pinning a
+clock turns out to guarantee less than it does in the first. In push mode a relayer
+supplies the clock and a consumer reading the account afterwards bears the risk, so
+the check is a boundary against a third party — and the dispatcher hands
+`submit_price` an account whose id and data are fields of one struct, which is what
+makes it enforceable. In pull mode the program supplies its own clock as two
+separate slices, so pinning catches the wrong-account mistake, which is the likely
+error, and cannot catch fabrication at all. A program that fabricates one is
+misleading its own users, so what is left is an obligation on the consumer rather
+than a hole in the library, and the reference consumer is where it is shown. The
+rest of that record is about adding nothing: one function over `verifier-core`'s
+own types is what makes ADR 2's "one verification, two modes" an identity rather
+than a claim two crates have to keep agreeing on.
+
+[M3-06:01] and [M3-06:02] are that obligation being discharged, and each turns out
+to be about a boundary the library could describe but not hold. The first is a
+question about packaging that became a question about evidence: a SPEL program is a
+guest binary, `cargo tree` resolves a package rather than a binary, and the package
+holding the aggregator's guest cannot host a consumer whose whole claim is that it
+reaches no aggregator crate. Giving the consumer its own guest workspace is what
+makes the closure an assertion about the program and not only about the library it
+calls. The second is where the signer set comes from, and the answer is less obvious than
+it looks. A shared borrow proves a roster was not mutated during a call and says
+nothing about where it came from, so the demonstration had to be about provenance —
+and provenance reads at first like a compiled constant, since nothing a caller sends
+can reach one. F9 asks for a *configured* tuple with no dependency on the
+aggregator's price account, though, and a roster in an account the consumer itself
+owns is neither a dependency on the aggregator nor a registration against it; SEC2's
+"comes from the consumer" is answered better by governed state than by a literal,
+because governed state also shows how a consumer governs its set. ADR 30 settles the
+rest: RedStone rotates, which is why the push path has `update_signer_set` and not a
+table, and a compiled roster would meet that certain event with a redeployment —
+which in LEZ moves every derived address and abandons every open order. So the
+consumer carries an authority, a trust account per feed, and a rotation that is a
+transaction.
+
+[M3-05:01] is the same question put to the other mode, and it is worth reading beside
+[M3-06:02] because the answer matches while the argument does not. A reading consumer
+sends the aggregator no transaction, so what it has to decide is which account to
+believe — and nothing in the six published fields says who wrote one. `source_id` names
+RedStone rather than a program, so the only binding is the address, which hashes the
+aggregator's program id, which is its image id. A compiled id looked defensible here in
+a way a compiled roster never did: the address would simply go dead and every read would
+refuse, which is what U7 asks for. What decides it is the cost of recovery rather than
+the failure itself. Following the rebuild would mean rebuilding the consumer, and that
+moves the consumer's own accounts — so an aggregator fix would cost the order book. The
+trigger differs, the mechanism is the one ADR 33 describes, and the answer is the same
+account-behind-a-gate on both sides.
+
+[M3-08:01] is the same image-id argument arriving from a direction nobody was
+watching. [M3-05:01] and [M3-06:02] both turn on what happens when a program id
+moves, and both reason about it as a *deployment* risk: a rebuilt aggregator, a
+rotated roster. What M3-08 found is that a measurement can move one by accident.
+Adding two dependency edges to the pull consumer's guest manifest — for a cost
+binary that ships nowhere — moved `PULL_CONSUMER_ID`, which would have abandoned
+every account a deployed consumer owns. The fix is that the crates re-export what
+their guests need, so nothing is added to a workspace whose ELF is a program id;
+and the re-exports turn out to be owed anyway, because `read_price` takes a
+`LezClock` a caller previously could not name. The lesson worth carrying is that
+the closure of a guest workspace is part of the deployed artefact, and only a
+measurement says whether an edge is free.
+
+[M3-09:01] is the answer [M3-08:01] made computable, and it inherits that ADR's
+discipline about what a measurement is allowed to claim. M3-08 refused to publish a
+mode's read that contained the consumer's bookkeeping; M3-09 refuses to publish a
+precompile delta that contains our guess at somebody else's syscall cost. In both cases
+the fix is the same shape — name the term, put it where it cannot contaminate the
+measured part, and let the reader see which is which. The band is also the reason the two
+ADRs disagree about presentation: M3-08's figures are exact because they are measured, and
+M3-09's are a function because one of them is not.
 
 ADR 29 closes a range that only had one end. ADR 18 gave staleness a two-sided window and
 left `maxAge` to the feed; registration refused zero and nothing else. But `freshness`

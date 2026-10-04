@@ -11,6 +11,7 @@
 #   build-test    the product crates build and their tests pass
 #                 (`m0/` is a separate workspace; guardrails.yml runs it)
 #   no-std        the guest-reachable crates really are no_std
+#   pull-independence  pull reaches no aggregator crate, so pull-only needs no feed
 #   guest         product code cross-compiles to riscv32
 #   licenses      cargo deny, every workspace: product, m0, guests
 #   traceability  the requirement matrix resolves to real evidence
@@ -75,12 +76,25 @@ jobs:
           cargo fmt --all --manifest-path m0/Cargo.toml -- --check
           cargo fmt --all --manifest-path methods/guest/Cargo.toml -- --check
           cargo fmt --all --manifest-path e2e/Cargo.toml -- --check
+          cargo fmt --all \
+            --manifest-path reference-consumers/pull/guest/Cargo.toml -- --check
+          cargo fmt --all \
+            --manifest-path reference-consumers/aggregator-read/guest/Cargo.toml -- --check
 
       # RISC0_SKIP_BUILD is required, not a shortcut. `cargo clippy` exports a
       # rustc wrapper that the guest build inherits, and clippy-driver has no
       # riscv32im-risc0-zkvm-elf std, so the guest build fails with E0463.
       # Skipping it lints the host code, which is all clippy can lint here; the
       # guest code is compiled for real by the `guest` job below.
+      #
+      # Every excluded workspace is named, the three guests included. They are the
+      # programs this repository ships and their image ids are program ids, so
+      # being the only crates outside the lint gate was the wrong way round -- and
+      # the gap was invisible, because `--workspace` cannot reach an excluded
+      # workspace and the job that does build the guests denies no warnings. It
+      # hid an unused argument on `settle` through a whole review. `--all-targets`
+      # covers their test builds, which is where that one lived, so the guest test
+      # job needs no denial of its own.
       - name: cargo clippy
         env:
           RISC0_SKIP_BUILD: 1
@@ -90,6 +104,13 @@ jobs:
             --manifest-path m0/Cargo.toml -- -D warnings
           cargo clippy --release --workspace --all-targets --locked \
             --manifest-path e2e/Cargo.toml -- -D warnings
+          cargo clippy --release --workspace --all-targets --locked \
+            --manifest-path methods/guest/Cargo.toml -- -D warnings
+          cargo clippy --release --workspace --all-targets --locked \
+            --manifest-path reference-consumers/pull/guest/Cargo.toml -- -D warnings
+          cargo clippy --release --workspace --all-targets --locked \
+            --manifest-path reference-consumers/aggregator-read/guest/Cargo.toml \
+            -- -D warnings
 
   build-test:
     name: build and test
@@ -143,6 +164,166 @@ jobs:
             --target riscv32im-unknown-none-elf \
             -p verifier-core -p pull-lib -p kanon-clock
 
+  pull-independence:
+    name: pull has no aggregator dependency
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      # F9: a consumer using only pull integrates without registering a feed
+      # against the aggregator. Nothing in `pull-lib`'s signature reaches an
+      # aggregator account today, and nothing in the crate would notice if that
+      # changed -- a `use kanon_idl::OraclePriceAccount` to borrow a field
+      # layout, or an `aggregator_program::FeedAccount` to save declaring a
+      # config, would compile and pass every test. So the closure is the
+      # assertion, and it is an allow-list rather than a list of crates to
+      # refuse: a denylist only catches the reuse someone thought of.
+      #
+      # What the list covers is every package in the closure that does not come
+      # from a registry: this repository's own, and anything reached by path or
+      # by git. Stopping at this repository's own packages was not enough, and
+      # the hole was the price account itself -- `twap_oracle_core` declares the
+      # canonical one, it is a git dependency, and `deny.toml` already allows
+      # that source, so a direct dependency on it would have been the aggregator
+      # account in `pull-lib` with every gate green.
+      #
+      # Registry packages stay out of scope, and that is a judgement rather than
+      # an oversight: nothing aggregator-side is published, `cargo deny` governs
+      # what may come from a registry at all, and pinning `k256`'s transitive
+      # set would fail on every upstream bump for no reason this requirement
+      # cares about.
+      #
+      # Three flags carry the rest of it, and the default of each would leave a
+      # way past:
+      #
+      #   --all-features  a dependency can be optional and reached only through
+      #                   a feature nobody enables by default. Measured: an
+      #                   `optional = true` aggregator dependency behind a
+      #                   non-default feature is invisible without this.
+      #   --target all    and a dependency can be declared per target. That one
+      #                   matters here, because this crate's shipping target is
+      #                   a riscv32 guest and not the runner: measured, a
+      #                   `cfg(target_arch = "riscv32")` dependency is invisible
+      #                   to a host-only walk. It is the runner's own resolution
+      #                   either way -- the guest workspace resolves separately
+      #                   and this job does not reach it.
+      #   --edges         normal,build leaves dev-dependencies out on purpose. A
+      #                   test comparing the two paths against each other is
+      #                   exactly what M3-04's error-taxonomy parity asks for,
+      #                   and it reaches nothing a consumer links.
+      #
+      # The consumer is checked too, and it is the half the requirement is
+      # actually about: `pull-lib` staying clean is worth nothing if the
+      # reference consumer has to reach the aggregator anyway. Against the
+      # aggregator is the whole of it -- the consumer does register feeds, with
+      # its own authority, in accounts it owns, and F9 has nothing to say about
+      # that. What it refuses is a dependency on the push mode's price account,
+      # so the closure is what the gate reads and not the word "register". Twice, because the
+      # consumer is two packages: the logic in the root workspace, and the SPEL
+      # program in its own guest workspace. The program is the artefact somebody
+      # copies, so it is the one this requirement is really about.
+      - name: pull's closure is the verifier and the clock, and nothing else of ours
+        run: |
+          set -o pipefail
+
+          # Two workspaces, because a walk reaches one resolution. The root
+          # workspace holds `pull-lib` and the consumer's logic. The consumer's
+          # SPEL program is an excluded workspace with its own lockfile and its
+          # own `[patch.crates-io]`, so the third walk below is the only thing
+          # that reaches it.
+          #
+          # That third walk is the reason the consumer guest is not a binary
+          # under `methods/guest`. That package depends on `aggregator-program`
+          # and `kanon-idl`, and `cargo tree` resolves a package rather than a
+          # binary, so a pull consumer living there would sit in a closure
+          # holding the push aggregator and the canonical price account with no
+          # way to show it did not reach them. `[M3-06:01]` records it.
+          #
+          # `set -o pipefail` because this workflow sets no `shell:`, so steps run
+          # under `bash -e`, which does not enable it. A cargo failure exits 101
+          # and `sort` still returns 0, so the closure comes back empty and the
+          # `diff` fails -- closed, but with a log that reads as though every
+          # package vanished instead of showing what cargo said.
+          #
+          # A non-registry package renders its source in parentheses: `(/abs/path)`
+          # for a path dependency, `(https://...#rev)` for a git one. Registry
+          # packages carry no source at all. The scan looks for that source in any
+          # field rather than in the third, because cargo puts other parenthesised
+          # markers first and the third field is not reliably the source:
+          #
+          #   spel-framework-macros v0.6.0 (proc-macro) (https://github.com/...)
+          #
+          # A leaf proc-macro from a path or a git revision would otherwise be
+          # dropped as though it came from a registry -- measured, an unlisted
+          # local proc-macro crate linked into `pull-lib` left this closure reading
+          # exactly the allow-list. The `(*)` dedupe marker and `(proc-macro)` are
+          # ignored by the same rule rather than by being named, since neither
+          # opens with a path or a scheme.
+          #
+          # `--color never` against this workflow's `CARGO_TERM_COLOR: always`.
+          # Cargo colourises the `(*)` marker and not the source parentheses, so
+          # this scan does not actually need the flag: measured, it returns the
+          # same allow-list with colour on and the flag removed. It stays because
+          # a filter that read `(*)` did need it -- without it five deduped
+          # registry packages leaked in -- and this one should not have to care
+          # what cargo decides to colour next. The direction is closed either
+          # way: a colourised source would match nothing, which drops `pull-lib`
+          # itself and fails the diff.
+          # Arguments forwarded rather than a package name, so the same filter
+          # serves a walk that needs `--manifest-path` for another workspace.
+          closure() {
+            cargo tree --locked --color never --all-features --target all \
+                "$@" --edges normal,build --prefix none \
+              | awk '{ for (i = 3; i <= NF; i++) if ($i ~ /^\((\/|http|ssh|git\+)/) { print $1; break } }' \
+              | sort -u
+          }
+
+          diff <(printf '%s\n' kanon-clock pull-lib verifier-core) \
+               <(closure -p pull-lib)
+
+          # The consumer's logic adds LEZ and SPEL and nothing else. That it adds
+          # no `kanon-idl` is the load-bearing part: `twap_oracle_core` reaches
+          # this repository through that crate and through no other, so the
+          # canonical price account stays outside a pull consumer's closure while
+          # the account types a program cannot do without come in.
+          diff <(printf '%s\n' \
+                   kanon-clock \
+                   lee_core \
+                   pull-lib \
+                   reference-consumer-pull \
+                   spel-framework \
+                   spel-framework-core \
+                   spel-framework-macros \
+                   verifier-core) \
+               <(closure -p reference-consumer-pull)
+
+          # The program itself. `crypto-bigint`, `k256` and `sha2` are the
+          # accelerated replacements this guest's `[patch.crates-io]` substitutes
+          # for the registry ones, so they arrive by git and the filter sees them;
+          # they are the same three `methods/guest` patches, which is deliberate
+          # and which that manifest explains. `nssa_core` resolves to `lee_core`
+          # and appears under that name, which is also the check that the rename
+          # unified rather than duplicating LEZ.
+          diff <(printf '%s\n' \
+                   crypto-bigint \
+                   k256 \
+                   kanon-clock \
+                   lee_core \
+                   pull-lib \
+                   reference-consumer-pull \
+                   reference-consumer-pull-guest \
+                   sha2 \
+                   spel-framework \
+                   spel-framework-core \
+                   spel-framework-macros \
+                   verifier-core) \
+               <(closure --manifest-path reference-consumers/pull/guest/Cargo.toml \
+                         -p reference-consumer-pull-guest)
+
   guest:
     name: riscv32 guest build
     runs-on: ubuntu-24.04
@@ -176,11 +357,22 @@ jobs:
           rzup install r0vm 3.0.5
           rzup install rust 1.97.0
 
-      # Cross-compiles `methods/guest`, which links `verifier-core`. The cost baseline proved
-      # the toolchain on measurement code; this is the same proof for the crates
-      # that ship, and it is where a dependency added to `verifier-core` that
-      # turns out not to be guest-compatible fails.
-      - name: build the product guest
+      - uses: ./.github/actions/free-disk-space
+
+      # Cross-compiles all three product guests, which is what `kanon-methods`
+      # builds: the aggregator and both reference consumers. Since `[M3-08:02]` they
+      # compile inside RISC Zero's builder image, at a fixed path, so the image
+      # ids this produces are the ids anybody else's build produces. Docker is
+      # preinstalled on the runner; the rzup toolchain above is still required,
+      # because `risc0-build` reads its version to compute the guest rustflags
+      # even on the container path, and panics if it is absent. The cost baseline
+      # proved the toolchain on measurement code; this is the same proof for the
+      # crates that ship, and it is where a dependency added to `verifier-core`
+      # that turns out not to be guest-compatible fails. For the pull consumer it
+      # is also where `pull-lib` and everything under it is shown to reach riscv32
+      # without an aggregator crate in the graph -- the closure job says nothing is
+      # there, and this says what is there compiles.
+      - name: build the product guests
         run: cargo build --release --locked -p kanon-methods
 
       # The macro-generated half of the SPEL program: the dispatcher, the account
@@ -189,10 +381,16 @@ jobs:
       # the build above proves only that it compiles. The guest is an excluded
       # workspace, which is why this needs its own manifest rather than a
       # `--workspace` run.
-      - name: test the guest's generated code
+      - name: test the guests' generated code
         run: |
           cargo test --release --locked \
             --manifest-path methods/guest/Cargo.toml --bin aggregator
+          cargo test --release --locked \
+            --manifest-path reference-consumers/pull/guest/Cargo.toml \
+            --bin pull_consumer
+          cargo test --release --locked \
+            --manifest-path reference-consumers/aggregator-read/guest/Cargo.toml \
+            --bin aggregator_read_consumer
 
   licenses:
     name: cargo deny
@@ -220,6 +418,8 @@ jobs:
           for ws in \
             m0 \
             methods/guest \
+            reference-consumers/pull/guest \
+            reference-consumers/aggregator-read/guest \
             m0/cost-baseline/methods-software/guest \
             m0/cost-baseline/methods-accelerated/guest \
             m0/cost-baseline/methods-mixed/guest \
@@ -275,12 +475,19 @@ jobs:
     # the expensive one.
     timeout-minutes: 45
     env:
-      # The guest carries the account id of the test's fixed admin key as its
-      # genesis authority. Without it the aggregator cannot be initialised by
-      # anyone, which is `[M2-06:01]` working as designed and is why the test
-      # refuses to run against an unconfigured build. The key is `[0x11; 32]`,
-      # it signs for one account on a throwaway chain, and it controls nothing.
+      # Each guest carries the account id of its suite's fixed key as its genesis
+      # authority. Without it that program cannot be initialised by anyone, which
+      # is `[M2-06:01]` working as designed and is why each test refuses to run
+      # against an unconfigured build. Both keys are `[0x11; 32]` and `[0x22; 32]`,
+      # each signs for one account on a throwaway chain, and neither controls
+      # anything. Cargo runs the two test binaries one after another against the
+      # same chain, so the second meets whatever the first left behind; a key
+      # each keeps a suite's accounts its own.
+      #
+      # Both are set here rather than one per step, because `kanon-methods`
+      # builds all three guests in one invocation and each reads its own.
       KANON_GENESIS_ADMIN: 5b0e4f6dddea8b9ef3118d6002a25c09ab379653ffb60586f4604f1fa6a0b392
+      KANON_PULL_GENESIS_AUTHORITY: 8536b4cd1b24c4af1df73f6b509eadc2d26bebc1f94d10253658419fe643e197
       RISC0_BUILD_LOCKED: 1
     permissions:
       contents: read
@@ -318,6 +525,8 @@ jobs:
 
       # Before the sequencer starts, so a compile error is not reported as a
       # chain that would not come up.
+      - uses: ./.github/actions/free-disk-space
+
       - name: Build the end-to-end test
         run: cargo test --manifest-path e2e/Cargo.toml --locked --no-run
 
@@ -354,7 +563,9 @@ jobs:
       # claims, initialises, registers and submits from nothing every run --
       # which is what makes its assertions about state rather than about
       # whatever a previous run left behind.
-      - name: Push verify and publish, end to end
+      # Both suites, in one invocation: cargo runs the two test binaries one
+      # after another, each driving its own program under its own key.
+      - name: Verify and publish, and verify and settle, end to end
         run: cargo test --manifest-path e2e/Cargo.toml --locked
 
       - name: Sequencer log
