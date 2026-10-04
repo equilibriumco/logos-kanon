@@ -172,10 +172,18 @@ exception in `deny.toml` and raised here rather than waved through. The gate its
 
 ## Open: questions outstanding with Logos
 
-Seven, in descending order of how much they block delivery. All but the last concern
-repositories outside this one, which is why they are tracked here rather than resolved
-in code. Every claim below was re-checked against the upstream repository on 2026-09-16;
-two of the four M0 asked about had moved, and the dates say which.
+Three open, down from seven at M2. Every claim below was re-checked against its upstream
+repository on 2026-10-04, and before re-asking anything we went looking for the answers
+ourselves.
+
+What is open is **1, 2 and 5**. Questions **4, 6 and 7** are answered, and **3** turned
+out to be a request rather than a question. All four are kept below with the answer
+appended rather than deleted, because an answered question is evidence and removing it
+loses the record of how it was answered.
+
+Questions 4 and 6 are answered *against LEZ v0.3.0*, and this milestone is delivered on
+v0.2.0, so both are live on the delivered pin. That is why they now read as an argument
+inside question 1 rather than as questions of their own.
 
 **1. Is a SPEL release coming, and when — or is pinning `main` sanctioned.** This is the
 one concrete ask, and it settles the LEZ pin with it. The product pins `logos-co/spel` at
@@ -204,6 +212,23 @@ revision rather than by tag, which is the precedent for the answer we expect. **
 scaffold PR #246 half of M0's question is withdrawn**: it merged 2026-08-10, it never
 covered `test-node`, and M1-04a removed our dependence on `test-node` anyway (ADR 12).
 
+**Re-checked 2026-10-04: SPEL's latest release is still v0.7.0 (2026-09-17) and LEZ's
+is still v0.3.0 (2026-09-30).** Nothing moved in the four days since M2's check.
+
+**This is now a trade with both sides measured, and questions 4 and 6 are what price
+one of them.** Moving to LEZ v0.3.0 closes both completely: there is no account owner
+to squat and no image id for an upgrade to move. What it costs is U4 and U5 going
+dormant -- SPEL has no v0.3 support, so the IDL and the SPEL extensions freeze and
+their CI jobs go off -- and `MAX_SIGNERS` dropping from 32 to 12 under the 10M gas cap,
+against the five signers RedStone's primary feeds actually use. Neither side is an
+estimate: the M4 branch resolves v0.2.4 and the M5 port branch resolves v0.3.0.
+
+**We recommend moving to v0.3.0.** A squatted address on v0.2 is not recoverable and a
+deployment there has no upgrade path, while two dormant usability deliverables are
+recoverable without touching an account. The timing is the half we cannot see from
+outside: no SPEL release supports LEZ v0.3.0, and as of this check there is no open
+issue or pull request tracking it.
+
 **2. Where the RFP-001 admin-authority extension is going to live.** Not "is #212
 merging" any more. #212 is still open with no activity since 2026-05-20, but the work
 moved: PR #257's extension mechanism was developed on the `feat/admin_authority_m3`
@@ -228,6 +253,18 @@ Logos organisation. If a move to `logos-co` is planned we pin the destination; i
 not, we want that stated so it is recorded as a deliberate estate position rather than
 discovered at audit.
 
+**Re-checked 2026-10-04, and the governance half got sharper rather than softer.** The
+mechanism PR is confirmed merged -- `logos-co/spel` #257, *the SPEL extension
+mechanism*, merged 2026-09-11 as commit `8183b011` -- and #212 is still a draft with no
+activity since 2026-05-20. The crate is at tag **v0.1.4** (pushed 2026-09-17), still
+Apache-2.0, still under `mmlado/`. What is new is that `logos-co/logos-docs` publishes
+a procedure page, *Gate program instructions with admin-authority*, owner `logos`,
+which tells developers to depend on `mmlado/spel-admin-authority` directly and to pin
+the framework at #257's merge commit because no release contains it yet. So "is the
+extension crate the intended home" is answered -- yes -- and Logos's own documentation
+now directs developers to a personal namespace, which is the part we want a position
+on.
+
 **3. Three Logos crates ship without licence metadata.** `twap_oracle_core`,
 `spel-framework-core` and `spel-framework-macros` declare no `license` field, so
 cargo-deny reports them as unlicensed. They are not: `lez-programs` ships a LICENSE
@@ -241,6 +278,14 @@ Re-checked against each repository's `main` on 2026-09-16 — still missing in a
 Its positional counterpart is the LGPL-3.0 question in *Open: the LGPL-3.0 dependency in
 LEZ's host graph* above: the cheap licensing ask is a manifest fix, that one needs a
 stated estate position.
+
+**This is a request, not a question, and we would rather fulfil it than keep making
+it.** Re-checked 2026-10-04: still missing in all three. Neither repository has a
+`[workspace.package]` table to inherit from, so the fix is a literal one-line
+`license = "..."` in each of three manifests. We have offered to send the three pull
+requests; what we need back is confirmation that `MIT OR Apache-2.0` and `MIT` are the
+intended strings, since declaring a licence is the owner's call rather than something
+to guess in a pull request.
 
 **4. The rule pair that makes a default-owned account permanently unwritable, and what
 it costs.** LEZ increments every signer's nonce after applying a state diff, outside
@@ -293,6 +338,23 @@ and `tests/admin.rs` for the pure functions,
 `a_squatted_admin_config_is_refused_by_the_generated_validator` in
 `methods/guest/src/bin/aggregator.rs` for the dispatcher.
 
+**Answered, and the answer is no -- a program may not.** That much was already pinned
+here at both layers; what was genuinely open was whether it is intended, because the
+consequence is a denial of service against every derived address in the estate.
+
+**LEZ v0.3.0 removes the mechanism rather than mitigating it.** Its account is a nonce
+and a map of shards, one per program, with no owner at all; balance is simply the
+native-token program's shard, and an `apply` writes only the shard keyed by its own
+program account. So funding an address touches the native-token shard and leaves the
+shard a feed will be registered in empty and writable. Our own port records it in the
+file where the test used to be: *"v0.2's squatting test is gone with the attack: a
+program's shard of an account is written only by that program, so nobody can put state
+where a feed will be registered."* Neither the griefing vector nor the signer trap
+survives the model change.
+
+As with question 6, this is answered against v0.3.0 and live on v0.2.0, which is the
+pin this milestone delivers. See question 1.
+
 **5. `OraclePriceAccount` is harder to depend on than it needs to be**, and this is
 closer to a defect report than a preference: the account-type crate needs neither
 risc0 nor `uniswap_v3_math` to carry six Borsh fields. Splitting it into a standalone
@@ -300,6 +362,16 @@ crate with relaxed pins — or at minimum loosening `=3.0.5` to `^3.0.5` — wou
 canonical account usable by the external adaptors it was explicitly written for. Still
 the case on `lez-programs` `main` as of 2026-09-16. What its current pins cost this
 repository is in ADR 8 and ADR 9.
+
+**Re-checked 2026-10-04: unchanged upstream, and the cost is now realised rather than
+projected.** `risc0-zkvm` is still pinned at exactly `=3.0.5` and `uniswap_v3_math` is
+still carried to declare six Borsh fields. On LEZ v0.3 we could not depend on the crate
+at all -- `lez-programs` has no v0.3 build, and its v0.2 crate cannot share a dependency
+graph with v0.3 -- so `kanon-idl` on the M5 branch declares `OraclePriceAccount` itself,
+field for field. ADR 9's principle is *re-exported, not forked*, and the fork is what
+the pins forced. The conformance test against the vendored upstream IDL is what now
+keeps the two from drifting, which is a weaker guarantee than a dependency and is the
+best available one.
 
 **6. What happens to a price account when the program that created it is upgraded.**
 Recorded in ADR 22 and left open on purpose. Under LEZ's ownership model a program id is
@@ -312,6 +384,16 @@ which is the only arrangement that keeps the address fixed. Both belong to M2's 
 and admin work, and neither is decidable from what LEZ documents today, which defines no
 upgrade path at all. We want the shape settled with Logos before M2 pours concrete around
 one of them.
+
+**Answered by LEZ v0.3.0, which is the second of those two shapes.** A program is no
+longer named by its image id: it is resolved from its program-loader header account
+(`resolve_program(account_id, loader_shard)`), so the binary behind a program can be
+replaced while every address derived from it stays put. The header starts mutable, so a
+fix keeps every derived address, and `UpdateHeader { immutable: true }` freezes it
+one-way once the code is audited or at mainnet. The arrangement this question asked for
+exists upstream.
+It does not exist on v0.2.0, which is the pin this milestone delivers, so the problem is
+answered and still live here; see question 1.
 
 **7. Is a guest ELF bit-identical across machines at the pinned toolchain?** Measured
 here: the same inputs reproduce the image id bit for bit *on one machine*, including

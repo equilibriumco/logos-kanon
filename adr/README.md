@@ -242,9 +242,13 @@ arrives with fifty sites of churn behind it.
 
 ## Open questions carried by these decisions
 
-Seven are with Logos. `m0/versions.md`, *Open: questions outstanding with Logos*,
-states six of them in full and the mapping is not one-to-one, so it is spelled
-out per bullet rather than by a count:
+Three are with Logos, down from seven at M2: questions 4, 6 and 7 are answered and
+question 3 is a request rather than a question. `m0/versions.md`, *Open: questions
+outstanding with Logos*, states all of them in full with the answers appended, and the
+mapping to the bullets below is not one-to-one, so it is spelled out per bullet rather
+than by a count. Two of the answers -- the account-owner rule pair and the upgrade
+path -- hold against LEZ v0.3.0 and not against the v0.2.0 this milestone delivers on,
+so they are live here and are an argument inside the pin question rather than closed:
 
 - **Is a SPEL release coming, or is pinning `main` sanctioned** (ADR 8, ADR 14). SPEL
   resolves LEZ, so this settles the LEZ pin with it — which is why M0's separate
