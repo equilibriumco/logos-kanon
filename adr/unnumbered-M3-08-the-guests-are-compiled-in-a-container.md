@@ -36,7 +36,7 @@ Nothing shipped was wrong. CI always builds at one runner path, so it reproduces
 What was broken is **independent verification**: anybody rebuilding a commit to check a
 deployed program's id computes a different id, and therefore different account addresses,
 unless they happen to reproduce our directory. That is the property a reader of
-`m0/versions.md` question 6 was promised and it did not hold — and it fails across two
+`m0/versions.md` question 7 was promised and it did not hold — and it fails across two
 directories on one machine, which is a far weaker condition than the two-machine case
 that question proposed testing.
 
@@ -176,7 +176,7 @@ concluded and what made that guard the expensive one.
   `lgs build`, which reaches the same image through a release build of `methods/`.
   Anybody adding another needs that step, and will otherwise be debugging a linker
   crash.
-- **`m0/versions.md` question 6 is answered, affirmatively and by measurement.** That
+- **`m0/versions.md` question 7 is answered, affirmatively and by measurement.** That
   question asked whether two machines at the same pins produce the same guest ELF, and
   said nothing in this repository established it. A review of this branch built it on a
   second machine and got all three product ids identical to the ones recorded above,

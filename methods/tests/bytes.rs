@@ -115,7 +115,7 @@ mod expected {
     ///
     /// The transactions below both execute a settlement, so the bodies compared
     /// against them have to be settlements too. `read_cost.rs` publishes a
-    /// read-against-read ratio of 448, which is the right figure for comparing
+    /// read-against-read ratio of 447, which is the right figure for comparing
     /// what the two modes' *reads* cost; putting it beside a transaction ratio
     /// would compare a settlement with a read.
     pub const PUSH_SETTLE_BODY: u64 = 13_404;
@@ -649,7 +649,7 @@ fn execute<T: serde_crate::Serialize>(elf: &[u8], input: &T, stage: u8) -> u64 {
 /// the difference between "the body fits" and "the transaction fits", and it is
 /// what P1 asks for.
 ///
-/// Both sides are settlements. `read_cost.rs`'s 448 is a read against a read,
+/// Both sides are settlements. `read_cost.rs`'s 447 is a read against a read,
 /// which answers a different question and does not belong beside a ratio of
 /// transactions.
 #[test]

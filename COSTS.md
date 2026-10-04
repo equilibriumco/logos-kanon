@@ -588,7 +588,7 @@ of body inside a 324,667-cycle transaction — **four percent of it** — becaus
 everything else is being read and being dispatched, and neither scales with what
 the body does.
 
-Both sides here are settlements. The 448 the read tables publish is a read against
+Both sides here are settlements. The 447 the read tables publish is a read against
 a read, which answers what the two modes' *reads* cost and does not belong beside
 a ratio of transactions.
 
