@@ -2,16 +2,25 @@
 
 RFP-020. Built by Equilibrium for Logos. Dual licensed MIT and Apache-2.0.
 
-**Start with the M2 report**, `docs/M2-report.pdf`. It is the M2 deliverable: the push
-aggregator that verifies and publishes in one transaction, the administration around it,
-the five feeds on the public testnet, the security analysis SEC3 asks for, what the write
-costs, and the decisions outstanding with Logos.
+**Start with the M3 report**, `docs/M3-report.pdf`. It is the M3 deliverable: pull mode as
+one function over the same verification the push mode runs, the two reference consumers
+that show what each mode obliges a consumer to do, what a read costs in each, what a
+precompile would be worth to each, and the change that makes a program id a property of
+the source rather than of the directory it was built in.
 
-The headline is a negative result, and a useful one: **the write is not where the money
-goes.** Publishing a verified price costs **8,582 cycles** for an update and **7,386** for
-a first write — 0.0256% of LEZ's 33,554,432-cycle per-transaction budget — against
-**3,039,832** to verify the payload being published. What decides whether a payload fits
-in one transaction is verification, which M1 bounded, and not the account write.
+The headline is what a consumer pays for a usable price, and it is the figure that tells
+an integrator which mode to choose: **a pull read costs 3,041,385 cycles against a push
+read's 6,803** — a factor of **447**, of which 96% is signature recovery, because a pull
+consumer has nothing published to fetch and so pays a verification on every read. Read as
+whole transactions rather than function bodies the two settlements are **ten times apart**
+instead, and every transaction measured fits LEZ's 33,554,432-cycle budget, the largest at
+**10.51%**. Both ratios are published because they answer different questions.
+
+The M2 report, `docs/M2-report.pdf`, is the push aggregator: `submit_price`, the
+administration around it, the five feeds on the public testnet, the security analysis SEC3
+asks for, and what the write costs. Its headline is a negative result and a useful one —
+**the write is not where the money goes**: 8,582 cycles for an update against 3,039,832 to
+verify the payload being published.
 
 The M1 report, `docs/M1-report.pdf`, remains the reference for the verification core: what
 it establishes, what verifying costs component by component, and the evidence behind both.
@@ -25,16 +34,23 @@ floor and instruction handling that no verifier controls. M1's 1,831,638 is `ver
 alone: the verification work, with the framework excluded and with decode, the median,
 staleness and the threshold included, none of which the M0 harness had. M2's figures are
 the account write only, measured beside the 3,039,832-cycle verification of the same
-payload, which is a five-signer payload rather than M1's three. Where they overlap they
-agree to within cycles, and `COSTS.md` (*Agreement with the M0 baseline*) reconciles them
-primitive by primitive.
+payload, which is a five-signer payload rather than M1's three. M3 adds two more kinds of
+figure, and the distinction between them is the one most easily misread: a *read* is what
+a consumer spends to obtain a usable price (3,041,385 pull, 6,803 push), while a
+*transaction* is what a chain executes end to end, body plus the input read plus dispatch
+and validation (3,525,809 for a pull settlement, 324,667 for a push one). The first is a
+ratio of 447 and the second a ratio of ten, and each answers a different question —
+`COSTS.md` (*This changes the per-mode headline rather than qualifying it*) says which.
+Where the figures overlap they agree to within cycles, and `COSTS.md` (*Agreement with
+the M0 baseline*) reconciles them primitive by primitive.
 
-M1 and M2 are implemented. M1 put the crate layout, verification core, CI gates,
+M1, M2 and M3 are implemented. M1 put the crate layout, verification core, CI gates,
 conformance suite, traceability matrix and standalone LEZ sequencer in place; M2 wired
 that core into the push mode — `submit_price`, the admin instructions, the five feeds on
-the public testnet, and the security set — and priced the write. What remains is the pull
-mode (M3), the relayer, SDK, CLI and mini-app (M4), and testnet, docs and operations (M5).
-`TRACEABILITY.md` records what is complete and what remains.
+the public testnet, and the security set — and priced the write; M3 added the pull mode —
+`pull-lib`, the two reference consumers, typed-error parity and the per-mode cost report.
+What remains is the relayer, SDK, CLI and mini-app (M4), and testnet, docs and operations
+(M5). `TRACEABILITY.md` records what is complete and what remains.
 
 ## Layout
 
