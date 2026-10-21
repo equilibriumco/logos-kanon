@@ -38,6 +38,16 @@ pub mod fast_recovery;
 /// what pins the constants to an independent implementation.
 pub mod fast_tables;
 
+/// The field characteristic and challenge tag BIP-340 verification needs.
+/// Plain data, not gated, so host tests can derive both.
+pub mod bip340_params;
+
+/// BIP-340 Schnorr verification over the same circuits and the same GLV +
+/// wNAF machinery. zkVM-only like [`fast_recovery`], and behind the `bip340`
+/// feature, which the product guests leave off.
+#[cfg(all(feature = "bip340", target_os = "zkvm", target_vendor = "risc0"))]
+pub mod bip340;
+
 pub use in_program::InProgramBackend;
 
 #[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]

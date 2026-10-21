@@ -31,6 +31,12 @@ license.workspace = true
 # implementations of one wire format start.
 test-fixtures = []
 
+# BIP-340 Schnorr verification, and the SHA-256 its challenge needs. Off by
+# default and left off by the product guests: the module reaches no RedStone
+# code, and enabling it would add a hash function to an ELF whose cycle counts
+# are asserted by exact equality.
+bip340 = ["dep:sha2"]
+
 [dependencies]
 # The two primitives, and the same versions the cost baseline measured -- exact
 # recovery cost is scalar-dependent and a patch release moves the figures. In a
@@ -41,11 +47,21 @@ test-fixtures = []
 k256 = { version = "=0.13.3", default-features = false, features = ["ecdsa", "arithmetic"] }
 tiny-keccak = { version = "=2.0.2", features = ["keccak"] }
 
+# SHA-256 for the BIP-340 challenge tag, behind the feature of the same name.
+# Schnorr hashes with SHA-256 where the RedStone path hashes with keccak256, so
+# this is a second hash function rather than a replacement, and it is patched
+# to RISC Zero's accelerated fork in the guest workspaces like the two above.
+sha2 = { version = "=0.10.6", default-features = false, optional = true }
+
 [dev-dependencies]
 # Reading the committed RedStone vectors. Both already resolve in this graph, so
 # neither adds a version to the tree.
 serde_json = "1.0.151"
 hex = "0.4"
+
+# SHA-256 for the host tests that derive the BIP-340 constants, so they run
+# whether or not the `bip340` feature is on.
+sha2 = { version = "=0.10.6", default-features = false }
 
 # The generated invariants in `src/properties.rs`. Shrinking is the half of
 # property testing a hand-rolled loop does not give: a failing 700-byte payload

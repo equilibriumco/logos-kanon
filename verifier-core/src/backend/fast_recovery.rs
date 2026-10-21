@@ -78,7 +78,7 @@ use super::{BackendError, Signature, SignerAddress, VerifierBackend};
 /// The secp256k1 group order `n`, big-endian bytes, for the wire-level range
 /// checks. Identical to [`super::r0crypto`]'s, duplicated on the same
 /// argument: the backends must be able to diverge without dragging each other.
-const ORDER: [u8; 32] = [
+pub(crate) const ORDER: [u8; 32] = [
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
     0xBA, 0xAE, 0xDC, 0xE6, 0xAF, 0x48, 0xA0, 0x3B, 0xBF, 0xD2, 0x5E, 0x8C, 0xD0, 0x36, 0x41, 0x41,
 ];
@@ -134,21 +134,21 @@ const G2: BigInt<8> =
 /// table holds `2^(w-1)` odd multiples. `R`'s table is built at runtime, so a
 /// wider window would cost in table additions what it saves in the loop;
 /// at ~130-bit half-scalars, 4 is where the two balance.
-const WINDOW_R: u32 = 4;
+pub(crate) const WINDOW_R: u32 = 4;
 
 /// wNAF window for the generator: its tables are compile-time constants, so
 /// the window is as wide as [`FIXED_BASE_TABLE_LEN`] allows.
-const WINDOW_G: u32 = 5;
+pub(crate) const WINDOW_G: u32 = 5;
 
 /// Odd multiples of `R` a window-4 wNAF needs: `1, 3, 5, …, 15`.
-const R_TABLE_LEN: usize = 1 << (WINDOW_R - 1);
+pub(crate) const R_TABLE_LEN: usize = 1 << (WINDOW_R - 1);
 
 /// The most wNAF digits a GLV half-scalar can produce: the halves are below
 /// `2¹²⁹` in magnitude — a property of the fixed lattice basis, which bounds
 /// Babai rounding for *every* input scalar, adversarial ones included — and a
 /// wNAF of a b-bit value spans at most b + 1 positions. A few extra for
 /// margin; [`wnaf`] is total either way.
-const MAX_DIGITS: usize = 136;
+pub(crate) const MAX_DIGITS: usize = 136;
 
 /// secp256k1 recovery on `risc0-bigint2`'s EC circuits, keccak256 in the
 /// guest. Zero-sized, like its two siblings.
@@ -174,7 +174,7 @@ const fn normalise_recovery_id(v: u8) -> Option<u8> {
 }
 
 /// `a < b` over big-endian 32-byte scalars.
-fn lt(a: &[u8], b: &[u8; 32]) -> bool {
+pub(crate) fn lt(a: &[u8], b: &[u8; 32]) -> bool {
     for (x, y) in a.iter().zip(b.iter()) {
         if x != y {
             return x < y;
@@ -197,13 +197,13 @@ fn is_zero(a: &[u8]) -> bool {
 /// [`UnverifiedFp::from_bigint`] builds in const context without any of that.
 /// The identity/same-x triage below mirrors `AffinePoint::add` line for line.
 #[derive(Clone, Copy)]
-struct Pt {
-    xy: Coords<Config, 8>,
-    infinity: bool,
+pub(crate) struct Pt {
+    pub(crate) xy: Coords<Config, 8>,
+    pub(crate) infinity: bool,
 }
 
 impl Pt {
-    const IDENTITY: Self = Self {
+    pub(crate) const IDENTITY: Self = Self {
         xy: [
             UnverifiedFp::from_bigint(BigInt::ZERO),
             UnverifiedFp::from_bigint(BigInt::ZERO),
@@ -217,7 +217,7 @@ impl Pt {
     /// A `y = 0` doubling would divide by zero in the circuit, but no on-curve
     /// secp256k1 point has one: the group order is odd, so there is no
     /// 2-torsion, and everything this backend doubles is on the curve.
-    fn double_from(&mut self, src: &Self) {
+    pub(crate) fn double_from(&mut self, src: &Self) {
         if src.infinity {
             self.infinity = true;
             return;
@@ -228,7 +228,7 @@ impl Pt {
 
     /// Writes `a + b` into `self`, with the same-x triage the chord rule
     /// cannot do itself.
-    fn add_from(&mut self, a: &Self, b: &Self) {
+    pub(crate) fn add_from(&mut self, a: &Self, b: &Self) {
         if b.infinity {
             *self = *a;
             return;
@@ -250,7 +250,7 @@ impl Pt {
     }
 
     /// `-self`: the reflection `(x, -y)`.
-    fn neg(&self) -> Self {
+    pub(crate) fn neg(&self) -> Self {
         Self {
             xy: [self.xy[0], -&self.xy[1]],
             infinity: self.infinity,
@@ -258,7 +258,7 @@ impl Pt {
     }
 
     /// The endomorphism `φ(x, y) = (β·x, y) = λ·self`.
-    fn endomorphism(&self) -> Self {
+    pub(crate) fn endomorphism(&self) -> Self {
         Self {
             xy: [&self.xy[0] * &BETA, self.xy[1]],
             infinity: self.infinity,
@@ -322,7 +322,7 @@ fn sqrt_chain(value: &UnverifiedFp<FqConfig, 8>) -> Option<UnverifiedFp<FqConfig
 /// The point at `x` with the asked-for y-parity, or `None` when no point has
 /// that x-coordinate. What `AffinePoint::decompress` does, minus its generic
 /// square root — [`sqrt_chain`] is most of a recovery's fixed cost.
-fn decompress(x: &UnverifiedFp<FqConfig, 8>, want_odd: bool) -> Option<Pt> {
+pub(crate) fn decompress(x: &UnverifiedFp<FqConfig, 8>, want_odd: bool) -> Option<Pt> {
     // y² = x³ + 7.
     let mut rhs = x * x;
     rhs = &rhs * x;
@@ -366,10 +366,10 @@ const fn fixed_table(rows: &[(&str, &str); FIXED_BASE_TABLE_LEN]) -> [Pt; FIXED_
 }
 
 /// `(2i+1)·G`.
-static G_TABLE: [Pt; FIXED_BASE_TABLE_LEN] = fixed_table(&G_ODD);
+pub(crate) static G_TABLE: [Pt; FIXED_BASE_TABLE_LEN] = fixed_table(&G_ODD);
 
 /// `(λ·(2i+1))·G`.
-static LAMBDA_G_TABLE: [Pt; FIXED_BASE_TABLE_LEN] = fixed_table(&LAMBDA_G_ODD);
+pub(crate) static LAMBDA_G_TABLE: [Pt; FIXED_BASE_TABLE_LEN] = fixed_table(&LAMBDA_G_ODD);
 
 /// The limbs of a [`BigInt<8>`], little-endian.
 fn limbs(value: &BigInt<8>) -> [u32; 8] {
@@ -415,9 +415,9 @@ fn mul_shift_384(a: &BigInt<8>, b: &BigInt<8>) -> BigInt<8> {
 }
 
 /// A GLV half-scalar: a sign and a magnitude below `2¹²⁹`.
-struct Half {
-    negative: bool,
-    magnitude: BigInt<8>,
+pub(crate) struct Half {
+    pub(crate) negative: bool,
+    pub(crate) magnitude: BigInt<8>,
 }
 
 /// Normalises a scalar mod n into sign–magnitude form: values above `n/2`
@@ -441,7 +441,7 @@ fn sign_magnitude(value: &Fr) -> Half {
 /// magnitude: libsecp256k1's `secp256k1_scalar_split_lambda`, on this crate's
 /// types. The two 384-bit-shifted products are software; the four reductions
 /// mod n ride the modular-multiply circuit through `Fr`'s operators.
-fn split_lambda(k: &Fr) -> (Half, Half) {
+pub(crate) fn split_lambda(k: &Fr) -> (Half, Half) {
     let c1 = mul_shift_384(k.as_bigint(), &G1);
     let c2 = mul_shift_384(k.as_bigint(), &G2);
 
@@ -466,7 +466,7 @@ fn split_lambda(k: &Fr) -> (Half, Half) {
 /// than as eight limbs: this loop runs once per bit, four times per recovery,
 /// and the eight-limb version was measurably most of the backend's software
 /// overhead.
-fn wnaf(magnitude: &BigInt<8>, w: u32, digits: &mut [i8; MAX_DIGITS]) -> usize {
+pub(crate) fn wnaf(magnitude: &BigInt<8>, w: u32, digits: &mut [i8; MAX_DIGITS]) -> usize {
     let k = limbs(magnitude);
     let mut lo =
         u128::from(k[0]) | u128::from(k[1]) << 32 | u128::from(k[2]) << 64 | u128::from(k[3]) << 96;
@@ -507,17 +507,17 @@ fn wnaf(magnitude: &BigInt<8>, w: u32, digits: &mut [i8; MAX_DIGITS]) -> usize {
 /// One of the four digit streams the interleaved loop walks. Digits by
 /// reference: the arrays live on the caller's stack and are read once per
 /// position, so moving them into the stream would be a copy for nothing.
-struct Stream<'a> {
-    digits: &'a [i8; MAX_DIGITS],
-    len: usize,
-    negative: bool,
-    table: &'a [Pt],
+pub(crate) struct Stream<'a> {
+    pub(crate) digits: &'a [i8; MAX_DIGITS],
+    pub(crate) len: usize,
+    pub(crate) negative: bool,
+    pub(crate) table: &'a [Pt],
 }
 
 impl Stream<'_> {
     /// The table point this position asks for, already sign-adjusted, or
     /// `None` when the digit is zero or the position is past this stream.
-    fn point_at(&self, i: usize) -> Option<Pt> {
+    pub(crate) fn point_at(&self, i: usize) -> Option<Pt> {
         if i >= self.len {
             return None;
         }
