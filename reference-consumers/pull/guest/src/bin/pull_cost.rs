@@ -96,7 +96,7 @@ use nssa_core::{
 };
 use reference_consumer_pull::{
     order::settle,
-    pull_lib::{verify_price, AssetPair, InProgramBackend},
+    pull_lib::{verify_price, AssetPair, FastRecoveryBackend as Backend},
     trust::{self, FeedTrust},
     OrderAccount,
 };
@@ -283,7 +283,7 @@ fn read(stage: u8, payload_bytes: &[u8], prepared: &Prepared) -> Report {
         &AssetPair::new(prepared.stored.base_asset, prepared.stored.quote_asset),
         prepared.clock.account_id.value(),
         prepared.clock.account.data.as_ref(),
-        &InProgramBackend::new(),
+        &Backend::new(),
     ) {
         Ok(verified) => (u32::from(verified.signers), verified.price as u64, 0),
         Err(_) => (0, 0, 0),

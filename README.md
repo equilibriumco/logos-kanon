@@ -9,18 +9,24 @@ precompile would be worth to each, and the change that makes a program id a prop
 the source rather than of the directory it was built in.
 
 The headline is what a consumer pays for a usable price, and it is the figure that tells
-an integrator which mode to choose: **a pull read costs 3,041,385 cycles against a push
-read's 6,803** — a factor of **447**, of which 96% is signature recovery, because a pull
+an integrator which mode to choose: **a pull read costs 590,683 cycles against a push
+read's 6,803** — a factor of **86**, of which 94% is signature recovery, because a pull
 consumer has nothing published to fetch and so pays a verification on every read. Read as
-whole transactions rather than function bodies the two settlements are **ten times apart**
+whole transactions rather than function bodies the two settlements are **three times apart**
 instead, and every transaction measured fits LEZ's 33,554,432-cycle budget, the largest at
-**10.51%**. Both ratios are published because they answer different questions.
+**3.20%**. Both ratios are published because they answer different questions.
+
+These are the figures after M0 Addendum A's accelerated recovery backend, which cut a
+recovery from 568,350 cycles to 109,502. `m0/v0.3_rerun/` is the measurement behind it and
+`COSTS.md` carries the re-pinned tables; the milestone reports below quote the figures as
+they stood when each was written.
 
 The M2 report, `docs/M2-report.pdf`, is the push aggregator: `submit_price`, the
 administration around it, the five feeds on the public testnet, the security analysis SEC3
 asks for, and what the write costs. Its headline is a negative result and a useful one —
-**the write is not where the money goes**: 8,582 cycles for an update against 3,039,832 to
-verify the payload being published.
+**the write is not where the money goes**: 9,098 cycles for an update against 589,120 to
+verify the payload being published — and it was the same conclusion when verification cost
+five times that.
 
 The M1 report, `docs/M1-report.pdf`, remains the reference for the verification core: what
 it establishes, what verifying costs component by component, and the evidence behind both.
@@ -33,13 +39,14 @@ M0's 1,906,737 is a whole LEZ transaction — it includes 158,290 cycles of LEZ 
 floor and instruction handling that no verifier controls. M1's 1,831,638 is `verify_feed`
 alone: the verification work, with the framework excluded and with decode, the median,
 staleness and the threshold included, none of which the M0 harness had. M2's figures are
-the account write only, measured beside the 3,039,832-cycle verification of the same
-payload, which is a five-signer payload rather than M1's three. M3 adds two more kinds of
+the account write only, measured beside the verification of the same payload — 3,039,832
+cycles when M2 was written, 589,120 today — which is a five-signer payload rather than
+M1's three. M3 adds two more kinds of
 figure, and the distinction between them is the one most easily misread: a *read* is what
-a consumer spends to obtain a usable price (3,041,385 pull, 6,803 push), while a
+a consumer spends to obtain a usable price (590,683 pull, 6,803 push), while a
 *transaction* is what a chain executes end to end, body plus the input read plus dispatch
-and validation (3,525,809 for a pull settlement, 324,667 for a push one). The first is a
-ratio of 447 and the second a ratio of ten, and each answers a different question —
+and validation (1,075,080 for a pull settlement, 324,667 for a push one). The first is a
+ratio of 86 and the second a ratio of three, and each answers a different question —
 `COSTS.md` (*This changes the per-mode headline rather than qualifying it*) says which.
 Where the figures overlap they agree to within cycles, and `COSTS.md` (*Agreement with
 the M0 baseline*) reconciles them primitive by primitive.

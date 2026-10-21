@@ -23,7 +23,18 @@ use lee_core::account::{Account, AccountWithMetadata, Data};
 use lee_core::program::{AccountPostState, ProgramId};
 use spel_framework::pda::seed_from_str;
 use spel_framework::spel_output::AutoClaim;
-use verifier_core::backend::{BackendError, InProgramBackend};
+use verifier_core::backend::BackendError;
+/// The backend verification runs on.
+///
+/// The GLV + wNAF recovery inside a guest, which is where the gas is spent and
+/// where the EC circuits exist; `k256` on the host, where tests run and where
+/// the accelerator does not. All backends are held to the same addresses by
+/// `methods/guest/src/bin/backend_equivalence.rs`, which runs every one of
+/// them over real and adversarial signatures inside the zkVM.
+#[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+use verifier_core::backend::FastRecoveryBackend as Backend;
+#[cfg(not(all(target_os = "zkvm", target_vendor = "risc0")))]
+use verifier_core::backend::InProgramBackend as Backend;
 use verifier_core::decode::{DecodeError, Payload};
 use verifier_core::time::TimeError;
 use verifier_core::{verify_feed, AssetPair, ConfigError, FeedConfig, VerifiedFeed, VerifyError};
@@ -352,7 +363,7 @@ pub fn submit_price(
     );
 
     let decoded = Payload::decode(payload).map_err(VerifyError::Malformed)?;
-    let verified = verify_feed(&decoded, &config, &expected, &InProgramBackend::new(), &now)?;
+    let verified = verify_feed(&decoded, &config, &expected, &Backend::new(), &now)?;
 
     let written = write(published, &config, &verified)?;
     Ok(post_states(feed, price_account, clock, &written, create))

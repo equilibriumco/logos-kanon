@@ -112,7 +112,7 @@ use spel_framework::{
     spel_output::AutoClaim,
 };
 use verifier_core::{
-    backend::{InProgramBackend, SignerAddress},
+    backend::{FastRecoveryBackend as Backend, SignerAddress},
     decode::Payload,
     feed::{verify_feed, AssetPair, FeedConfig},
     time::{TimeError, TimeSource},
@@ -200,7 +200,7 @@ fn main() {
         .chunks_exact(SignerAddress::LEN)
         .filter_map(|chunk| chunk.try_into().ok().map(SignerAddress))
         .collect();
-    let backend = InProgramBackend::new();
+    let backend = Backend::new();
     let clock = FixedClock(now_ms);
     let assets = match (
         <[u8; AssetPair::ID_LEN]>::try_from(base_asset.as_slice()),
@@ -278,7 +278,7 @@ fn run(
     payload_bytes: &[u8],
     config: &FeedConfig<'_>,
     expected: &AssetPair,
-    backend: &InProgramBackend,
+    backend: &Backend,
     clock: &FixedClock,
     feed: AccountWithMetadata,
     price_account: AccountWithMetadata,

@@ -50,7 +50,13 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use core::fmt;
 use lee_core::account::{Account, AccountWithMetadata, Data};
 use lee_core::program::{AccountPostState, ProgramId};
-use pull_lib::{verify_price, AssetPair, InProgramBackend, VerifiedFeed, VerifyError};
+/// The backend this consumer verifies on; see `aggregator_program`'s note.
+/// A pull consumer verifies the payload itself, so this is where its gas goes.
+#[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+use pull_lib::FastRecoveryBackend as Backend;
+#[cfg(not(all(target_os = "zkvm", target_vendor = "risc0")))]
+use pull_lib::InProgramBackend as Backend;
+use pull_lib::{verify_price, AssetPair, VerifiedFeed, VerifyError};
 use serde::{Deserialize, Serialize};
 use spel_framework::pda::seed_from_str;
 use spel_framework::spel_output::AutoClaim;
@@ -564,7 +570,7 @@ fn verify(
         expected,
         clock.account_id.value(),
         clock.account.data.as_ref(),
-        &InProgramBackend::new(),
+        &Backend::new(),
     )?)
 }
 

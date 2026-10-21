@@ -177,6 +177,13 @@ pub use kanon_clock::CLOCK_ACCOUNT_ID;
 /// includes is `verifier-core`'s and does name that crate, so the guard is a
 /// statement about the test rather than about everything in the test binary.
 pub use verifier_core::backend::{BackendError, InProgramBackend, SignerAddress};
+
+/// The accelerated backends, re-exported so a pull consumer reaches them the
+/// same way it reaches everything else: through this crate, without naming
+/// `verifier-core`. zkVM-only, for the reason `verifier_core::backend::r0crypto`
+/// gives.
+#[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+pub use verifier_core::backend::{FastRecoveryBackend, R0CryptoBackend};
 pub use verifier_core::decode::DecodeError;
 pub use verifier_core::error::{ConfigError, VerifyError};
 pub use verifier_core::feed::{

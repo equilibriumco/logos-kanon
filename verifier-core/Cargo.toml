@@ -61,3 +61,16 @@ hex = "0.4"
 # process; `fork` runs every case in a subprocess and brings `rusty-fork`,
 # `tempfile` and `wait-timeout` with it.
 proptest = { version = "1.11.0", default-features = false, features = ["std", "handle-panics"] }
+
+# The accelerated recovery primitive, for `backend::r0crypto`. zkVM-only, so
+# target-gated: a host build of this crate must not see it. It is the same
+# `risc0-bigint2` accelerator the patched `k256` already reaches, packaged as a
+# single call instead of a loop driven from the guest.
+[target.'cfg(all(target_os = "zkvm", target_vendor = "risc0"))'.dependencies]
+risc0-crypto-evm = "0.1.0-rc.1"
+# The crate underneath it, for `backend::fast_recovery`: the same EC circuits,
+# driven by this crate's own GLV + wNAF loop instead of the 1-bit
+# Strauss–Shamir `risc0-crypto`'s `double_scalar_mul` runs. Already in the
+# guest lockfiles through `risc0-crypto-evm`, so this is an edge rather than a
+# package.
+risc0-crypto = "0.1.0-rc.1"

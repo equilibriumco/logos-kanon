@@ -21,7 +21,29 @@
 
 pub mod in_program;
 
+/// Recovery through `risc0-crypto-evm`, which links only inside a guest.
+///
+/// Gated rather than feature-flagged: the crate is zkVM-only, so a host build
+/// must not see it. `[M0-A:01]` measures what it buys.
+#[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+pub mod r0crypto;
+
+/// GLV + wNAF recovery on the EC circuits directly. zkVM-only, like
+/// [`r0crypto`], and faster: `methods/tests/recovery_cost.rs` measures both.
+#[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+pub mod fast_recovery;
+
+/// The fixed-base tables `fast_recovery` walks. Plain data, deliberately
+/// *not* gated: host tests recompute every entry through `k256`, which is
+/// what pins the constants to an independent implementation.
+pub mod fast_tables;
+
 pub use in_program::InProgramBackend;
+
+#[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+pub use fast_recovery::FastRecoveryBackend;
+#[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+pub use r0crypto::R0CryptoBackend;
 
 /// A 20-byte Ethereum-style address, the identity RedStone signer sets are
 /// expressed in.

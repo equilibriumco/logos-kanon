@@ -39,7 +39,7 @@
 use risc0_zkvm::guest::env;
 
 use verifier_core::{
-    backend::{InProgramBackend, SignerAddress, VerifierBackend},
+    backend::{FastRecoveryBackend as Backend, SignerAddress, VerifierBackend},
     decode::Payload,
     feed::{verify_feed, AssetPair, FeedConfig},
     time::{TimeError, TimeSource},
@@ -89,7 +89,7 @@ fn main() {
         .chunks_exact(SignerAddress::LEN)
         .filter_map(|chunk| chunk.try_into().ok().map(SignerAddress))
         .collect();
-    let backend = InProgramBackend::new();
+    let backend = Backend::new();
     let clock = FixedClock(now_ms);
     // Arbitrary but fixed: the pair is a registration claim (ADR 16), and what
     // it costs to compare is 64 bytes whatever it holds.
@@ -121,7 +121,7 @@ fn run(
     payload_bytes: &[u8],
     config: &FeedConfig<'_>,
     expected: &AssetPair,
-    backend: &InProgramBackend,
+    backend: &Backend,
     clock: &FixedClock,
     sample: Value,
 ) -> Report {

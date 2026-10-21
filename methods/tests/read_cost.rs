@@ -14,7 +14,7 @@
 //!   the figure.
 //!
 //! So the same requirement — P2's "per mode" — is answered by two figures a
-//! factor of 447 apart, and that gap is the point rather than an artefact. `COSTS.md` states it, and `[M3-08:01]` records what "a read" is
+//! factor of 86 apart, and that gap is the point rather than an artefact. `COSTS.md` states it, and `[M3-08:01]` records what "a read" is
 //! taken to mean on each side and why two figures per mode are published rather
 //! than one.
 //!
@@ -131,22 +131,22 @@ mod stage {
 mod pull {
     /// The mode's read: rebuild the registered roster, then verify the payload
     /// against it. Five packages at a threshold of three.
-    pub const READ: u64 = 3_041_385;
+    pub const READ: u64 = 590_683;
     /// What that read is of LEZ's per-transaction budget, as `COSTS.md` prints it.
-    pub const BUDGET_SHARE: &str = "9.06%";
+    pub const BUDGET_SHARE: &str = "1.76%";
     /// `verify_price` without the roster rebuild that precedes it.
     ///
-    /// Within 722 cycles of `cost.rs`'s 3,039,790 for the same five-signer
+    /// Within 759 cycles of `cost.rs`'s 589,024 for the same five-signer
     /// payload, and that agreement is the point: a pull read *is* an update's
     /// verification, plus one clock decode and the library call around it.
-    pub const VERIFY: u64 = 3_040_512;
+    pub const VERIFY: u64 = 589_783;
     /// The whole `settle` body.
-    pub const SETTLE: u64 = 3_048_613;
+    pub const SETTLE: u64 = 598_015;
     /// What that body is of the per-transaction budget, as `COSTS.md` prints it.
-    pub const SETTLE_BUDGET_SHARE: &str = "9.09%";
+    pub const SETTLE_BUDGET_SHARE: &str = "1.78%";
     /// What settling costs on top of reading.
-    pub const BEYOND_READ: u64 = 7_228;
-    pub const FLOOR: u64 = 147_529;
+    pub const BEYOND_READ: u64 = 7_332;
+    pub const FLOOR: u64 = 147_531;
     pub const REGISTRATION: u64 = 3_385;
     pub const ORDER_DECODE: u64 = 2_031;
     /// `signer_addresses` and `config`, over a `FeedTrust` the setup decoded.
@@ -154,7 +154,7 @@ mod pull {
     /// Small because it is only the rebuild: an earlier draft measured 6,263 here
     /// and most of that was the trust account's decode and the order's, which
     /// have since moved into the setup that cancels.
-    pub const ROSTER: u64 = 873;
+    pub const ROSTER: u64 = 900;
     pub const ORDER_WRITE: u64 = 1_024;
 }
 
@@ -189,7 +189,7 @@ mod push {
     ///
     /// The figure M3-08 exists to produce, and the reason P2 asks for costs per
     /// mode rather than once: the two are not variations on one number.
-    pub const PULL_IS_THIS_MANY_TIMES_DEARER: u64 = 447;
+    pub const PULL_IS_THIS_MANY_TIMES_DEARER: u64 = 86;
 }
 
 use lez::CYCLE_BUDGET as BUDGET;
@@ -718,9 +718,9 @@ fn the_gap_between_the_modes_is_signature_recovery() {
     // assertion noticing, which is a wide enough band to hide a real change.
     let share = precompile::FIVE_SIGNER_RECOVERY * 1_000 / gap;
     assert_eq!(
-        share, 963,
+        share, 938,
         "recovery is {share} thousandths of the {gap}-cycle gap between the modes, not \
-         963; either `cost.rs`'s recovery row moved or something else grew"
+         938; either `cost.rs`'s recovery row moved or something else grew"
     );
 }
 
@@ -746,9 +746,9 @@ mod precompile {
     /// on this side the removable term is imported rather than measured in the
     /// guest it is taken out of. What bounds the import is
     /// `the_roster_rebuild_is_not_where_a_pull_read_goes`: `pull::VERIFY` is
-    /// 3,040,512 against `cost.rs`'s 3,039,790 for the same payload, 722 cycles
+    /// 589,783 against `cost.rs`'s 589,024 for the same payload, 759 cycles
     /// apart, so the two guests are doing the same cryptographic work to about a
-    /// part in four thousand. The residuals below inherit that, which is fine for
+    /// part in eight hundred. The residuals below inherit that, which is fine for
     /// a reduction factor and not fine for reading small differences between
     /// them.
     pub use super::lez::{FIVE_SIGNER_RECOVERY, REMOVABLE};
@@ -768,15 +768,15 @@ mod precompile {
     /// convention read as an arithmetic slip rather than as a convention. It is
     /// the same objection this file already makes about flooring the recovery
     /// share, one table over.
-    pub const PULL_READ_REMAINS: [u64; 3] = [31_115, 41_115, 131_115];
-    pub const PULL_READ_REDUCTION_TENTHS: [u64; 3] = [977, 740, 232];
+    pub const PULL_READ_REMAINS: [u64; 3] = [30_389, 40_389, 130_389];
+    pub const PULL_READ_REDUCTION_TENTHS: [u64; 3] = [194, 146, 45];
 
     /// The same for the whole `settle` body. It lands 199 cycles from what
     /// `cost.rs` computes for a push update, which is not a finding: those are
-    /// residuals from different guests, disagreeing by 42 and 722 cycles on
+    /// residuals from different guests, disagreeing by 96 and 759 cycles on
     /// identical verification, and a settlement is not a submission. Both being
     /// small is the claim; their being equal is not.
-    pub const PULL_SETTLE_REMAINS: [u64; 3] = [38_343, 48_343, 138_343];
+    pub const PULL_SETTLE_REMAINS: [u64; 3] = [37_721, 47_721, 137_721];
 }
 
 /// A reduction factor in tenths, rounded to the nearest rather than truncated.

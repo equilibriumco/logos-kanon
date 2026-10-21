@@ -27,8 +27,8 @@ pub const CYCLE_BUDGET: u64 = 33_554_432;
 /// `cost.rs` measures these as part of its component table and
 /// `the_shared_figures_match_the_component_table` holds this copy against that
 /// measurement, so the two cannot drift.
-pub const FIVE_SIGNER_KECCAK: u64 = 87_380;
-pub const FIVE_SIGNER_RECOVERY: u64 = 2_922_890;
+pub const FIVE_SIGNER_KECCAK: u64 = 12_420;
+pub const FIVE_SIGNER_RECOVERY: u64 = 547_874;
 
 /// What those two come to together.
 pub const REMOVABLE: u64 = FIVE_SIGNER_KECCAK + FIVE_SIGNER_RECOVERY;

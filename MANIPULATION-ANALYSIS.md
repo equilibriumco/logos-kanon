@@ -162,7 +162,7 @@ If a payload cannot reach M distinct authorised signers at all, it fails with
 
 ### What a higher threshold costs
 
-Recovery is the dominant cost of verification. One package costs 585,276 cycles
+Recovery is the dominant cost of verification. One package costs 109,838 cycles
 against a public budget of 33,554,432 cycles (`COSTS.md`). A higher threshold
 raises the cost of each update almost linearly. It also raises the liveness bar,
 because M authorised signers must publish and appear in the payload. If the

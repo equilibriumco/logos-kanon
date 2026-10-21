@@ -1,5 +1,22 @@
 # What an update costs
 
+> **Re-measured for the accelerated recovery backend (M0 Addendum A).**
+> Verification now runs on `verifier_core::backend::FastRecoveryBackend` — GLV +
+> wNAF recovery driven directly on the `risc0-bigint2` EC circuits — and the
+> `risc0-crypto` dependency set brings the keccak coprocessor with it, so every
+> figure in this document moved and has been re-pinned against a fresh run.
+> `methods/tests/recovery_cost.rs` measures the backends in isolation:
+> 109,502 cycles a recovery, against 137,324 for `risc0-crypto-evm`'s
+> `secp256k1_ecrecover` and 568,350 for the patched `k256` loop.
+> `m0/v0.3_rerun/` is the measurement this came out of.
+>
+> `README.md` and `MANIPULATION-ANALYSIS.md` are rescaled with it. The ADRs and
+> the per-task notes in `traceability/` are **not**: they record what each
+> decision and each milestone measured at the time, and rewriting their figures
+> would falsify that record. Where one of them quotes a cost, read it as the
+> figure that held when it was written, and this file as the figure that holds
+> now.
+
 Cycle costs of `verifier_core::verify_feed`, broken down by component, measured
 inside the product guest over payloads RedStone published.
 
@@ -20,25 +37,25 @@ data point each; the 1- and 3-signer columns are the same payload cut short.
 
 | component | 1 signer | 3 signers | 5 signers |
 | --- | ---: | ---: | ---: |
-| decode | 582 | 1,495 | 2,408 |
-| keccak256 | 17,476 | 52,428 | 87,380 |
-| recovery | 585,276 | 1,755,580 | 2,922,890 |
-| signer-set membership | 162 | 534 | 970 |
-| the rest of `verify_feed` | 17,773 | 21,601 | 26,142 |
-| **whole update** | **621,269** | **1,831,638** | **3,039,790** |
-| _harness floor, subtracted out_ | 25,324 | 62,295 | 99,491 |
+| decode | 505 | 1,212 | 1,919 |
+| keccak256 | 4,012 | 8,216 | 12,420 |
+| recovery | 109,838 | 328,204 | 547,874 |
+| signer-set membership | 156 | 516 | 940 |
+| the rest of `verify_feed` | 17,718 | 21,438 | 25,871 |
+| **whole update** | **132,229** | **359,586** | **589,024** |
+| _harness floor, subtracted out_ | 25,324 | 62,294 | 99,492 |
 
 At three signers, which is RFP-020's default threshold:
 
 | component | share |
 | --- | ---: |
-| recovery | 95.85% |
-| keccak256 | 2.86% |
-| the rest of `verify_feed` | 1.18% |
-| decode | 0.08% |
-| signer-set membership | 0.03% |
+| recovery | 91.27% |
+| the rest of `verify_feed` | 5.96% |
+| keccak256 | 2.28% |
+| decode | 0.34% |
+| signer-set membership | 0.14% |
 
-One more signer costs about 605,000 cycles, whatever the signer count already is.
+One more signer costs about 114,000 cycles, whatever the signer count already is.
 
 ## What the write costs
 
@@ -48,16 +65,16 @@ write the price, and that is the other half of what a push transaction spends
 
 | | first write | update |
 | --- | ---: | ---: |
-| verification | 3,039,832 | 3,039,832 |
-| **the write** | **7,386** | **8,582** |
-| whole `submit_price` body | 3,047,218 | 3,048,414 |
-| _the write, as a share of the body_ | _0.242%_ | _0.282%_ |
+| verification | 589,120 | 589,120 |
+| **the write** | **7,902** | **9,098** |
+| whole `submit_price` body | 597,022 | 598,218 |
+| _the write, as a share of the body_ | _1.324%_ | _1.521%_ |
 | _harness floor, subtracted out_ | 138,475 | 153,882 |
-| _the write, against LEZ's per-transaction budget_ | _0.0220%_ | _0.0256%_ |
+| _the write, against LEZ's per-transaction budget_ | _0.0235%_ | _0.0271%_ |
 
-**The write is a rounding error against verifying.** Under three tenths of one
-percent of the body, and 8,582 cycles is 0.0256% of the 33,554,432-cycle
-per-transaction budget. The cost of a push submission is the cost of recovering
+**The write is a rounding error against verifying.** Under two percent of the
+body, and 9,098 cycles is 0.0271% of the 33,554,432-cycle per-transaction
+budget. The cost of a push submission is the cost of recovering
 signatures; no optimisation on the write side is worth looking for.
 
 ### The body is not the whole instruction
@@ -81,8 +98,8 @@ The dispatcher and the `SpelOutput` wrapping are in none of these figures, and
 cannot be reached by calling a function: they need the macro's generated entry
 point, which takes a whole LEZ transaction. So what is published here is **the
 body, plus a named validator cost** — not the instruction as a chain executes it.
-Against 3.05M cycles of verification the gap is immaterial; it is stated because a
-figure called "the instruction" that excluded a validator would be wrong.
+Against 589,000 cycles of verification the gap is immaterial; it is stated because
+a figure called "the instruction" that excluded a validator would be wrong.
 
 ### The two paths
 
@@ -188,22 +205,22 @@ variations on one design (M3-08).
 
 | | pull | push |
 | --- | ---: | ---: |
-| **the mode's read** | **3,041,385** | **6,803** |
-| settling, beyond the read | 7,228 | 6,601 |
-| the whole `settle` body | 3,048,613 | 13,404 |
-| _harness floor, subtracted out_ | 147,529 | 73,332 |
-| _the read, against LEZ's per-transaction budget_ | _9.06%_ | _0.0203%_ |
-| _the `settle` body, against the same budget_ | _9.09%_ | _0.0399%_ |
+| **the mode's read** | **590,683** | **6,803** |
+| settling, beyond the read | 7,332 | 6,601 |
+| the whole `settle` body | 598,015 | 13,404 |
+| _harness floor, subtracted out_ | 147,531 | 73,332 |
+| _the read, against LEZ's per-transaction budget_ | _1.76%_ | _0.0203%_ |
+| _the `settle` body, against the same budget_ | _1.78%_ | _0.0399%_ |
 
-**A pull read costs 447 times a push read.** Not a tuning difference — the pull
+**A pull read costs 86 times a push read.** Not a tuning difference — the pull
 consumer has nothing published to fetch, so its read *is* a verification, and it
 pays that on every read. The push consumer reads six fields the aggregator
 already verified once, and recovers no signatures.
 
-96% of the gap is signature recovery, and nothing else in it comes close.
-`cost.rs` measures five-signer recovery at 2,922,890 against a difference of
-3,034,582, and `the_gap_between_the_modes_is_signature_recovery` asserts that
-share rather than leaving it as a claim. The other 4% is the rest of
+94% of the gap is signature recovery, and nothing else in it comes close.
+`cost.rs` measures five-signer recovery at 547,874 against a difference of
+583,880, and `the_gap_between_the_modes_is_signature_recovery` asserts that
+share rather than leaving it as a claim. The other 6% is the rest of
 verification — the package walk, the hashing, the membership lookups — so the
 claim is that the gap is one component and not that it is only one component.
 That is the same conclusion the component table reaches for an update, and the
@@ -222,8 +239,8 @@ than they are. `[M3-08:01]` records the correction.
 
 | pull, as prefixes | cycles |
 | --- | ---: |
-| rebuilding the registered roster | 873 |
-| `verify_price` over five packages at a threshold of three | 3,040,512 |
+| rebuilding the registered roster | 900 |
+| `verify_price` over five packages at a threshold of three | 589,783 |
 
 These two are exact, and add to the read, because the roster rebuild is a
 genuine prefix of the read: one stage runs it and stops, the next runs it and
@@ -246,10 +263,10 @@ three figures support is the weaker claim they are here for, which is that the
 address derivation dominates and no arrangement of the checks would matter next
 to it.
 
-The pull side's `verify_price` figure is within 722 cycles of the 3,039,790 the
+The pull side's `verify_price` figure is within 759 cycles of the 589,024 the
 component table gives for the same five-signer payload, and that agreement is
 worth stating: it means the pull read is an update's verification and not
-something adjacent to it. The 722 is one clock decode and the library call
+something adjacent to it. The 759 is one clock decode and the library call
 around it.
 
 **The largest item in a push read is hashing**, which is worth saying plainly
@@ -281,7 +298,7 @@ component.
 
 **These do not sum to the residual, and are not meant to**, for the reason M2-18
 recorded: isolated calls do not cost what inlined ones do. The pull residual is
-7,228 cycles and the three figures above it total 6,440, which is not a
+7,332 cycles and the three figures above it total 6,440, which is not a
 contradiction in either direction — inlining can cost less than a call, and
 `settle` also does things none of these three rows measures.
 
@@ -343,7 +360,7 @@ figures rest on three things about it that nobody can measure: what a call into 
 costs, what it hands back, and what it validates** (M3-09). What the third moves is
 the delta itself: the tables below assume the primitive absorbs the signature
 parsing and the malleability refusal that `recover_signer` does today, and if it
-does not then 3,010,270 is an upper bound on what is removable and whatever is
+does not then 560,294 is an upper bound on what is removable and whatever is
 retained is unmeasured. The other two move the band around the delta and how it
 splits between the primitives, and that split rests on an estimate of its own, named
 where it is used. What a
@@ -360,7 +377,7 @@ deciding whether to build one.
 ### The saving is the same in both modes. The frequency is not
 
 A five-package verification does five keccak256 hashes and five recoveries, so a
-precompile removes **3,010,270 cycles and adds ten crossings**, wherever that
+precompile removes **560,294 cycles and adds ten crossings**, wherever that
 verification happens.
 
 Those ten are charged one `c` each, which is an assumption and not a small one: five
@@ -376,11 +393,11 @@ They differ in how often a consumer pays it:
 
 | a read | pull | push |
 | --- | ---: | ---: |
-| today | 3,041,385 | 6,803 |
-| removable | 3,010,270 | 0 |
-| with a precompile, `c = 0` | 31,115 (**97.7x**) | 6,803 (1x) |
-| with a precompile, `c = 1,000` | 41,115 (**74.0x**) | 6,803 (1x) |
-| with a precompile, `c = 10,000` | 131,115 (**23.2x**) | 6,803 (1x) |
+| today | 590,683 | 6,803 |
+| removable | 560,294 | 0 |
+| with a precompile, `c = 0` | 30,389 (**97.7x**) | 6,803 (1x) |
+| with a precompile, `c = 1,000` | 40,389 (**74.0x**) | 6,803 (1x) |
+| with a precompile, `c = 10,000` | 130,389 (**23.2x**) | 6,803 (1x) |
 
 **A pull consumer pays the whole saving on every read. A push consumer gets
 nothing.** Not a small amount — nothing, because a push read performs no
@@ -392,21 +409,21 @@ Push mode's saving is real, but it lands on the aggregator's update:
 
 | a push update | cycles |
 | --- | ---: |
-| today | 3,048,414 |
-| removable | 3,010,270 |
-| with a precompile, `c = 0` | 38,144 (**79.9x**) |
-| with a precompile, `c = 1,000` | 48,144 (**63.3x**) |
-| with a precompile, `c = 10,000` | 138,144 (**22.1x**) |
+| today | 598,218 |
+| removable | 560,294 |
+| with a precompile, `c = 0` | 37,924 (**79.9x**) |
+| with a precompile, `c = 1,000` | 47,924 (**63.3x**) |
+| with a precompile, `c = 10,000` | 137,924 (**22.1x**) |
 
 So for a feed updated once and read `R` times before its next update, a
-precompile is worth `3,010,270 - 10c` per read in pull mode and the same figure
+precompile is worth `560,294 - 10c` per read in pull mode and the same figure
 divided by `R` in push mode. **It is worth `R` times more to a pull consumer**,
 and that is P3's per-mode answer: one number, two frequencies.
 
-With the cryptography gone, a pull settlement leaves 38,343 and a push update
-38,144. Read that as "about the same size" and no further:
+With the cryptography gone, a pull settlement leaves 37,721 and a push update
+37,924. Read that as "about the same size" and no further:
 `the_precompile_read_table_is_reproducible` prints both so they can be checked, but
-the 199 between them is smaller than the 722 cycles those guests disagree by on
+the 203 between them is smaller than the 759 cycles those guests disagree by on
 identical verification, and the two are different operations besides — a settlement
 against a submission. What it supports is that neither mode's remaining work is
 large, not that the modes converge or why. What is
@@ -415,8 +432,8 @@ left in both cases is the framework and each program's own domain.
 ### These are bodies, and a settlement is several times its body
 
 A settlement is not a `settle` body. M3-10 measures the whole transaction by
-running the product ELF over the inputs LEZ would hand it: **3,525,809 cycles**,
-against the 3,048,613 the body costs. The difference is what LEZ spends reading
+running the product ELF over the inputs LEZ would hand it: **1,075,080 cycles**,
+against the 598,015 the body costs. The difference is what LEZ spends reading
 the inputs and what the dispatcher, the generated validator and the `SpelOutput`
 wrapping spend around the body — and a precompile touches none of it.
 
@@ -425,12 +442,12 @@ figures suggest:
 
 | a pull settlement, whole | cycles | reduction |
 | --- | ---: | ---: |
-| today | 3,525,809 | |
-| with a precompile, `c = 0` | 515,539 | **6.8x** |
-| with a precompile, `c = 1,000` | 525,539 | 6.7x |
-| with a precompile, `c = 10,000` | 615,539 | 5.7x |
+| today | 1,075,080 | |
+| with a precompile, `c = 0` | 514,786 | **2.1x** |
+| with a precompile, `c = 1,000` | 524,786 | 2.0x |
+| with a precompile, `c = 10,000` | 614,786 | 1.7x |
 
-**About 6x to 7x on a transaction, against 22x to 80x on the body.** An earlier
+**About 2x on a transaction, against 4x to 16x on the body.** An earlier
 draft of this section put it at 14x to 25x by adding an estimate of the
 instruction read to the body; that estimate was low and it omitted everything but
 the instruction. The figures above rest on a measurement instead, and
@@ -439,7 +456,7 @@ prints them.
 
 Like every difference between a transaction and a body here, this subtracts a
 figure measured in `verify_cost` out of one measured in the product ELF, so it
-carries their disagreement as well — 42 to 722 cycles where this file has measured
+carries their disagreement as well — 96 to 759 cycles where this file has measured
 it, against a residual of half a million.
 
 The band all but closes at transaction level, because the term that varies with
@@ -447,9 +464,10 @@ The band all but closes at transaction level, because the term that varies with
 
 ### If only one of the two is built, build ECDSA
 
-Of the 3,010,270 a precompile removes, the **recovery row is 97.10% and the
-keccak256 row 2.90%**, at one, three and five signers alike — so it does not depend
-on how many packages a payload carries.
+Of the 560,294 a precompile removes, the **recovery row is 97.78% and the
+keccak256 row 2.22%** at five signers, and between 96.4% and 97.8% across one,
+three and five. It drifted slightly apart with the signer count when the keccak
+coprocessor cut that row; before, it was 97.10% at every count.
 
 It does depend on what is *in* them. Verification hashes each package's whole
 signable span, so a package carrying more data points hashes more without recovering
@@ -465,11 +483,11 @@ hashes the 64-byte uncompressed point to get an Ethereum address. So the keccak 
 is not all of the hashing.
 
 **How much more is an estimate, and it is the one figure in this section that is not
-measured.** Nothing isolates the address hash. Taking it at 17,476 borrows the
+measured.** Nothing isolates the address hash. Taking it at 4,012 borrows the
 measured cost of the 77-byte message hash, on the reasoning that both fit inside one
-136-byte keccak block. On that estimate the removable 3,010,270 is roughly **174,760
-of keccak256 and 2,835,510 of ECDSA proper, about 5.8% against 94.2%**, rather than
-the 2.90/97.10 the rows give. Measuring that hash on its own would settle it, and
+136-byte keccak block. On that estimate the removable 560,294 is roughly **32,480
+of keccak256 and 527,814 of ECDSA proper, about 5.8% against 94.2%**, rather than
+the 2.22/97.78 the rows give. Measuring that hash on its own would settle it, and
 nothing here does.
 
 Underneath it sits a third assumption about the interface, beside the two above:
@@ -512,16 +530,16 @@ as more than "about the same size".
 Assumed: `c`, and one thing about the precompile's shape. Ten calls assumes it
 returns an **address**, as the EVM's `ecrecover` does. One returning a public key
 leaves the caller to keccak the point — which is what `address_of` does today — and
-costs three crossings a package rather than two, putting a pull read at 181,115
-rather than 131,115 at the top of the band, 16.8x rather than 23.2x. That is the
+costs three crossings a package rather than two, putting a pull read at 180,389
+rather than 130,389 at the top of the band, 3.3x rather than 4.5x. That is the
 reader's assumption to overturn, since they are the ones choosing the interface.
 
 And what it validates, which is the one that moves the delta rather than the band:
 the tables assume the primitive absorbs the parsing and the malleability refusal
-inside the row being removed, and 3,010,270 is an upper bound if it does not.
+inside the row being removed, and 560,294 is an upper bound if it does not.
 
 Beyond those three: nothing. `c` matters more than an assumption usually would,
-because the answer moves by a factor of three across the band — 23.2x to 74.0x
+because the answer moves by a factor of three across the band — 4.5x to 14.6x
 on a pull read — which is why no single number is published here. `[M3-09:01]`
 records that choice. `m0`'s report is not directly comparable and it is worth
 saying why, because all three of its terms differ: its 89% is *recovery alone*
@@ -556,8 +574,8 @@ addresses.
 
 | | to be read | body | the rest | **transaction** | of budget |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| pull settlement | 188,072 | 3,048,613 | 289,124 | **3,525,809** | 10.51% |
-| push update | 175,826 | 3,048,414 | 259,469 | **3,483,709** | 10.38% |
+| pull settlement | 188,072 | 598,015 | 289,124 | **1,075,080** | 3.20% |
+| push update | 175,826 | 598,218 | 259,469 | **1,034,702** | 3.08% |
 | push read | 122,783 | 13,404 | 188,480 | **324,667** | 0.97% |
 
 Every body here is a `settle` or `submit_price` body, because every transaction
@@ -568,7 +586,7 @@ read inside it, which is what `read_cost.rs` compares against a pull read.
 instruction's decode and the wrapping **plus whatever the three harnesses disagree
 by**: the transaction comes from the product program, the body from a cost guest
 and the read from `input_cost`, and this file already records two of those
-differing by 42 and 722 cycles on identical verification. At 188,480 to 289,124
+differing by 96 and 759 cycles on identical verification. At 188,480 to 289,124
 that variance is a rounding error inside it, and the column is still a difference
 between measurements rather than a measurement of its own. Only a product ELF that
 bracketed its own body would make it one.
@@ -582,13 +600,13 @@ checked across them.
 
 ### This changes the per-mode headline rather than qualifying it
 
-A pull settlement's body is **227 times** a push settlement's. As executed
-transactions the two are **ten times apart**. A push settlement is 13,404 cycles
+A pull settlement's body is **44 times** a push settlement's. As executed
+transactions the two are **three times apart**. A push settlement is 13,404 cycles
 of body inside a 324,667-cycle transaction — **four percent of it** — because
 everything else is being read and being dispatched, and neither scales with what
 the body does.
 
-Both sides here are settlements. The 447 the read tables publish is a read against
+Both sides here are settlements. The 86 the read tables publish is a read against
 a read, which answers what the two modes' *reads* cost and does not belong beside
 a ratio of transactions.
 
@@ -707,7 +725,7 @@ makes every one of these figures collapse, and the check is what turns that into
 a failure.
 
 Two guests reaching `verify_feed` by different routes also corroborate each
-other: they agree on verification to 42 cycles in 3,039,790, which is 0.0014%.
+other: they agree on verification to 42 cycles in 589,024, which is 0.0014%.
 That comparison is the one figure here bounded rather than pinned exactly, and
 the reason is that a cycle count is a property of a guest ELF rather than of the
 work — two independently compiled binaries running identical source are not
@@ -751,7 +769,7 @@ That scan is quadratic in the signer count — every package scans the whole set
 which the numbers show and which is still not worth acting on: 970 cycles at five
 signers.
 
-**Converting to the account's scale costs 11,294 cycles**, about 65% of one
+**Converting to the account's scale costs 11,256 cycles**, about 65% of one
 keccak256 and most of the remainder row at one signer. It is a
 16-byte long division with 128-bit intermediates
 (`adr/0017-value-sanity-is-two-level-and-prices-convert-to-q64-64.md`), and it
@@ -778,7 +796,7 @@ Two things bound it, both in `verify_feed`:
   five-feed payload cost 15,477,759 cycles — 46% of the budget for 25 packages,
   20 of which could not have changed the answer.
 - **`MAX_RECOVERIES` packages for the requested feed, then the payload is
-  refused.** At the ceiling an update costs about 19.9M cycles, 59% of the
+  refused.** At the ceiling an update costs about 4.19M cycles, 12% of the
   budget, and past it the work stops growing.
 
 `the_most_a_payload_can_cost_still_fits_in_one_transaction` asserts both, and
@@ -793,7 +811,7 @@ verification still correctly bounded at 19.3M of it.
 
 `MAX_PAYLOAD_BYTES` is the answer, at 32 KiB. The largest payload the decoder
 accepts — 230 packages, every one carrying the requested feed — reads and
-verifies in **23,042,390 cycles, 69% of the budget**, leaving 31% for the program
+verifies in **7,352,296 cycles, 21.9% of the budget**, leaving 78% for the program
 doing the verifying. `the_largest_payload_the_decoder_accepts_is_read_and_verified_inside_the_budget`
 asserts it. The limit is a cost rule rather than a framing one, and refusing at
 this point does not refund the read; what it does is state the size above which a
@@ -810,7 +828,7 @@ workload, calling `k256` and `tiny-keccak` directly. This measures them inside
 | | M0, in isolation | here, in `verify_feed` |
 | --- | ---: | ---: |
 | software keccak256 over 77 bytes | 17,498 | 17,476 |
-| accelerated recovery, per signer | 565,551 | 585,276 |
+| accelerated recovery, per signer | 565,551 | 109,838 |
 
 The 77 bytes are not a coincidence: a RedStone package carrying one data point
 signs `1 * (32 + 32) + 4 + 6 + 3` bytes, and every captured package carries one.

@@ -109,7 +109,7 @@ mod expected {
     /// figure this file exists to add is only interesting beside a body that is
     /// current. The runs are the same guests and stages `read_cost.rs` measures,
     /// so a disagreement between the two files is a real disagreement.
-    pub const PULL_SETTLE_BODY: u64 = 3_048_613;
+    pub const PULL_SETTLE_BODY: u64 = 598_015;
 
     /// The push consumer's whole `settle` body, not the read inside it.
     ///
@@ -126,20 +126,20 @@ mod expected {
     /// A difference across harnesses rather than a measurement of its own — the
     /// transaction comes from the product ELF, the body from a cost guest and the
     /// read from `input_cost` — so it carries whatever those three disagree by.
-    pub const PULL_SETTLE_REST: u64 = 289_124;
-    pub const PUSH_UPDATE_REST: u64 = 259_469;
+    pub const PULL_SETTLE_REST: u64 = 288_993;
+    pub const PUSH_UPDATE_REST: u64 = 260_658;
     pub const PUSH_READ_REST: u64 = 188_480;
 
     /// The push update's body, which `cost.rs` owns and asserts. `submit_cost`
     /// brackets it differently and this file does not re-execute it, so this one
     /// row is carried between files rather than checked across them.
-    pub const PUSH_UPDATE_BODY_FROM_COST_RS: u64 = 3_048_414;
+    pub const PUSH_UPDATE_BODY_FROM_COST_RS: u64 = 598_218;
 
     pub use super::lez::CYCLE_BUDGET as BUDGET;
 
     /// What each transaction is of it, as `COSTS.md` prints it.
-    pub const PULL_SETTLE_SHARE: &str = "10.51%";
-    pub const PUSH_UPDATE_SHARE: &str = "10.38%";
+    pub const PULL_SETTLE_SHARE: &str = "3.20%";
+    pub const PUSH_UPDATE_SHARE: &str = "3.08%";
     pub const PUSH_READ_SHARE: &str = "0.97%";
 
     pub use super::lez::REMOVABLE;
@@ -154,8 +154,8 @@ mod expected {
     /// What a whole pull settlement would cost with one, and the reduction in
     /// tenths: 6.8x, 6.7x, 5.7x. Rounded rather than floored, as `read_cost.rs`
     /// rounds the body-level equivalents.
-    pub const SETTLEMENT_WITH_PRECOMPILE: [u64; 3] = [515_539, 525_539, 615_539];
-    pub const SETTLEMENT_REDUCTION_TENTHS: [u64; 3] = [68, 67, 57];
+    pub const SETTLEMENT_WITH_PRECOMPILE: [u64; 3] = [514_786, 524_786, 614_786];
+    pub const SETTLEMENT_REDUCTION_TENTHS: [u64; 3] = [21, 20, 17];
 
     /// What a byte of an account's `data` costs, measured by varying that data
     /// rather than the instruction.
@@ -177,15 +177,15 @@ mod expected {
     ///
     /// The difference between these and body-plus-read is that wrapping, and it is
     /// not small: 289,124 on a pull settlement, 188,480 on a push read.
-    pub const PULL_SETTLE_TRANSACTION: u64 = 3_525_809;
-    pub const PUSH_UPDATE_TRANSACTION: u64 = 3_483_709;
+    pub const PULL_SETTLE_TRANSACTION: u64 = 1_075_080;
+    pub const PUSH_UPDATE_TRANSACTION: u64 = 1_034_702;
     pub const PUSH_READ_TRANSACTION: u64 = 324_667;
 
     /// What counting the whole transaction does to the per-mode headline: a pull
     /// settlement is 227 times a push settlement as bodies, and 10 times as
     /// executed transactions.
-    pub const BODIES_APART: u64 = 227;
-    pub const TRANSACTIONS_APART: u64 = 10;
+    pub const BODIES_APART: u64 = 44;
+    pub const TRANSACTIONS_APART: u64 = 3;
 
     /// The lengths differenced. Far enough apart that the fixed part is a rounding
     /// error, and both well inside `MAX_PAYLOAD_BYTES`.
@@ -691,7 +691,7 @@ fn counting_the_whole_transaction_closes_the_gap_by_an_order_of_magnitude() {
 ///
 /// Like every difference between a transaction and a body here, this subtracts a
 /// figure from `verify_cost` out of one from the product ELF, so it carries their
-/// disagreement too — 42 to 722 cycles where this file has measured it, against a
+/// disagreement too — 96 to 759 cycles where this file has measured it, against a
 /// residual of half a million.
 #[test]
 fn a_precompile_is_worth_less_against_a_transaction_than_against_a_body() {

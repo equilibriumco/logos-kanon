@@ -528,7 +528,7 @@ verified_by = [
   "test:per_component_cycles_are_unchanged",
   "test:the_dominant_cost_is_linear_in_the_signer_count",
   "test:recovery_is_still_the_accelerated_implementation",
-  "test:the_keccak_accelerator_is_still_declined",
+  "test:the_keccak_row_rides_the_coprocessor_now",
   "ci:guardrails",
   "ci:product-costs",
   "doc:m0/M0-report.pdf",

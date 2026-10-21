@@ -35,11 +35,15 @@ fn both_verifying_guests_pin_the_same_accelerators() {
     let consumer = pins(&manifest("reference-consumers/pull/guest/Cargo.toml"));
 
     // The section is found at all, in both. A rename or a deletion would
-    // otherwise leave two empty lists comparing equal.
+    // otherwise leave two empty lists comparing equal. Four since the
+    // accelerated-backend branch: the tiny-keccak fork joined k256,
+    // crypto-bigint and sha2 when `verifier-core` gained the `risc0-crypto`
+    // backends.
     assert_eq!(
         aggregator.len(),
-        3,
-        "the aggregator guest should pin k256, crypto-bigint and sha2; found {aggregator:#?}"
+        4,
+        "the aggregator guest should pin k256, crypto-bigint, sha2 and tiny-keccak; \
+         found {aggregator:#?}"
     );
 
     assert_eq!(
