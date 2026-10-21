@@ -309,13 +309,15 @@ jobs:
                    verifier-core) \
                <(closure -p reference-consumer-pull)
 
-          # The program itself. `crypto-bigint`, `k256` and `sha2` are the
-          # accelerated replacements this guest's `[patch.crates-io]` substitutes
-          # for the registry ones, so they arrive by git and the filter sees them;
-          # they are the same three `methods/guest` patches, which is deliberate
-          # and which that manifest explains. `nssa_core` resolves to `lee_core`
-          # and appears under that name, which is also the check that the rename
-          # unified rather than duplicating LEZ.
+          # The program itself. `crypto-bigint`, `k256`, `sha2` and `tiny-keccak`
+          # are the accelerated replacements this guest's `[patch.crates-io]`
+          # substitutes for the registry ones, so they arrive by git and the
+          # filter sees them; they are the same four `methods/guest` patches,
+          # which is deliberate and which that manifest explains -- and which
+          # `tests/guest_pins.rs` is what keeps equal, so a patch added on one
+          # side lands here too. `nssa_core` resolves to `lee_core` and appears
+          # under that name, which is also the check that the rename unified
+          # rather than duplicating LEZ.
           diff <(printf '%s\n' \
                    crypto-bigint \
                    k256 \
@@ -328,6 +330,7 @@ jobs:
                    spel-framework \
                    spel-framework-core \
                    spel-framework-macros \
+                   tiny-keccak \
                    verifier-core) \
                <(closure --manifest-path reference-consumers/pull/guest/Cargo.toml \
                          -p reference-consumer-pull-guest)
