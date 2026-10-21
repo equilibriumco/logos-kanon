@@ -1,0 +1,13 @@
+GPU total: 6144 MiB
+GPU idle baseline: 2200 MiB (desktop and other processes)
+
+=== mixed ===
+  3 signer(s), succinct: 223789 byte proof in 160.94 s
+  peak RSS:  9624408 kB (9.18 GiB)
+  peak VRAM: 3412 MiB total, 1212 MiB above baseline
+
+=== accelerated ===
+  3 signer(s), succinct: 223789 byte proof in 194.02 s
+  peak RSS:  9603832 kB (9.16 GiB)
+  peak VRAM: 3774 MiB total, 1574 MiB above baseline
+

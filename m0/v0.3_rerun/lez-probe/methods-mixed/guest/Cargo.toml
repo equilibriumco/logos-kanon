@@ -1,0 +1,35 @@
+[package]
+name = "lez-probe-guest-mixed"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Own workspace: cross-compiles to riscv32im-risc0-zkvm-elf.
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["std"] }
+# LEZ's program SDK, pinned by revision. The repo is public, so an https git
+# dependency needs no credentials, and Cargo.lock records the exact commit, which
+# is what makes a cycle measurement reproducible.
+lee_core = { git = "https://github.com/logos-blockchain/logos-execution-zone", tag = "v0.3.0" }
+k256 = { version = "0.13.3", default-features = false, features = ["ecdsa", "arithmetic"] }
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+# Named so the EC probes can call the accelerated curve circuits directly.
+# Already in the graph through the patched `k256`; this only makes it nameable.
+risc0-bigint2 = "1.4.14"
+# Boundless's accelerated EVM primitives, for the comparison in `ec_r0crypto.rs`.
+# zkVM-only, so target-gated as its own README requires.
+[target.'cfg(all(target_os = "zkvm", target_vendor = "risc0"))'.dependencies]
+risc0-crypto-evm = "0.1.0-rc.1"
+
+# The configuration the cost baseline recommends: accelerate secp256k1, leave
+# keccak256 in software. tiny-keccak is deliberately absent from this list.
+[patch.crates-io]
+k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.1" }
+crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.2-risczero.1" }
+sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.6-risczero.0" }
+
+[profile.release]
+lto = true
+codegen-units = 1

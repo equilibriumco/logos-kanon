@@ -1,0 +1,20 @@
+  peak RSS:  9607464 kB (9.16 GiB)
+  peak VRAM: 3828 MiB total, 1286 MiB above baseline
+
+=== accelerated ===
+LEZ v0.3 action-phase gas limit: 10000000 (cycles, one for one). v0.2 allowed 33554432 cycles.
+
+=== accelerated configuration ===
+
+-- LEZ framework floor (decode the call, name one shard, write it) --
+  framework only:      14038 gas = plan 8057 + apply 5981 |  0.14% of the v0.3 limit ( 0.04% of v0.2's)
+                  plan proved in 4.35 s, 221322 byte proof
+
+-- M-of-N RedStone verification inside a LEZ program --
+   'crypto alone' subtracts the same program without the crypto, so the framework's
+   per-package instruction handling is excluded rather than counted as recovery.
+     3 signer(s):    1722716 gas = plan 1716432 + apply 6284 | 17.23% of the v0.3 limit ( 5.13% of v0.2's), above the floor 1708678, crypto alone 1704236 (instruction handling 4442)
+                  plan proved in 168.32 s, 786399 byte proof
+  peak RSS:  9622476 kB (9.18 GiB)
+  peak VRAM: 3770 MiB total, 1228 MiB above baseline
+

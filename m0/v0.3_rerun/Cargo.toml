@@ -1,0 +1,47 @@
+# The v0.3 re-measurement workspace.
+#
+# `m0/` is frozen: its lockfile and its exact-equality assertions exist so that an
+# ordinary product upgrade cannot move a figure in a delivered document. This
+# directory is the re-measurement that question asks for, and it is a *separate*
+# workspace for the same reason `m0/` is separate from the product: so that neither
+# tree's figures can move the other's.
+#
+# It carries only `lez-probe/`, because that is the only half of M0 LEZ can reach.
+# `m0/cost-baseline/` runs on bare RISC Zero with no LEZ in the dependency graph at
+# all, so v0.3 cannot move it, and re-running it under the frozen workspace confirms
+# that — see `FINDINGS.md` section 1. Copying it here would duplicate frozen code to
+# no end.
+#
+# Guest crates are deliberately absent from `members`, as in `m0/`: each
+# cross-compiles to riscv32im-risc0-zkvm-elf and carries its own `[patch.crates-io]`
+# and its own lockfile, which is the mechanism that distinguishes the accelerated
+# and mixed configurations. They are built by `risc0-build` from the `methods-*`
+# build scripts, under their own resolution.
+[workspace]
+resolver = "2"
+members = [
+  "lez-probe/host",
+  "lez-probe/methods-accelerated",
+  "lez-probe/methods-mixed",
+]
+exclude = [
+  "lez-probe/methods-accelerated/guest",
+  "lez-probe/methods-mixed/guest",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Identical to `m0/`'s pins, deliberately. The whole point of this workspace is to
+# change one variable -- the LEZ revision -- and hold everything else fixed, so that
+# a difference between the two sets of figures is attributable to LEZ and to nothing
+# else. See `m0/versions.md` for why every requirement is `=` rather than a caret
+# range.
+risc0-zkvm = "=3.0.6"
+risc0-build = "=3.0.6"
+
+k256 = { version = "=0.13.3", features = ["ecdsa", "arithmetic"] }
+tiny-keccak = { version = "=2.0.2", features = ["keccak"] }

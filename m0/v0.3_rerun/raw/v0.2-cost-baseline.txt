@@ -1,0 +1,60 @@
+          77        281465       17592           94       17498         227.2
+         141        552153       34510           94       34416         244.1
+         512       1120585       70037           94       69942         136.6
+
+-- secp256k1 ECDSA public-key recovery --
+  signers   work cycles    per recovery
+        1      11074701        11074701
+        3      33228606        11076202
+        5      55375167        11075033
+
+-- 3-of-N verification: 3 packages, each a 77-byte hash then a recovery --
+     recover only:   33295061 cycles, 34 segment(s)
+   hash + recover:   33347017 cycles, 34 segment(s)
+    3 hashes cost:      51956 cycles (0.16% of the update)
+
+=== accelerated path ===
+
+-- zkVM floor (empty guest) --
+          2940 cycles, 1 segment(s)
+
+-- keccak256, 16 hashes per run --
+   msg bytes   work cycles  gross/hash  bookkeeping    net/hash  net cyc/byte
+          32         35389        2212           94        2118          66.2
+          77         40429        2527           94        2433          31.6
+         141         65133        4071           94        3977          28.2
+         512        141597        8850           94        8756          17.1
+
+-- secp256k1 ECDSA public-key recovery --
+  signers   work cycles    per recovery
+        1        565551          565551
+        3       1686893          562298
+        5       2817096          563419
+
+-- 3-of-N verification: 3 packages, each a 77-byte hash then a recovery --
+     recover only:    1761478 cycles, 2 segment(s)
+   hash + recover:    1769222 cycles, 2 segment(s)
+    3 hashes cost:       7744 cycles (0.44% of the update)
+
+=== mixed path ===
+
+-- zkVM floor (empty guest) --
+          2940 cycles, 1 segment(s)
+
+-- keccak256, 16 hashes per run --
+   msg bytes   work cycles  gross/hash  bookkeeping    net/hash  net cyc/byte
+          32        276425       17277           94       17182         537.0
+          77        281465       17592           94       17498         227.2
+         141        552153       34510           94       34416         244.1
+         512       1120585       70037           94       69942         136.6
+
+-- secp256k1 ECDSA public-key recovery --
+  signers   work cycles    per recovery
+        1        565551          565551
+        3       1686893          562298
+        5       2817096          563419
+
+-- 3-of-N verification: 3 packages, each a 77-byte hash then a recovery --
+     recover only:    1761478 cycles, 2 segment(s)
+   hash + recover:    1813434 cycles, 2 segment(s)
+    3 hashes cost:      51956 cycles (2.87% of the update)

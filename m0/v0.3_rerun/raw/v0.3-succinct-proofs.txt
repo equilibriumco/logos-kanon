@@ -1,0 +1,12 @@
+   Compiling lez-probe-methods-accelerated v0.1.0 (/src/logos-kanon/m0/v0.3_rerun/lez-probe/methods-accelerated)
+   Compiling lez-probe-methods-mixed v0.1.0 (/src/logos-kanon/m0/v0.3_rerun/lez-probe/methods-mixed)
+   Compiling lez-probe v0.1.0 (/src/logos-kanon/m0/v0.3_rerun/lez-probe/host)
+    Finished `release` profile [optimized] target(s) in 1.09s
+     Running `target/release/lez-probe --signers 3 --succinct`
+LEZ v0.3 action-phase gas limit: 10000000 (cycles, one for one). v0.2 allowed 33554432 cycles.
+
+=== mixed configuration ===
+  3 signer(s), succinct: 223789 byte proof in 162.39 s
+
+=== accelerated configuration ===
+  3 signer(s), succinct: 223789 byte proof in 194.01 s

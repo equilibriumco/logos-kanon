@@ -8,6 +8,7 @@ target/
 # sits in its own workspace because that is where its harnesses are; later reports
 # have no such home and live under `docs/`.
 !m0/M0-report.pdf
+!m0/v0.3_rerun/M0-addendum-A.pdf
 !docs/*.pdf
 
 # Python bytecode, from running the capture script by hand.

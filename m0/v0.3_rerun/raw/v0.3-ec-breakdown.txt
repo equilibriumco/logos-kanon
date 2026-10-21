@@ -1,0 +1,14 @@
+LEZ v0.3 action-phase gas limit: 10000000 (cycles, one for one). v0.2 allowed 33554432 cycles.
+
+-- a recovery, split by what a native ecrecover could remove --
+  bigint2 circuits alone (2 muls + add):      164447   irreducible
+  the same through k256:                      274289   +109841 k256 overhead
+  full ECDSA recovery:                        570683   +296393 recovery logic
+
+  via risc0-crypto-evm ecrecover:             140542   4.06x cheaper
+
+  one bigint2 accelerator round trip:            256
+  so a 256-bit scalar mul (~384 calls):        98304   as loop overhead
+
+  irreducible share of a recovery:              28.8%
+  removable at best:                           406235  (71.2%)

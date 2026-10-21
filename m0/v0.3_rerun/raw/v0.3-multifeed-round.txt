@@ -1,0 +1,23 @@
+   Compiling lez-probe-methods-mixed v0.1.0 (/src/logos-kanon/m0/v0.3_rerun/lez-probe/methods-mixed)
+   Compiling lez-probe-methods-accelerated v0.1.0 (/src/logos-kanon/m0/v0.3_rerun/lez-probe/methods-accelerated)
+   Compiling lez-probe v0.1.0 (/src/logos-kanon/m0/v0.3_rerun/lez-probe/host)
+    Finished `release` profile [optimized] target(s) in 1.28s
+     Running `target/release/lez-probe --multifeed`
+LEZ v0.3 action-phase gas limit: 10000000 (cycles, one for one). v0.2 allowed 33554432 cycles.
+
+-- the multi-point round: ___FAST___ (9-point spans) for BTC/ETH/SOL, singles for XMR/ZEC, 5 signers --
+  k256:
+    one single-point update, 5 signers:         2933979 gas
+    one 9-point FAST update, 5 signers:         3290625 gas  (+356646 for the longer spans)
+    round, five single-point updates:          14669895 gas = 146.70% of a block
+    round, FAST + XMR + ZEC:                    9158583 gas =  91.59% of a block  (1.60x cheaper)
+  k256 + keccak coprocessor:
+    one single-point update, 5 signers:         2859004 gas
+    one 9-point FAST update, 5 signers:         2907780 gas  (+48776 for the longer spans)
+    round, five single-point updates:          14295020 gas = 142.95% of a block
+    round, FAST + XMR + ZEC:                    8625788 gas =  86.26% of a block  (1.66x cheaper)
+  risc0-crypto:
+    one single-point update, 5 signers:          792176 gas
+    one 9-point FAST update, 5 signers:         1156852 gas  (+364676 for the longer spans)
+    round, five single-point updates:           3960880 gas =  39.61% of a block
+    round, FAST + XMR + ZEC:                    2741204 gas =  27.41% of a block  (1.44x cheaper)
