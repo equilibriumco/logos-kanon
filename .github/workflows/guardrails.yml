@@ -161,6 +161,21 @@ jobs:
       - name: cost table
         run: cargo test --release --locked -p kanon-methods
 
+      # Excluded from `ci.yml`'s `build-test` for the reason `kanon-methods` is:
+      # both execute the guests they measure, and `RISC0_SKIP_BUILD` stubs the
+      # ELF out. This is the only job that runs the BIP-340 equivalence suite
+      # against a real guest, so it is the only thing that would catch the
+      # copied scalar loop drifting from the one it was copied from.
+      - name: BIP-340 backend
+        run: cargo test --release --locked -p bip340-bench
+
+      # Its own workspace and its own lockfile, so `--workspace` reaches neither
+      # it nor the manifest above. This is where the LEZ gas figures come from.
+      - name: approval check inside a LEZ program
+        run: |
+          cargo test --release --locked -p lez-probe \
+            --manifest-path m0/v0.3_rerun/Cargo.toml
+
   # fmt and clippy used to live here. They moved to `ci.yml` because
   # they lint product code as much as m0's, and this workflow is the cycle gate:
   # a red tick here should mean a figure moved, not that a line was too long.

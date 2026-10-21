@@ -87,7 +87,12 @@ jobs:
       # Skipping it lints the host code, which is all clippy can lint here; the
       # guest code is compiled for real by the `guest` job below.
       #
-      # Every excluded workspace is named, the three guests included. They are the
+      # The two BIP-340 guests are not linted here. `backend::bip340` is cfg'd to
+      # the zkvm target, this job has no guest toolchain, and clippy on the host
+      # cannot see the module their bins import. `guardrails.yml` compiles them
+      # for real.
+      #
+      # Every excluded workspace is named, the guests included. They are the
       # programs this repository ships and their image ids are program ids, so
       # being the only crates outside the lint gate was the wrong way round -- and
       # the gap was invisible, because `--workspace` cannot reach an excluded
@@ -132,11 +137,14 @@ jobs:
       # need the real guest ELFs that RISC0_SKIP_BUILD stubs out, which is why
       # `guardrails.yml` runs them with the guest toolchain installed instead.
       #
-      # `kanon-methods` is in this workspace and does need excluding, for the
-      # same reason: `methods/tests/cost.rs` executes the guest it measures, and
-      # a stubbed ELF has no cycles to count. `guardrails.yml` runs it too.
+      # `kanon-methods` and `bip340-bench` are in this workspace and do need
+      # excluding, for the same reason: their tests execute the guests they
+      # measure, and a stubbed ELF has no cycles to count. `guardrails.yml` runs
+      # them both.
       - name: cargo test
-        run: cargo test --release --locked --workspace --exclude kanon-methods
+        run: |
+          cargo test --release --locked --workspace \
+            --exclude kanon-methods --exclude bip340-bench
 
   no-std:
     name: no_std
