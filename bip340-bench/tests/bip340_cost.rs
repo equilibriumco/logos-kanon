@@ -1,9 +1,9 @@
 //! Per-verification cycles for BIP-340, per implementation.
 //!
-//! The ordering is pinned, not the figures: a cycle count is a property of the
-//! guest ELF and moves with any dependency bump, but a backend that stopped
-//! beating the patched `k256` path would have lost its reason to exist, and
-//! that should fail here rather than surface as a drifted table.
+//! The test asserts the ordering, not the figures. A cycle count is a property
+//! of the guest ELF and moves with any dependency bump, so pinning one would
+//! fail on every bump. The fast backend losing to patched `k256` would be a
+//! real regression, and that is what fails here.
 
 mod support;
 

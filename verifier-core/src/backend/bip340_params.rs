@@ -1,10 +1,9 @@
 //! The constants BIP-340 verification needs that are not curve arithmetic: a
 //! range bound and a hash prefix.
 //!
-//! Plain data, and deliberately not gated to the zkVM, because a constant is
-//! checkable on the host and a constant nobody checks is a silent way to be
-//! wrong. The tests below derive the field characteristic from its definition
-//! and the tag hash from the tag, rather than restating either.
+//! Not gated to the zkVM, so the tests below can run on the host. They derive
+//! the field characteristic from its definition and the tag hash from the tag,
+//! rather than restating either.
 
 /// The secp256k1 field characteristic `p = 2²⁵⁶ − 2³² − 977`, big-endian.
 pub const FIELD_ORDER: [u8; 32] = [

@@ -1,13 +1,11 @@
 //! The cases the BIP-340 backend and `k256::schnorr` are held to agree on.
 //!
-//! Valid signatures are the easy half. The cases that matter are the ones a
-//! sign error or a missing range check would let through: scalars at and past
-//! their modulus, an x-coordinate no point has, a zero `s`, and signatures one
-//! bit away from valid.
+//! The cases that matter are the ones a sign error or a missing range check
+//! would let through: scalars at and past their modulus, an x-coordinate no
+//! point has, a zero `s`, and signatures one bit away from valid.
 //!
-//! Each case carries the answer it was built to have, so the guest asserts
-//! three ways rather than two. Two implementations agreeing on a forgery would
-//! agree perfectly.
+//! Each case also carries the answer it is built to have, so the guest asserts
+//! three ways rather than two: both backends could agree and still be wrong.
 
 mod support;
 
@@ -44,10 +42,10 @@ fn x_with_no_point() -> [u8; 32] {
 /// The vectors published with BIP-340, as committed in `support/`.
 ///
 /// Only the rows with a 32-byte message: the backend verifies over a digest,
-/// and BIP-340's four variable-length cases are outside what it is given. What
-/// remains is every adversarial row, which is the half worth having — an
-/// infinite `sG − eP`, an odd `R.y`, `r` at the field size, `s` at the curve
-/// order, and keys that are not x-coordinates.
+/// so BIP-340's four variable-length cases are outside what it is given. All
+/// four expect acceptance, so every adversarial row survives — an infinite
+/// `sG − eP`, an odd `R.y`, `r` at the field size, `s` at the curve order, and
+/// keys that are not x-coordinates.
 fn official_vectors() -> Vec<Case> {
     const VECTORS: &str = include_str!("support/bip340-test-vectors.csv");
 

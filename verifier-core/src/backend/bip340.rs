@@ -18,8 +18,10 @@
 //! - `s = 0` and `r = 0` are not refused. ECDSA rejects both because its
 //!   arithmetic divides by `r`. BIP-340 does not divide, and bounds `r < p`
 //!   and `s < n` and nothing else.
-//! - There is no low-`s` rule. ECDSA's malleability comes from `(r, s)` and
-//!   `(r, n − s)` both verifying, which the `R.x` equality forecloses.
+//! - There is no low-`s` rule. ECDSA recovers `R` scaled by `1/s`, so negating
+//!   `s` negates `R` and leaves `R.x` unchanged, and both signatures verify.
+//!   `R = s·G − e·P` is affine in `s`, so `(r, n − s)` lands on a different
+//!   `x` and fails.
 //! - `r` is a field element and `s` is a scalar, so they are range-checked
 //!   against different moduli: `p` for `r`, `n` for `s`.
 //!
@@ -38,8 +40,8 @@ use super::fast_recovery::{
     R_TABLE_LEN, WINDOW_G, WINDOW_R,
 };
 
-/// Why a BIP-340 verification did not succeed, coarsely: naming the component
-/// that failed says more to an attacker than to an operator.
+/// Why a verification did not succeed. Coarse on purpose: a precise reason
+/// tells an attacker more than it tells an operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bip340Error {
     /// The public key was not a field element, or no point has it as an
@@ -88,6 +90,9 @@ pub fn verify(
     let point = decompress(&key_x, false).ok_or(Bip340Error::InvalidPublicKey)?;
 
     // The two scalars of `R = s·G + (−e)·P`, each split into GLV halves.
+    // The range check above already established `s < n`, so this cannot be
+    // `None`. Kept as an error rather than an unwrap: this function must not
+    // panic on any input.
     let s_scalar =
         Fr::from_bigint(BigInt::from_be_bytes(s_bytes)).ok_or(Bip340Error::InvalidSignature)?;
     let negated_challenge = -&challenge(r_bytes, public_key, message);
