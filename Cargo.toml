@@ -37,6 +37,11 @@ members = [
   "reference-consumers/aggregator-read",
   "reference-consumers/pull",
   "traceability",
+
+  # What a BIP-340 approval check costs on the fast backend. Its own package
+  # for the reason its manifest gives: the reference arm needs a `k256`
+  # feature the product guests must not carry.
+  "bip340-bench",
 ]
 exclude = [
   # The measurement workspace, with its own `Cargo.lock` and its own pins.
@@ -46,6 +51,10 @@ exclude = [
   # `risc0-build` from `methods`' build script, under its own resolution and its
   # own lockfile.
   "methods/guest",
+
+  # The BIP-340 bench's guest, excluded for the same reason and on the same
+  # terms: its own target, its own patches and its own lockfile.
+  "bip340-bench/guest",
 
   # The end-to-end tests against a standalone sequencer. Excluded for the reason
   # `m0` is -- its own lockfile -- and the reason is the client half of LEZ:

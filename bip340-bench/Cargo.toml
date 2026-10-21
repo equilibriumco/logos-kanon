@@ -1,0 +1,35 @@
+# What a BIP-340 approval check costs on the fast backend, and the evidence
+# that the backend computes BIP-340.
+#
+# Its own package rather than two more binaries under `methods/`, because the
+# reference implementation it measures against is `k256`'s Schnorr verifier and
+# turning that feature on in the product guest's manifest shifts the shared
+# `k256` codegen. The product's cycle figures are asserted by exact equality,
+# so a 0.6% drift there fails three guardrails and republishes `COSTS.md` for
+# a measurement that has nothing to do with RedStone. A separate resolution
+# domain keeps both sets of figures what they were.
+[package]
+name = "bip340-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+risc0-build.workspace = true
+
+[package.metadata.risc0]
+methods = ["guest"]
+
+[dev-dependencies]
+risc0-zkvm.workspace = true
+# For `bip340_params`, which is host-visible: the tests range-check against the
+# same field characteristic the guest does rather than a second copy of it.
+verifier-core.workspace = true
+# Signing the cases and verifying them independently. The `schnorr` feature is
+# what the product manifests leave off.
+k256 = { version = "=0.13.3", features = ["ecdsa", "arithmetic", "schnorr"] }
+sha2 = { version = "=0.10.6", default-features = false }
+hex = "0.4"
+# Sizing a receipt, with the encoder `m0/cost-baseline` uses, so the byte
+# figures here and there are read on the same terms.
+bincode = "1.3"
