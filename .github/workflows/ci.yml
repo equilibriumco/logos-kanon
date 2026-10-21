@@ -92,14 +92,35 @@ jobs:
       # cannot see the module their bins import. `guardrails.yml` compiles them
       # for real.
       #
+      # The measurement bins are out for the same reason and are named one by
+      # one, which is why those two workspaces select bins rather than taking
+      # `--all-targets`. `backend::fast_recovery` and `backend::r0crypto` are
+      # cfg'd to the zkvm target like `backend::bip340`, and since `[M0-A:01]`
+      # the bins that count cycles import them: `submit_cost`, `verify_cost`,
+      # `recovery_cost` and `backend_equivalence` here, `pull_cost` on the pull
+      # side. They do not host-compile at all, so there is nothing for clippy to
+      # say about them on this runner. The `guest` job cross-compiles every one
+      # of them for real, and `guardrails.yml` executes them.
+      #
+      # Naming the bins costs the two things `--all-targets` was bought for, and
+      # both are listed so a reader knows what this no longer catches: a bin
+      # added to either workspace is unlinted until it is added here, and the
+      # `#[cfg(test)]` code inside these bins is unlinted outright, because
+      # `--tests` cannot be narrowed to a bin -- asked for alongside `--bin`, it
+      # selects every bin's test target and the measurement ones fail again. The
+      # aggregator-read guest keeps `--all-targets`: `read_cost` reaches no
+      # gated backend, so that workspace lints whole.
+      #
       # Every excluded workspace is named, the guests included. They are the
       # programs this repository ships and their image ids are program ids, so
       # being the only crates outside the lint gate was the wrong way round -- and
       # the gap was invisible, because `--workspace` cannot reach an excluded
       # workspace and the job that does build the guests denies no warnings. It
       # hid an unused argument on `settle` through a whole review. `--all-targets`
-      # covers their test builds, which is where that one lived, so the guest test
-      # job needs no denial of its own.
+      # covered their test builds, which is where that one lived -- and for the
+      # two workspaces narrowed to named bins above, that cover is now gone: the
+      # guest test job runs those tests but denies no warning, so a second
+      # `settle` would reach a review the way the first one did.
       - name: cargo clippy
         env:
           RISC0_SKIP_BUILD: 1
@@ -109,10 +130,15 @@ jobs:
             --manifest-path m0/Cargo.toml -- -D warnings
           cargo clippy --release --workspace --all-targets --locked \
             --manifest-path e2e/Cargo.toml -- -D warnings
-          cargo clippy --release --workspace --all-targets --locked \
-            --manifest-path methods/guest/Cargo.toml -- -D warnings
-          cargo clippy --release --workspace --all-targets --locked \
-            --manifest-path reference-consumers/pull/guest/Cargo.toml -- -D warnings
+          cargo clippy --release --workspace --locked \
+            --manifest-path methods/guest/Cargo.toml \
+            --bin aggregator \
+            --bin input_cost \
+            --bin register_cost \
+            --bin verifier_link -- -D warnings
+          cargo clippy --release --workspace --locked \
+            --manifest-path reference-consumers/pull/guest/Cargo.toml \
+            --bin pull_consumer -- -D warnings
           cargo clippy --release --workspace --all-targets --locked \
             --manifest-path reference-consumers/aggregator-read/guest/Cargo.toml \
             -- -D warnings
