@@ -1920,6 +1920,7 @@ dependencies = [
  "lee_core",
  "lez-probe-methods-accelerated",
  "lez-probe-methods-mixed",
+ "lez-probe-methods-multisig",
  "risc0-zkvm",
  "serde",
  "tiny-keccak",
@@ -1934,6 +1935,13 @@ dependencies = [
 
 [[package]]
 name = "lez-probe-methods-mixed"
+version = "0.1.0"
+dependencies = [
+ "risc0-build",
+]
+
+[[package]]
+name = "lez-probe-methods-multisig"
 version = "0.1.0"
 dependencies = [
  "risc0-build",

@@ -23,10 +23,17 @@ members = [
   "lez-probe/host",
   "lez-probe/methods-accelerated",
   "lez-probe/methods-mixed",
+
+  # The BIP-340 approval check, with its own floor and plumbing guests. A
+  # separate package because its guests reach `verifier-core` and `k256`'s
+  # `schnorr` feature, neither of which may enter the graph the RedStone
+  # figures are measured in.
+  "lez-probe/methods-multisig",
 ]
 exclude = [
   "lez-probe/methods-accelerated/guest",
   "lez-probe/methods-mixed/guest",
+  "lez-probe/methods-multisig/guest",
 ]
 
 [workspace.package]

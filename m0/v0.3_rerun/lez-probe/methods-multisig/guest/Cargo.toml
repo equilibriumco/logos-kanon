@@ -1,0 +1,33 @@
+[package]
+name = "lez-probe-guest-multisig"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Own workspace: cross-compiles to riscv32im-risc0-zkvm-elf.
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["std"] }
+# LEZ's program SDK, at the tag the rest of this tree pins.
+lee_core = { git = "https://github.com/logos-blockchain/logos-execution-zone", tag = "v0.3.0" }
+
+# The GLV + wNAF BIP-340 backend under measurement. `bip340` is the feature
+# that pulls in the module and the SHA-256 the challenge needs.
+verifier-core = { path = "../../../../../verifier-core", features = ["bip340"] }
+
+# The reference arm: the same verification through the patched `k256`.
+k256 = { version = "0.13.3", default-features = false, features = ["ecdsa", "arithmetic", "schnorr"] }
+
+# The mixed configuration, as the rest of this tree uses: secp256k1 and SHA-256
+# accelerated, keccak256 left in software. BIP-340 hashes with SHA-256 and
+# never touches keccak256, so the accelerated variant would measure the same
+# thing and is not built.
+[patch.crates-io]
+k256 = { git = "https://github.com/risc0/RustCrypto-elliptic-curves", tag = "k256/v0.13.3-risczero.1" }
+crypto-bigint = { git = "https://github.com/risc0/RustCrypto-crypto-bigint", tag = "v0.5.2-risczero.1" }
+sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.6-risczero.0" }
+
+[profile.release]
+lto = true
+codegen-units = 1

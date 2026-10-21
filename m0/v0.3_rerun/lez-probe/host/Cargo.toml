@@ -8,6 +8,7 @@ license.workspace = true
 risc0-zkvm.workspace = true
 lez-probe-methods-mixed = { path = "../methods-mixed" }
 lez-probe-methods-accelerated = { path = "../methods-accelerated" }
+lez-probe-methods-multisig = { path = "../methods-multisig" }
 lee_core = { git = "https://github.com/logos-blockchain/logos-execution-zone", tag = "v0.3.0", features = ["host"] }
 anyhow = "1"
 serde = "1"
@@ -15,3 +16,9 @@ borsh = "1"
 clap = { version = "4", features = ["derive"] }
 k256.workspace = true
 tiny-keccak.workspace = true
+
+[dev-dependencies]
+# Signing the BIP-340 approvals the multisig probe measures. A dev-dependency
+# with the `schnorr` feature, which the workspace pin leaves off, so no guest
+# graph sees it.
+k256 = { version = "=0.13.3", features = ["ecdsa", "arithmetic", "schnorr"] }

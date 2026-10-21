@@ -1,0 +1,23 @@
+# What an M-of-N BIP-340 approval check costs inside a LEZ v0.3 program.
+#
+# Its own package rather than more binaries under `methods-mixed`, for the
+# reason that package's siblings are separate from each other: a guest's cycle
+# count is a property of its ELF, and these guests need `verifier-core` and
+# `k256`'s `schnorr` feature in the graph. Adding either to `methods-mixed`
+# would move the figures `FINDINGS.md` publishes for RedStone verification,
+# which are the thing the re-run exists to hold still.
+#
+# Its own floor and plumbing guests travel with it for the same reason: a
+# subtraction is only a subtraction when both terms come out of the same
+# dependency graph.
+[package]
+name = "lez-probe-methods-multisig"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+risc0-build.workspace = true
+
+[package.metadata.risc0]
+methods = ["guest"]

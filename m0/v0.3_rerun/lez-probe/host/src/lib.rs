@@ -77,6 +77,29 @@ pub fn accelerated() -> Variant {
     }
 }
 
+/// The four guests measuring an M-of-N BIP-340 approval check: the floor, the
+/// same program carrying the approvals without checking them, and the two
+/// verifying implementations.
+pub struct Multisig {
+    pub noop: &'static [u8],
+    pub plumbing: &'static [u8],
+    pub fast: &'static [u8],
+    pub k256: &'static [u8],
+}
+
+/// The mixed configuration, as the RedStone guests use. BIP-340 hashes with
+/// SHA-256 and never touches keccak256, so the accelerated variant would
+/// measure the same thing and is not built.
+#[must_use]
+pub fn multisig() -> Multisig {
+    Multisig {
+        noop: lez_probe_methods_multisig::MULTISIG_NOOP_ELF,
+        plumbing: lez_probe_methods_multisig::MULTISIG_PLUMBING_ELF,
+        fast: lez_probe_methods_multisig::MULTISIG_FAST_ELF,
+        k256: lez_probe_methods_multisig::MULTISIG_K256_ELF,
+    }
+}
+
 /// What one program run cost, phase by phase.
 pub struct Run {
     /// The `plan` run: instruction decode, the application logic, the effects.
